@@ -1,4 +1,4 @@
-// Enhanced Popup script for TestSnapper extension with multi-format export
+// Enhanced Popup script for TestSnapper extension with time frame settings and API failure display
 
 class TestSnapperPopup {
   constructor() {
@@ -7,6 +7,7 @@ class TestSnapperPopup {
     this.sessions = [];
     this.settings = {
       autoScreenshot: true,
+      inputTimeFrame: 2000, // 2 seconds default
       screenshotQuality: 'medium',
       redactionPatterns: 'password,secret,token,api_key',
       darkMode: false,
@@ -47,17 +48,28 @@ class TestSnapperPopup {
     });
 
     // Manual screenshot
-    const screenshotBtn = document.getElementById('screenshot-btn');
-    if (screenshotBtn) {
-      screenshotBtn.addEventListener('click', () => {
+    const screenshotBtns = document.querySelectorAll('#screenshot-btn');
+    screenshotBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
         this.captureManualScreenshot();
       });
-    }
+    });
 
     // Settings save
     document.getElementById('save-settings').addEventListener('click', () => {
       this.saveSettings();
     });
+
+    // Input time frame slider
+    const timeFrameSlider = document.getElementById('input-time-frame');
+    const timeFrameValue = document.getElementById('time-frame-value');
+    if (timeFrameSlider && timeFrameValue) {
+      timeFrameSlider.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value);
+        timeFrameValue.textContent = `${value / 1000}s`;
+        this.settings.inputTimeFrame = value;
+      });
+    }
 
     // Export format selector in settings
     const exportFormatSelect = document.getElementById('export-format-select');
@@ -131,9 +143,9 @@ class TestSnapperPopup {
 
   async loadSettings() {
     try {
-      const result = await chrome.storage.local.get(['settings']);
-      if (result.settings) {
-        this.settings = { ...this.settings, ...result.settings };
+      const response = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+      if (response && response.settings) {
+        this.settings = { ...this.settings, ...response.settings };
       }
     } catch (error) { }
   }
@@ -195,7 +207,7 @@ class TestSnapperPopup {
           ${new Date(session.startTime).toLocaleDateString()} • 
           ${session.interactions?.length || 0} interactions • 
           ${session.screenshots?.length || 0} screenshots • 
-          ${durationText}
+          ${durationText}${session.apiFailures?.length ? ` • ${session.apiFailures.length} API failures` : ''}
         </div>
         <div class="session-url">${this.escapeHtml(session.url || '')}</div>
         ${this.renderSessionDetails(session)}
@@ -204,8 +216,8 @@ class TestSnapperPopup {
             <select class="export-format-select" data-session-id="${session.id}">
               <option value="txt">TXT</option>
               <option value="csv">CSV</option>
-              <option value="docx">DOCX (with screenshots)</option>
-              <option value="pdf">PDF (with screenshots)</option>
+              <option value="docx">DOCX</option>
+              <option value="pdf">PDF</option>
             </select>
             <button class="btn-small btn-export" data-session-id="${session.id}">
               Export
@@ -226,32 +238,82 @@ class TestSnapperPopup {
   renderSessionDetails(session) {
     let details = '';
 
+    // Settings used during recording
+    if (session.metadata && session.metadata.settings) {
+      const settings = session.metadata.settings;
+      details += `<div style="font-size:10px; color:#6b7280; margin-bottom:4px; border-top:1px dashed #e5e7eb; padding-top:4px;">`;
+      details += `⚙️ Time frame: ${(settings.inputTimeFrame || 2000) / 1000}s • `;
+      details += `Screenshots: ${settings.autoScreenshot ? 'Auto' : 'Manual'}`;
+      details += `</div>`;
+    }
+
     if (session.pauseEvents && session.pauseEvents.length > 0) {
       const pauseCount = session.pauseEvents.filter(e => e.type === 'pause').length;
       details += `<div style="font-size:10px; color:#f59e0b; margin-bottom:2px;">⏸️ ${pauseCount} pause(s) during session</div>`;
     }
+
+    if (session.apiFailures && session.apiFailures.length > 0) {
+      details += `<div style="font-size:10px; color:#ef4444; margin-bottom:2px;">⚠️ ${session.apiFailures.length} API failure(s)</div>`;
+    }
+
     if (session.screenshots && session.screenshots.length > 0) {
       details += `<div style="font-size:10px; color:#10b981; margin-bottom:2px;">📸 ${session.screenshots.length} screenshots captured</div>`;
     }
-    if (session.interactions && session.interactions.length > 0) {
+
+    // Create combined timeline of interactions and API failures
+    const combinedTimeline = this.createCombinedTimeline(session);
+
+    if (combinedTimeline.length > 0) {
       details += `
       <div style="font-size:11px; margin:6px 0 2px 0; color:#374151; border-top:1px dashed #e5e7eb; padding-top:4px;">
-        <div style="font-weight:600; color:#3b82f6; margin-bottom:2px;">Recent Interactions:</div>
-        ${session.interactions.slice(-3).map(i => {
-        let desc = `[${Math.round((i.relativeTime || 0) / 1000)}s] ${i.type.toUpperCase()}`;
-        if (i.selector) desc += ` <span style="color:#9ca3af">"${i.selector}"</span>`;
-        if (i.value) desc += ` value: <span style="color:#059669">"${i.value}"</span>`;
-        if (i.text && !i.value) desc += ` text: <span style="color:#059669">"${i.text.substring(0, 30)}"</span>`;
-        return `<div>• ${desc}</div>`;
+        <div style="font-weight:600; color:#3b82f6; margin-bottom:2px;">Recent Timeline:</div>
+        ${combinedTimeline.slice(-4).map(item => {
+        if (item.type === 'api_failure') {
+          return `<div style="color:#ef4444;">• [${Math.round(item.relativeTime / 1000)}s] ⚠️ API FAILURE: ${item.method} ${item.url} (${item.statusCode || item.error})${item.afterStep ? ` after step ${item.afterStep.step}` : ''}</div>`;
+        } else {
+          let desc = `[${Math.round(item.relativeTime / 1000)}s] ${item.type.toUpperCase()}`;
+          if (item.timeFrame) desc += ` <span style="color:#f59e0b;">(${item.timeFrame})</span>`;
+          if (item.selector) desc += ` <span style="color:#9ca3af">"${item.selector}"</span>`;
+          if (item.value) desc += ` value: <span style="color:#059669">"${item.value}"</span>`;
+          if (item.text && !item.value) desc += ` text: <span style="color:#059669">"${item.text.substring(0, 30)}"</span>`;
+          return `<div>• ${desc}</div>`;
+        }
       }).join('')}
-        ${session.interactions.length > 3 ? `<div style="color:#9ca3af;">... and ${session.interactions.length - 3} more</div>` : ''}
+        ${combinedTimeline.length > 4 ? `<div style="color:#9ca3af;">... and ${combinedTimeline.length - 4} more events</div>` : ''}
       </div>
       `;
     }
-    if (session.networkCalls && session.networkCalls.length > 0) {
-      details += `<div style="font-size: 11px; color: #ef4444; margin-top: 4px;">⚠️ ${session.networkCalls.length} network errors detected</div>`;
-    }
+
     return details;
+  }
+
+  createCombinedTimeline(session) {
+    const timeline = [];
+
+    // Add interactions
+    if (session.interactions) {
+      session.interactions.forEach(interaction => {
+        timeline.push({
+          ...interaction,
+          itemType: 'interaction'
+        });
+      });
+    }
+
+    // Add API failures
+    if (session.apiFailures) {
+      session.apiFailures.forEach(failure => {
+        timeline.push({
+          ...failure,
+          itemType: 'api_failure'
+        });
+      });
+    }
+
+    // Sort by relative time
+    timeline.sort((a, b) => (a.relativeTime || 0) - (b.relativeTime || 0));
+
+    return timeline;
   }
 
   addSessionEventListeners() {
@@ -283,12 +345,24 @@ class TestSnapperPopup {
     document.getElementById('screenshot-quality').value = this.settings.screenshotQuality;
     document.getElementById('redaction-patterns').value = this.settings.redactionPatterns;
     document.getElementById('dark-mode').checked = this.settings.darkMode;
+
+    // Input time frame slider
+    const timeFrameSlider = document.getElementById('input-time-frame');
+    const timeFrameValue = document.getElementById('time-frame-value');
+    if (timeFrameSlider && timeFrameValue) {
+      timeFrameSlider.value = this.settings.inputTimeFrame;
+      timeFrameValue.textContent = `${this.settings.inputTimeFrame / 1000}s`;
+    }
+
     const exportFormatSelect = document.getElementById('export-format-select');
     if (exportFormatSelect) exportFormatSelect.value = this.settings.defaultExportFormat;
   }
 
   async startRecording() {
     try {
+      // First save current settings to ensure they are applied
+      await this.saveSettings();
+
       const startBtn = document.getElementById('start-btn');
       startBtn.disabled = true;
       startBtn.textContent = 'Starting...';
@@ -308,7 +382,6 @@ class TestSnapperPopup {
       startBtn.textContent = 'Start Recording';
     }
   }
-
 
   async pauseRecording() {
     try {
@@ -378,28 +451,49 @@ class TestSnapperPopup {
 
   async captureManualScreenshot() {
     try {
-      const screenshotBtn = document.getElementById('screenshot-btn');
-      screenshotBtn.disabled = true;
-      screenshotBtn.textContent = 'Capturing...';
-      const response = await chrome.runtime.sendMessage({
-        type: 'CAPTURE_SCREENSHOT',
-        data: { type: 'manual', timestamp: Date.now() }
+      const screenshotBtns = document.querySelectorAll('#screenshot-btn');
+      screenshotBtns.forEach(btn => {
+        btn.disabled = true;
+        btn.textContent = 'Capturing...';
       });
+
+      // Manual screenshots should always work regardless of auto-screenshot setting
+      chrome.runtime.sendMessage({
+        type: 'CAPTURE_SCREENSHOT',
+        data: {
+          type: 'manual_capture',
+          manual: true, // This flag ensures it works even when autoScreenshot is disabled
+          timestamp: Date.now()
+        }
+      }, (response) => {
+        if (response.success) {
+          console.log('Manual screenshot captured successfully');
+        } else {
+          console.error('Manual screenshot failed:', response.reason);
+        }
+      });
+
       if (response && response.success) {
-        screenshotBtn.textContent = 'Captured!';
-        screenshotBtn.style.background = '#059669';
+        screenshotBtns.forEach(btn => {
+          btn.textContent = 'Captured!';
+          btn.style.background = '#059669';
+        });
         setTimeout(() => {
-          screenshotBtn.textContent = '📸 Screenshot';
-          screenshotBtn.style.background = '';
-          screenshotBtn.disabled = false;
+          screenshotBtns.forEach(btn => {
+            btn.textContent = '📸 Screenshot';
+            btn.style.background = '';
+            btn.disabled = false;
+          });
         }, 1000);
       } else {
         throw new Error('Failed to capture screenshot');
       }
     } catch (error) {
-      const screenshotBtn = document.getElementById('screenshot-btn');
-      screenshotBtn.disabled = false;
-      screenshotBtn.textContent = '📸 Screenshot';
+      const screenshotBtns = document.querySelectorAll('#screenshot-btn');
+      screenshotBtns.forEach(btn => {
+        btn.disabled = false;
+        btn.textContent = '📸 Screenshot';
+      });
     }
   }
 
@@ -411,15 +505,15 @@ class TestSnapperPopup {
       exportBtn.textContent = 'Exporting...';
 
       if (format === 'docx') {
-        // DOCX is generated locally
+        // DOCX is generated locally using the fixed function
         const session = this.sessions.find(s => s.id === sessionId);
         if (session) {
-          await downloadDocxFromSession(session);
+          await this.downloadDocxFromSession(session);
           exportBtn.textContent = 'Exported!';
-          exportBtn.style.background = '#059669';
+          exportBtn.classList.add('success');
           setTimeout(() => {
             exportBtn.textContent = originalText;
-            exportBtn.style.background = '';
+            exportBtn.classList.remove('success');
             exportBtn.disabled = false;
           }, 1500);
           return;
@@ -428,7 +522,7 @@ class TestSnapperPopup {
         }
       }
 
-      // For other formats, keep existing flow
+      // For other formats, use background script
       const response = await chrome.runtime.sendMessage({
         type: 'EXPORT_SESSION',
         sessionId,
@@ -438,21 +532,434 @@ class TestSnapperPopup {
       if (response && response.exportData) {
         await this.downloadExportedFile(response.exportData, format);
         exportBtn.textContent = 'Exported!';
-        exportBtn.style.background = '#059669';
+        exportBtn.classList.add('success');
         setTimeout(() => {
           exportBtn.textContent = originalText;
-          exportBtn.style.background = '';
+          exportBtn.classList.remove('success');
           exportBtn.disabled = false;
         }, 1500);
       } else {
         throw new Error('No export data received');
       }
     } catch (error) {
+      console.error('Export failed:', error);
       alert('Failed to export session: ' + error.message);
       const exportBtn = document.querySelector(`button[data-session-id="${sessionId}"]`);
       exportBtn.disabled = false;
       exportBtn.textContent = 'Export';
+      exportBtn.classList.add('error');
+      setTimeout(() => {
+        exportBtn.classList.remove('error');
+      }, 2000);
     }
+  }
+
+  // Fixed DOCX export function with proper screenshot handling and time frame support
+  async downloadDocxFromSession(session) {
+    try {
+      if (!window.docx) {
+        throw new Error('DOCX library not loaded');
+      }
+
+      const { Document, Packer, Paragraph, TextRun, ImageRun } = window.docx;
+
+      // Create document content
+      const children = await this.createDocumentContent(session);
+
+      // Create document
+      const doc = new Document({
+        sections: [{
+          children: children
+        }]
+      });
+
+      // Generate and download
+      const blob = await Packer.toBlob(doc);
+      const filename = `${(session.name || 'session').replace(/[^a-z0-9]/gi, '_')}.docx`;
+
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+
+      console.log('DOCX exported successfully:', filename);
+    } catch (error) {
+      console.error('DOCX export failed:', error);
+      throw error;
+    }
+  }
+
+  async createDocumentContent(session) {
+    const { Paragraph, TextRun, ImageRun } = window.docx;
+    const children = [];
+
+    // Title and metadata
+    children.push(
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: `TestSnapper Session: ${session.name || 'Untitled Session'}`,
+            bold: true,
+            size: 32,
+            color: "2563EB"
+          })
+        ],
+        spacing: { after: 200 }
+      }),
+
+      new Paragraph({
+        children: [
+          new TextRun({ text: "URL: ", bold: true }),
+          new TextRun({ text: session.url || 'N/A' })
+        ]
+      }),
+
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Date: ", bold: true }),
+          new TextRun({ text: new Date(session.startTime).toLocaleString() })
+        ]
+      }),
+
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Duration: ", bold: true }),
+          new TextRun({
+            text: `${Math.round((session.activeDuration || session.duration || 0) / 1000)}s active` +
+              (session.duration !== session.activeDuration ?
+                ` (${Math.round((session.duration || 0) / 1000)}s total)` : '')
+          })
+        ]
+      }),
+
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Time Frame: ", bold: true }),
+          new TextRun({
+            text: `${(session.metadata?.settings?.inputTimeFrame || 2000) / 1000}s`
+          })
+        ]
+      }),
+
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Interactions: ", bold: true }),
+          new TextRun({ text: `${session.interactions?.length || 0}` })
+        ]
+      }),
+
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Screenshots: ", bold: true }),
+          new TextRun({ text: `${session.screenshots?.length || 0}` })
+        ]
+      }),
+
+      new Paragraph({
+        children: [
+          new TextRun({ text: "API Failures: ", bold: true }),
+          new TextRun({ text: `${session.apiFailures?.length || 0}` })
+        ]
+      }),
+
+      // Empty line
+      new Paragraph({ text: "" })
+    );
+
+    // Create combined timeline
+    const combinedTimeline = this.createCombinedTimeline(session);
+
+    if (combinedTimeline.length > 0) {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: "Timeline (Interactions & API Failures):", bold: true, size: 24 })
+          ],
+          spacing: { before: 200, after: 100 }
+        })
+      );
+
+      for (let i = 0; i < combinedTimeline.length; i++) {
+        const item = combinedTimeline[i];
+        if (item.itemType === 'api_failure') {
+          const failureParagraphs = await this.createApiFailureParagraphs(item, i + 1);
+          children.push(...failureParagraphs);
+        } else {
+          const interactionParagraphs = await this.createInteractionParagraphs(item, i + 1, session.screenshots);
+          children.push(...interactionParagraphs);
+        }
+      }
+    }
+
+    // Add screenshots section if any
+    if (session.screenshots && session.screenshots.length > 0) {
+      children.push(
+        new Paragraph({ text: "" }),
+        new Paragraph({
+          children: [
+            new TextRun({ text: "Screenshots:", bold: true, size: 24 })
+          ],
+          spacing: { before: 200, after: 100 }
+        })
+      );
+
+      for (let i = 0; i < session.screenshots.length; i++) {
+        const screenshot = session.screenshots[i];
+        const screenshotParagraphs = await this.createScreenshotParagraphs(screenshot, i + 1);
+        children.push(...screenshotParagraphs);
+      }
+    }
+
+    return children;
+  }
+
+  async createInteractionParagraphs(interaction, index, screenshots) {
+    const { Paragraph, TextRun } = window.docx;
+    const paragraphs = [];
+
+    // Main interaction description
+    const interactionText = [
+      new TextRun({
+        text: `${index}. [${Math.round((interaction.relativeTime || 0) / 1000)}s] `,
+        bold: true,
+        color: "374151"
+      }),
+      new TextRun({
+        text: interaction.type.toUpperCase(),
+        bold: true,
+        color: this.getInteractionColor(interaction.type)
+      })
+    ];
+
+    // Add time frame if available
+    if (interaction.timeFrame) {
+      interactionText.push(
+        new TextRun({
+          text: ` (${interaction.timeFrame})`,
+          color: "F59E0B",
+          bold: true
+        })
+      );
+    }
+
+    if (interaction.selector) {
+      interactionText.push(
+        new TextRun({ text: ' on ' }),
+        new TextRun({
+          text: `"${interaction.selector}"`,
+          italics: true,
+          color: "6B7280"
+        })
+      );
+    }
+
+    paragraphs.push(new Paragraph({ children: interactionText }));
+
+    // Add details
+    const details = [];
+    if (interaction.value && interaction.value !== '[REDACTED]') {
+      details.push(`Value: "${interaction.value}"`);
+    } else if (interaction.value === '[REDACTED]') {
+      details.push('Value: [REDACTED]');
+    }
+
+    if (interaction.text && !interaction.value) {
+      const text = interaction.text.length > 50 ?
+        interaction.text.substring(0, 50) + '...' :
+        interaction.text;
+      details.push(`Text: "${text}"`);
+    }
+
+    if (details.length > 0) {
+      paragraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `   ${details.join(' | ')}`,
+              color: "6B7280",
+              size: 20
+            })
+          ]
+        })
+      );
+    }
+
+    // Add related screenshot if exists
+    const relatedScreenshot = screenshots?.find(s =>
+      s.context.interactionId === interaction.id ||
+      s.context.interactionType === interaction.type
+    );
+
+    if (relatedScreenshot) {
+      try {
+        const screenshotParagraph = await this.createInlineScreenshot(relatedScreenshot);
+        if (screenshotParagraph) {
+          paragraphs.push(screenshotParagraph);
+        }
+      } catch (error) {
+        console.warn('Failed to add screenshot to interaction:', error);
+      }
+    }
+
+    paragraphs.push(new Paragraph({ text: "" })); // Empty line
+
+    return paragraphs;
+  }
+
+  async createApiFailureParagraphs(failure, index) {
+    const { Paragraph, TextRun } = window.docx;
+    const paragraphs = [];
+
+    // Main failure description
+    const failureText = [
+      new TextRun({
+        text: `${index}. [${Math.round((failure.relativeTime || 0) / 1000)}s] `,
+        bold: true,
+        color: "374151"
+      }),
+      new TextRun({
+        text: "⚠️ API FAILURE",
+        bold: true,
+        color: "EF4444"
+      }),
+      new TextRun({
+        text: ` ${failure.method} ${failure.url}`,
+        color: "374151"
+      })
+    ];
+
+    paragraphs.push(new Paragraph({ children: failureText }));
+
+    // Add failure details
+    const details = [];
+    details.push(`Status: ${failure.statusCode || failure.error}`);
+    if (failure.afterStep) {
+      details.push(`After Step: ${failure.afterStep.step} - ${failure.afterStep.type.toUpperCase()}`);
+      if (failure.afterStep.selector) {
+        details.push(`Element: "${failure.afterStep.selector}"`);
+      }
+    }
+
+    if (details.length > 0) {
+      paragraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `   ${details.join(' | ')}`,
+              color: "DC2626",
+              size: 20
+            })
+          ]
+        })
+      );
+    }
+
+    paragraphs.push(new Paragraph({ text: "" })); // Empty line
+
+    return paragraphs;
+  }
+
+  async createScreenshotParagraphs(screenshot, index) {
+    const { Paragraph, TextRun } = window.docx;
+    const paragraphs = [];
+
+    // Screenshot title
+    paragraphs.push(
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: `Screenshot ${index}: `,
+            bold: true
+          }),
+          new TextRun({
+            text: `${screenshot.context.type || 'manual'} `,
+            color: "3B82F6"
+          }),
+          new TextRun({
+            text: `[${Math.round((screenshot.relativeTime || 0) / 1000)}s]`,
+            color: "6B7280"
+          })
+        ]
+      })
+    );
+
+    // Add screenshot image
+    try {
+      const screenshotParagraph = await this.createInlineScreenshot(screenshot, 400);
+      if (screenshotParagraph) {
+        paragraphs.push(screenshotParagraph);
+      }
+    } catch (error) {
+      paragraphs.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `   [Screenshot could not be embedded: ${error.message}]`,
+              italics: true,
+              color: "EF4444"
+            })
+          ]
+        })
+      );
+    }
+
+    paragraphs.push(new Paragraph({ text: "" })); // Empty line
+
+    return paragraphs;
+  }
+
+  async createInlineScreenshot(screenshot, maxWidth = 300) {
+    const { Paragraph, ImageRun } = window.docx;
+
+    if (!screenshot.dataUrl || !screenshot.dataUrl.startsWith('data:image')) {
+      return null;
+    }
+
+    try {
+      // Convert data URL to buffer
+      const response = await fetch(screenshot.dataUrl);
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = new Uint8Array(arrayBuffer);
+
+      // Create image run
+      const imageRun = new ImageRun({
+        data: buffer,
+        transformation: {
+          width: maxWidth,
+          height: Math.round(maxWidth * 0.6) // Maintain aspect ratio approximately
+        }
+      });
+
+      return new Paragraph({
+        children: [imageRun],
+        spacing: { before: 100, after: 100 }
+      });
+
+    } catch (error) {
+      console.error('Failed to create inline screenshot:', error);
+      return null;
+    }
+  }
+
+  getInteractionColor(type) {
+    const colors = {
+      'click': '3B82F6',      // Blue
+      'input': '10B981',      // Green
+      'change': '10B981',     // Green
+      'navigation': '8B5CF6', // Purple
+      'url_change': '8B5CF6', // Purple
+      'scroll': '6B7280',     // Gray
+      'hover': 'F59E0B',      // Orange
+      'keypress': 'EF4444',   // Red
+      'session_start': '059669', // Dark green
+      'session_end': 'DC2626',   // Dark red
+      'session_pause': 'D97706', // Dark orange
+      'session_resume': '047857' // Dark green
+    };
+    return colors[type] || '374151'; // Default gray
   }
 
   async downloadExportedFile(exportData, format) {
@@ -466,12 +973,6 @@ class TestSnapperPopup {
         blob = new Blob([exportData.csvContent], { type: 'text/csv' });
         filename = exportData.filename;
         break;
-      case 'docx':
-        content = JSON.stringify(exportData.docxData, null, 2);
-        content = `// DOCX Export Data for ${exportData.session.name}\n// This file contains structured data that can be processed into a DOCX document\n// Screenshots are included as base64 data URLs\n\n${content}`;
-        blob = new Blob([content], { type: 'application/json' });
-        filename = exportData.filename.replace('.docx', '_data.json');
-        break;
       case 'pdf':
         content = JSON.stringify(exportData.pdfData, null, 2);
         content = `// PDF Export Data for ${exportData.session.name}\n// This file contains structured data that can be processed into a PDF document\n// Screenshots are included as base64 data URLs\n\n${content}`;
@@ -481,6 +982,7 @@ class TestSnapperPopup {
       default:
         throw new Error('Unsupported export format: ' + format);
     }
+
     // Download the file
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -506,14 +1008,30 @@ class TestSnapperPopup {
 
   async saveSettings() {
     try {
+      // Update settings from UI
       this.settings.autoScreenshot = document.getElementById('auto-screenshot').checked;
       this.settings.screenshotQuality = document.getElementById('screenshot-quality').value;
       this.settings.redactionPatterns = document.getElementById('redaction-patterns').value;
       this.settings.darkMode = document.getElementById('dark-mode').checked;
+
+      // Input time frame from slider
+      const timeFrameSlider = document.getElementById('input-time-frame');
+      if (timeFrameSlider) {
+        this.settings.inputTimeFrame = parseInt(timeFrameSlider.value);
+      }
+
       const exportFormatSelect = document.getElementById('export-format-select');
       if (exportFormatSelect) this.settings.defaultExportFormat = exportFormatSelect.value;
 
+      // Save to both local storage and send to background script
       await chrome.storage.local.set({ settings: this.settings });
+
+      // Update background script settings
+      await chrome.runtime.sendMessage({
+        type: 'UPDATE_SETTINGS',
+        settings: this.settings
+      });
+
       const btn = document.getElementById('save-settings');
       const originalText = btn.textContent;
       btn.textContent = 'Saved!';
@@ -522,7 +1040,10 @@ class TestSnapperPopup {
         btn.textContent = originalText;
         btn.style.background = '';
       }, 1500);
+
+      console.log('Settings saved successfully:', this.settings);
     } catch (error) {
+      console.error('Failed to save settings:', error);
       alert('Failed to save settings: ' + error.message);
     }
   }
@@ -533,61 +1054,6 @@ class TestSnapperPopup {
     return div.innerHTML;
   }
 }
-
-// Add or replace this function in popup.js
-async function downloadDocxFromSession(session) {
-  const { Document, Packer, Paragraph, TextRun } = window.docx;
-  const doc = new Document();
-
-  let children = [
-    new Paragraph({ children: [new TextRun({ text: `Session Name: ${session.name || 'TestSnapper Session'}`, bold: true, size: 28 })] }),
-    new Paragraph({ text: `URL: ${session.url || ''}` }),
-    new Paragraph({ text: `Date: ${new Date(session.startTime).toLocaleString()}` }),
-    new Paragraph({ text: "" }),
-    new Paragraph({ text: "Interactions:", bold: true }),
-  ];
-
-  // Add interactions
-  for (const i of session.interactions || []) {
-    let parts = [];
-    parts.push(new TextRun({ text: `[${i.type.toUpperCase()}] `, bold: true }));
-    if (i.selector) parts.push(new TextRun({ text: `Selector: ${i.selector}  ` }));
-    if (i.text) parts.push(new TextRun({ text: `Text: ${i.text}  ` }));
-    if (i.value) parts.push(new TextRun({ text: `Value: ${i.value}` }));
-    children.push(new Paragraph({ children: parts }));
-  }
-
-  // Add screenshots (if any)
-  if (session.screenshots && session.screenshots.length > 0) {
-    children.push(new Paragraph({ text: "" }));
-    children.push(new Paragraph({ text: "Screenshots:", bold: true }));
-
-    for (const [idx, shot] of session.screenshots.entries()) {
-      children.push(new Paragraph({ text: `Screenshot ${idx + 1} (${new Date(shot.timestamp).toLocaleString()})` }));
-      if (shot.dataUrl && shot.dataUrl.startsWith("data:image")) {
-        const imageRun = await doc.createImage(shot.dataUrl, { width: 400, height: 250 });
-        children.push(new Paragraph(imageRun));
-      }
-      children.push(new Paragraph({ text: "" }));
-    }
-  }
-
-  // CRITICAL: addSection must be called BEFORE toBlob
-  doc.addSection({ children });
-
-  const blob = await Packer.toBlob(doc);
-
-  // Download
-  const filename = `${session.name || 'session'}.docx`;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
-}
-
 
 // Initialize popup
 console.log('Initializing TestSnapper popup...');
