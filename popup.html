@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TestSnapper</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            width: 320px;
+            height: 400px;
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #f9fafb;
+        }
+        
+        .header {
+            background: #3b82f6;
+            color: white;
+            padding: 12px;
+        }
+        
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .header p {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        
+        .nav {
+            background: #f3f4f6;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+        }
+        
+        .nav-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            background: transparent;
+            font-size: 12px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        
+        .nav-btn.active {
+            background: white;
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+        
+        .content {
+            padding: 16px;
+            height: calc(100% - 100px);
+            overflow-y: auto;
+        }
+        
+        .recording-status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #d1d5db;
+        }
+        
+        .status-indicator.recording {
+            background: #ef4444;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+        
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+        
+        .session-item {
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: white;
+        }
+        
+        .session-title {
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        
+        .session-meta {
+            font-size: 11px;
+            color: #6b7280;
+            margin-bottom: 4px;
+        }
+        
+        .session-url {
+            font-size: 10px;
+            color: #9ca3af;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .session-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .btn-small {
+            padding: 4px 8px;
+            font-size: 11px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .btn-export {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .btn-delete {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 32px;
+            color: #6b7280;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .recording-info {
+            background: #dcfce7;
+            border: 1px solid #bbf7d0;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .recording-info h4 {
+            font-size: 12px;
+            color: #166534;
+            margin-bottom: 8px;
+        }
+        
+        .recording-info ul {
+            font-size: 11px;
+            color: #166534;
+            list-style: none;
+        }
+        
+        .recording-info li {
+            margin-bottom: 2px;
+        }
+        
+        .recording-info li::before {
+            content: "• ";
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>TestSnapper v1.0</h1>
+        <p>QA Session Recording</p>
+    </div>
+    
+    <nav class="nav">
+        <button class="nav-btn active" data-tab="record">🔴 Record</button>
+        <button class="nav-btn" data-tab="sessions">📝 Sessions</button>
+        <button class="nav-btn" data-tab="settings">⚙️ Settings</button>
+    </nav>
+    
+    <div class="content">
+        <!-- Recording Tab -->
+        <div id="record-tab" class="tab-content">
+            <div class="recording-status">
+                <h2 style="font-size: 16px; font-weight: 600;">Recording</h2>
+                <div class="status-indicator" id="status-indicator"></div>
+            </div>
+            
+            <div id="not-recording">
+                <p style="font-size: 13px; color: #6b7280; margin-bottom: 12px;">
+                    Start recording UI interactions on the current page.
+                </p>
+                <button class="btn btn-primary" id="start-btn">Start Recording</button>
+            </div>
+            
+            <div id="recording" class="hidden">
+                <p style="font-size: 13px; color: #059669; margin-bottom: 12px;">
+                    Recording in progress...
+                </p>
+                <div class="recording-info">
+                    <h4>Capturing:</h4>
+                    <ul>
+                        <li>Clicks and interactions</li>
+                        <li>Form inputs and changes</li>
+                        <li>Navigation and scrolling</li>
+                        <li>Network errors (4xx/5xx)</li>
+                    </ul>
+                </div>
+                <button class="btn btn-danger" id="stop-btn">Stop Recording</button>
+            </div>
+        </div>
+        
+        <!-- Sessions Tab -->
+        <div id="sessions-tab" class="tab-content hidden">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h2 style="font-size: 16px; font-weight: 600;">Sessions</h2>
+                <span id="session-count" style="font-size: 12px; color: #6b7280;">(0)</span>
+            </div>
+            
+            <div id="sessions-list"></div>
+            
+            <div id="no-sessions" class="empty-state">
+                <div style="font-size: 24px; margin-bottom: 8px;">📝</div>
+                <p style="font-size: 13px; margin-bottom: 4px;">No sessions recorded yet</p>
+                <p style="font-size: 11px;">Start recording to create your first session</p>
+            </div>
+        </div>
+        
+        <!-- Settings Tab -->
+        <div id="settings-tab" class="tab-content hidden">
+            <h2 style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">Settings</h2>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: flex; align-items: center; font-size: 13px;">
+                    <input type="checkbox" id="auto-screenshot" style="margin-right: 8px;">
+                    Auto-capture screenshots on interactions
+                </label>
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; font-size: 13px; margin-bottom: 4px;">Screenshot quality</label>
+                <select id="screenshot-quality" style="width: 100%; padding: 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;">
+                    <option value="high">High</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; font-size: 13px; margin-bottom: 4px;">Data redaction patterns</label>
+                <textarea id="redaction-patterns" placeholder="password,secret,token,api_key" 
+                    style="width: 100%; padding: 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; height: 60px; resize: none;"></textarea>
+            </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: flex; align-items: center; font-size: 13px;">
+                    <input type="checkbox" id="dark-mode" style="margin-right: 8px;">
+                    Dark mode
+                </label>
+            </div>
+            
+            <button class="btn btn-primary" id="save-settings">Save Settings</button>
+        </div>
+    </div>
+    
+    <script src="src/popup.js"></script>
+</body>
+</html>

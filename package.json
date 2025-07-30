@@ -1,0 +1,7 @@
+{
+  "name": "testsnapper-extension",
+  "version": "1.0.0",
+  "description": "Chrome extension for QA session recording and bug reporting",
+  "license": "MIT",
+  "dependencies": {}
+}

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TestSnapper Demo Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #007cba;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #005a87;
+        }
+        .error-btn {
+            background: #dc3545;
+        }
+        .error-btn:hover {
+            background: #c82333;
+        }
+        .demo-section {
+            border: 1px solid #eee;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        .results {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        nav ul {
+            list-style: none;
+            padding: 0;
+            display: flex;
+            gap: 20px;
+        }
+        nav a {
+            color: #007cba;
+            text-decoration: none;
+        }
+        nav a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>TestSnapper Demo Page</h1>
+        <p>Use this page to test the TestSnapper Chrome extension's recording capabilities.</p>
+        
+        <nav>
+            <ul>
+                <li><a href="#forms" onclick="scrollToSection('forms')">Forms</a></li>
+                <li><a href="#buttons" onclick="scrollToSection('buttons')">Buttons</a></li>
+                <li><a href="#network" onclick="scrollToSection('network')">Network Tests</a></li>
+                <li><a href="https://httpstat.us/404" target="_blank">404 Error Link</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <div id="forms" class="demo-section">
+            <h2>Form Interactions</h2>
+            <p>Fill out this form to test input recording:</p>
+            
+            <form id="demo-form">
+                <div class="form-group">
+                    <label for="name">Full Name:</label>
+                    <input type="text" id="name" name="name" placeholder="Enter your full name">
+                </div>
+                
+                <div class="form-group">
+                    <label for="email">Email:</label>
+                    <input type="email" id="email" name="email" placeholder="Enter your email">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">Password:</label>
+                    <input type="password" id="password" name="password" placeholder="Enter password">
+                </div>
+                
+                <div class="form-group">
+                    <label for="category">Category:</label>
+                    <select id="category" name="category">
+                        <option value="">Select a category</option>
+                        <option value="developer">Developer</option>
+                        <option value="tester">QA Tester</option>
+                        <option value="manager">Manager</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="comments">Comments:</label>
+                    <textarea id="comments" name="comments" rows="4" placeholder="Enter your comments"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="newsletter" name="newsletter"> Subscribe to newsletter
+                    </label>
+                </div>
+                
+                <button type="submit">Submit Form</button>
+                <button type="reset">Reset Form</button>
+            </form>
+            
+            <div id="form-results" class="results" style="display: none;"></div>
+        </div>
+
+        <div id="buttons" class="demo-section">
+            <h2>Button Interactions</h2>
+            <p>Click these buttons to test different interaction types:</p>
+            
+            <button onclick="showAlert()">Show Alert</button>
+            <button onclick="changeColor()">Change Background</button>
+            <button onclick="addListItem()">Add List Item</button>
+            <button onclick="toggleVisibility()">Toggle Section</button>
+            
+            <div id="dynamic-content" style="margin-top: 20px;">
+                <h3>Dynamic Content Area</h3>
+                <ul id="dynamic-list">
+                    <li>Static list item 1</li>
+                    <li>Static list item 2</li>
+                </ul>
+                
+                <div id="toggleable-section" style="background: #e9ecef; padding: 15px; margin-top: 10px;">
+                    <p>This section can be toggled on/off. It contains some sample content to test visibility changes.</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="network" class="demo-section">
+            <h2>Network Error Testing</h2>
+            <p>These buttons will trigger network requests that result in errors:</p>
+            
+            <button onclick="trigger404()" class="error-btn">Trigger 404 Error</button>
+            <button onclick="trigger500()" class="error-btn">Trigger 500 Error</button>
+            <button onclick="triggerTimeout()" class="error-btn">Trigger Timeout</button>
+            <button onclick="triggerSuccess()">Successful Request</button>
+            
+            <div id="network-results" class="results"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>Hover and Scroll Testing</h2>
+            <p>Hover over these elements and scroll around the page to test hover recording:</p>
+            
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin: 20px 0;">
+                <div style="background: #007cba; color: white; padding: 20px; text-align: center; cursor: pointer;" 
+                     onmouseover="showTooltip(this, 'Hovered over blue box')" 
+                     onmouseout="hideTooltip()">
+                    Hover Box 1
+                </div>
+                <div style="background: #28a745; color: white; padding: 20px; text-align: center; cursor: pointer;"
+                     onmouseover="showTooltip(this, 'Hovered over green box')" 
+                     onmouseout="hideTooltip()">
+                    Hover Box 2
+                </div>
+                <div style="background: #dc3545; color: white; padding: 20px; text-align: center; cursor: pointer;"
+                     onmouseover="showTooltip(this, 'Hovered over red box')" 
+                     onmouseout="hideTooltip()">
+                    Hover Box 3
+                </div>
+            </div>
+            
+            <div id="tooltip" style="display: none; position: fixed; background: #333; color: white; padding: 5px 10px; border-radius: 4px; z-index: 1000;"></div>
+        </div>
+
+        <div class="demo-section" style="height: 400px; overflow-y: scroll; border: 1px solid #ddd;">
+            <h2>Scrollable Content</h2>
+            <p>This section has scrollable content to test scroll recording:</p>
+            
+            <div style="height: 800px; background: linear-gradient(to bottom, #f8f9fa, #e9ecef); padding: 20px;">
+                <p>Scroll through this content...</p>
+                <div style="margin: 50px 0;">Content block 1</div>
+                <div style="margin: 50px 0;">Content block 2</div>
+                <div style="margin: 50px 0;">Content block 3</div>
+                <div style="margin: 50px 0;">Content block 4</div>
+                <div style="margin: 50px 0;">Content block 5</div>
+                <div style="margin: 50px 0;">Content block 6</div>
+                <div style="margin: 50px 0;">Content block 7</div>
+                <div style="margin: 50px 0;">Content block 8</div>
+                <div style="margin: 50px 0;">You've reached the bottom!</div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let itemCounter = 0;
+        let backgroundColors = ['#f8f9fa', '#e9ecef', '#dee2e6', '#ced4da'];
+        let colorIndex = 0;
+
+        // Form handling
+        document.getElementById('demo-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const results = document.getElementById('form-results');
+            
+            let resultText = '<h4>Form Submitted:</h4><ul>';
+            for (let [key, value] of formData.entries()) {
+                if (key === 'password') value = '[REDACTED]';
+                resultText += `<li><strong>${key}:</strong> ${value}</li>`;
+            }
+            resultText += '</ul>';
+            
+            results.innerHTML = resultText;
+            results.style.display = 'block';
+        });
+
+        // Button interaction functions
+        function showAlert() {
+            alert('Alert triggered! This tests click recording.');
+        }
+
+        function changeColor() {
+            document.body.style.backgroundColor = backgroundColors[colorIndex];
+            colorIndex = (colorIndex + 1) % backgroundColors.length;
+        }
+
+        function addListItem() {
+            itemCounter++;
+            const list = document.getElementById('dynamic-list');
+            const newItem = document.createElement('li');
+            newItem.textContent = `Dynamic item ${itemCounter}`;
+            newItem.style.color = '#007cba';
+            list.appendChild(newItem);
+        }
+
+        function toggleVisibility() {
+            const section = document.getElementById('toggleable-section');
+            section.style.display = section.style.display === 'none' ? 'block' : 'none';
+        }
+
+        // Network error testing
+        async function trigger404() {
+            try {
+                const response = await fetch('https://httpstat.us/404');
+                updateNetworkResults('404 request completed', false);
+            } catch (error) {
+                updateNetworkResults('404 request failed: ' + error.message, true);
+            }
+        }
+
+        async function trigger500() {
+            try {
+                const response = await fetch('https://httpstat.us/500');
+                updateNetworkResults('500 request completed', false);
+            } catch (error) {
+                updateNetworkResults('500 request failed: ' + error.message, true);
+            }
+        }
+
+        async function triggerTimeout() {
+            try {
+                const controller = new AbortController();
+                setTimeout(() => controller.abort(), 1000);
+                
+                const response = await fetch('https://httpstat.us/200?sleep=5000', {
+                    signal: controller.signal
+                });
+                updateNetworkResults('Request completed', false);
+            } catch (error) {
+                updateNetworkResults('Request timed out: ' + error.message, true);
+            }
+        }
+
+        async function triggerSuccess() {
+            try {
+                const response = await fetch('https://httpstat.us/200');
+                updateNetworkResults('Successful request (200 OK)', false);
+            } catch (error) {
+                updateNetworkResults('Request failed: ' + error.message, true);
+            }
+        }
+
+        function updateNetworkResults(message, isError) {
+            const results = document.getElementById('network-results');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = isError ? '#dc3545' : '#28a745';
+            
+            const resultDiv = document.createElement('div');
+            resultDiv.innerHTML = `<span style="color: ${color};">[${timestamp}] ${message}</span>`;
+            
+            results.appendChild(resultDiv);
+            results.scrollTop = results.scrollHeight;
+        }
+
+        // Tooltip functions
+        function showTooltip(element, text) {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.textContent = text;
+            tooltip.style.display = 'block';
+            
+            // Position tooltip near mouse
+            document.addEventListener('mousemove', moveTooltip);
+        }
+
+        function hideTooltip() {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.style.display = 'none';
+            document.removeEventListener('mousemove', moveTooltip);
+        }
+
+        function moveTooltip(e) {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.style.left = (e.clientX + 10) + 'px';
+            tooltip.style.top = (e.clientY - 30) + 'px';
+        }
+
+        // Navigation
+        function scrollToSection(sectionId) {
+            document.getElementById(sectionId).scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Add some console logging for testing
+        console.log('TestSnapper demo page loaded');
+        
+        // Simulate some background activity
+        setInterval(() => {
+            console.log('Background activity:', new Date().toISOString());
+        }, 10000);
+    </script>
+</body>
+</html>
