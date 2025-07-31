@@ -1,17 +1,19 @@
-// Enhanced Popup script for TestSnapper extension with time frame settings and API failure display
+// Enhanced Popup script for TestSnapper extension with bulk session management and auto-clear
 
 class TestSnapperPopup {
   constructor() {
     this.isRecording = false;
     this.isPaused = false;
     this.sessions = [];
+    this.selectedSessions = new Set();
     this.settings = {
       autoScreenshot: true,
       inputTimeFrame: 2000, // 2 seconds default
       screenshotQuality: 'medium',
       redactionPatterns: 'password,secret,token,api_key',
       darkMode: false,
-      defaultExportFormat: 'txt'
+      defaultExportFormat: 'txt',
+      autoClearDays: 2 // Auto-clear sessions after 2 days
     };
     this.currentTab = 'record';
     this.init();
@@ -20,9 +22,34 @@ class TestSnapperPopup {
   async init() {
     console.log('TestSnapper Popup initializing...');
     this.setupEventListeners();
+    
+    // Auto-clear old sessions before loading data
+    await this.autoClearOldSessions();
+    
     await this.loadData();
     this.updateUI();
     console.log('TestSnapper Popup initialized');
+  }
+
+  async autoClearOldSessions() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS' });
+      if (response && Array.isArray(response.sessions)) {
+        const sessions = response.sessions;
+        const cutoffTime = Date.now() - (this.settings.autoClearDays * 24 * 60 * 60 * 1000);
+        
+        const validSessions = sessions.filter(session => {
+          return session.startTime && session.startTime > cutoffTime;
+        });
+
+        if (validSessions.length < sessions.length) {
+          console.log(`Auto-clearing ${sessions.length - validSessions.length} old sessions`);
+          await chrome.storage.local.set({ sessions: validSessions });
+        }
+      }
+    } catch (error) {
+      console.log('Auto-clear failed:', error);
+    }
   }
 
   setupEventListeners() {
@@ -47,7 +74,7 @@ class TestSnapperPopup {
       this.stopRecording();
     });
 
-    // Manual screenshot
+    // Manual screenshot (works even when paused)
     const screenshotBtns = document.querySelectorAll('#screenshot-btn');
     screenshotBtns.forEach(btn => {
       btn.addEventListener('click', () => {
@@ -79,6 +106,13 @@ class TestSnapperPopup {
         this.saveSettings();
       });
     }
+
+    // Bulk session management
+    this.setupBulkSessionControls();
+  }
+
+  setupBulkSessionControls() {
+    // Will be called after sessions tab is rendered
   }
 
   switchTab(tabName) {
@@ -189,9 +223,13 @@ class TestSnapperPopup {
     if (this.sessions.length === 0) {
       sessionsList.innerHTML = '';
       noSessions.classList.remove('hidden');
+      this.renderBulkControls(false);
       return;
     }
     noSessions.classList.add('hidden');
+
+    // Render bulk controls first
+    this.renderBulkControls(true);
 
     sessionsList.innerHTML = this.sessions.map(session => {
       const activeDuration = session.activeDuration || session.duration || 0;
@@ -200,9 +238,14 @@ class TestSnapperPopup {
         `${Math.round(activeDuration / 1000)}s active (${Math.round(totalDuration / 1000)}s total)` :
         `${Math.round(totalDuration / 1000)}s`;
 
+      const isSelected = this.selectedSessions.has(session.id);
+
       return `
       <div class="session-item">
-        <div class="session-title">${this.escapeHtml(session.name)}</div>
+        <div class="session-header">
+          <input type="checkbox" class="session-checkbox" data-session-id="${session.id}" ${isSelected ? 'checked' : ''}>
+          <div class="session-title">${this.escapeHtml(session.name)}</div>
+        </div>
         <div class="session-meta">
           ${new Date(session.startTime).toLocaleDateString()} • 
           ${session.interactions?.length || 0} interactions • 
@@ -231,8 +274,127 @@ class TestSnapperPopup {
       `;
     }).join('');
 
-    // Add export, delete, format selector event listeners
+    // Add event listeners
     this.addSessionEventListeners();
+  }
+
+  renderBulkControls(hasSessions) {
+    const bulkControlsContainer = document.getElementById('bulk-controls');
+    if (!bulkControlsContainer) {
+      // Create bulk controls container if it doesn't exist
+      const sessionsTab = document.getElementById('sessions-tab');
+      const bulkControls = document.createElement('div');
+      bulkControls.id = 'bulk-controls';
+      bulkControls.className = 'bulk-controls';
+      sessionsTab.insertBefore(bulkControls, document.getElementById('sessions-list'));
+    }
+
+    const bulkControls = document.getElementById('bulk-controls');
+    
+    if (!hasSessions) {
+      bulkControls.style.display = 'none';
+      return;
+    }
+
+    bulkControls.style.display = 'block';
+    bulkControls.innerHTML = `
+      <div class="bulk-controls-row">
+        <div class="bulk-selection">
+          <button id="select-all-btn" class="btn-small">Select All</button>
+          <button id="deselect-all-btn" class="btn-small">Deselect All</button>
+          <span id="selected-count" class="selected-count">0 selected</span>
+        </div>
+        <div class="bulk-actions">
+          <button id="clear-all-btn" class="btn-small btn-danger">Clear All Sessions</button>
+          <button id="delete-selected-btn" class="btn-small btn-danger" disabled>Delete Selected</button>
+        </div>
+      </div>
+    `;
+
+    // Add bulk control event listeners
+    document.getElementById('select-all-btn').addEventListener('click', () => {
+      this.selectAllSessions();
+    });
+
+    document.getElementById('deselect-all-btn').addEventListener('click', () => {
+      this.deselectAllSessions();
+    });
+
+    document.getElementById('clear-all-btn').addEventListener('click', () => {
+      this.clearAllSessions();
+    });
+
+    document.getElementById('delete-selected-btn').addEventListener('click', () => {
+      this.deleteSelectedSessions();
+    });
+
+    this.updateBulkControlsState();
+  }
+
+  selectAllSessions() {
+    this.selectedSessions.clear();
+    this.sessions.forEach(session => {
+      this.selectedSessions.add(session.id);
+    });
+    this.updateSessionCheckboxes();
+    this.updateBulkControlsState();
+  }
+
+  deselectAllSessions() {
+    this.selectedSessions.clear();
+    this.updateSessionCheckboxes();
+    this.updateBulkControlsState();
+  }
+
+  updateSessionCheckboxes() {
+    document.querySelectorAll('.session-checkbox').forEach(checkbox => {
+      const sessionId = checkbox.getAttribute('data-session-id');
+      checkbox.checked = this.selectedSessions.has(sessionId);
+    });
+  }
+
+  updateBulkControlsState() {
+    const selectedCountEl = document.getElementById('selected-count');
+    const deleteSelectedBtn = document.getElementById('delete-selected-btn');
+    
+    if (selectedCountEl) {
+      selectedCountEl.textContent = `${this.selectedSessions.size} selected`;
+    }
+    
+    if (deleteSelectedBtn) {
+      deleteSelectedBtn.disabled = this.selectedSessions.size === 0;
+    }
+  }
+
+  async clearAllSessions() {
+    if (!confirm('Are you sure you want to clear ALL sessions? This action cannot be undone.')) return;
+    
+    try {
+      await chrome.storage.local.set({ sessions: [] });
+      this.sessions = [];
+      this.selectedSessions.clear();
+      this.renderSessions();
+      console.log('All sessions cleared');
+    } catch (error) {
+      alert('Failed to clear sessions: ' + error.message);
+    }
+  }
+
+  async deleteSelectedSessions() {
+    if (this.selectedSessions.size === 0) return;
+    
+    if (!confirm(`Are you sure you want to delete ${this.selectedSessions.size} selected session(s)? This action cannot be undone.`)) return;
+    
+    try {
+      const updatedSessions = this.sessions.filter(s => !this.selectedSessions.has(s.id));
+      await chrome.storage.local.set({ sessions: updatedSessions });
+      this.sessions = updatedSessions;
+      this.selectedSessions.clear();
+      this.renderSessions();
+      console.log('Selected sessions deleted');
+    } catch (error) {
+      alert('Failed to delete selected sessions: ' + error.message);
+    }
   }
 
   renderSessionDetails(session) {
@@ -318,6 +480,20 @@ class TestSnapperPopup {
 
   addSessionEventListeners() {
     const sessionsList = document.getElementById('sessions-list');
+    
+    // Session checkboxes
+    sessionsList.querySelectorAll('.session-checkbox').forEach(checkbox => {
+      checkbox.addEventListener('change', (e) => {
+        const sessionId = e.target.getAttribute('data-session-id');
+        if (e.target.checked) {
+          this.selectedSessions.add(sessionId);
+        } else {
+          this.selectedSessions.delete(sessionId);
+        }
+        this.updateBulkControlsState();
+      });
+    });
+    
     // Export buttons
     sessionsList.querySelectorAll('.btn-export').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -327,6 +503,7 @@ class TestSnapperPopup {
         this.exportSession(sessionId, format);
       });
     });
+    
     // Delete buttons
     sessionsList.querySelectorAll('.btn-delete').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -334,6 +511,7 @@ class TestSnapperPopup {
         this.deleteSession(sessionId);
       });
     });
+    
     // Format selectors (for UI sync)
     sessionsList.querySelectorAll('.export-format-select').forEach(select => {
       select.value = this.settings.defaultExportFormat;
@@ -457,19 +635,14 @@ class TestSnapperPopup {
         btn.textContent = 'Capturing...';
       });
 
-      // Manual screenshots should always work regardless of auto-screenshot setting
-      chrome.runtime.sendMessage({
+      // Manual screenshots should always work regardless of auto-screenshot setting or paused state
+      const response = await chrome.runtime.sendMessage({
         type: 'CAPTURE_SCREENSHOT',
         data: {
           type: 'manual_capture',
           manual: true, // This flag ensures it works even when autoScreenshot is disabled
+          allowWhenPaused: true, // This flag allows screenshots when paused
           timestamp: Date.now()
-        }
-      }, (response) => {
-        if (response.success) {
-          console.log('Manual screenshot captured successfully');
-        } else {
-          console.error('Manual screenshot failed:', response.reason);
         }
       });
 
@@ -1000,6 +1173,7 @@ class TestSnapperPopup {
       const updatedSessions = this.sessions.filter(s => s.id !== sessionId);
       await chrome.storage.local.set({ sessions: updatedSessions });
       this.sessions = updatedSessions;
+      this.selectedSessions.delete(sessionId); // Remove from selection if selected
       this.renderSessions();
     } catch (error) {
       alert('Failed to delete session: ' + error.message);

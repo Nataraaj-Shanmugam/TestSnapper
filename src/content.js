@@ -25,7 +25,8 @@ class TestSnapperRecorder {
       inputTimeFrame: 2000, // 2 seconds default
       screenshotQuality: 'medium',
       redactionPatterns: 'password,secret,token,api_key',
-      darkMode: false
+      darkMode: false,
+      sessionRetentionDays: 2 // Add session retention setting
     };
 
     // API failure tracking
@@ -38,6 +39,9 @@ class TestSnapperRecorder {
   async init() {
     // Load settings first
     await this.loadSettings();
+
+    // Auto-cleanup old sessions on initialization
+    this.autoCleanupSessions();
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       this.handleMessage(message, sender, sendResponse);
@@ -67,6 +71,11 @@ class TestSnapperRecorder {
       if (event.data.source !== 'testsnapper-injected') return;
       this.handleInjectedMessage(event.data);
     });
+
+    // Set up periodic cleanup (run every 6 hours)
+    setInterval(() => {
+      this.autoCleanupSessions();
+    }, 6 * 60 * 60 * 1000);
   }
 
   async loadSettings() {
@@ -84,6 +93,21 @@ class TestSnapperRecorder {
     } catch (error) {
       console.log('Could not load settings, using defaults:', error);
     }
+  }
+
+  // Auto-cleanup sessions older than retention period
+  autoCleanupSessions() {
+    const retentionDays = this.settings.sessionRetentionDays || 2;
+    const cutoffTime = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
+
+    chrome.runtime.sendMessage({
+      type: 'CLEANUP_OLD_SESSIONS',
+      cutoffTime: cutoffTime
+    }, (response) => {
+      if (response && response.deletedCount > 0) {
+        console.log(`TestSnapper: Auto-cleaned ${response.deletedCount} old sessions`);
+      }
+    });
   }
 
   handleInjectedMessage(message) {
@@ -194,6 +218,43 @@ class TestSnapperRecorder {
           totalPausedTime: this.totalPausedTime
         });
         break;
+
+      case 'FORCE_SCREENSHOT':
+        // Allow screenshots even when paused
+        this.triggerScreenshot({
+          type: 'manual',
+          forced: true,
+          timestamp: Date.now()
+        });
+        sendResponse({ success: true });
+        break;
+
+      case 'CLEANUP_SESSIONS':
+        this.handleSessionCleanup(message.data);
+        sendResponse({ success: true });
+        break;
+    }
+  }
+
+  handleSessionCleanup(data) {
+    if (data.type === 'all') {
+      // Clear all sessions
+      chrome.runtime.sendMessage({
+        type: 'CLEAR_ALL_SESSIONS'
+      }, (response) => {
+        console.log('All sessions cleared:', response);
+      });
+    } else if (data.type === 'selected' && data.sessionIds) {
+      // Clear selected sessions
+      chrome.runtime.sendMessage({
+        type: 'CLEAR_SELECTED_SESSIONS',
+        sessionIds: data.sessionIds
+      }, (response) => {
+        console.log('Selected sessions cleared:', response);
+      });
+    } else if (data.type === 'old') {
+      // Manual cleanup of old sessions
+      this.autoCleanupSessions();
     }
   }
 
@@ -405,6 +466,9 @@ class TestSnapperRecorder {
 
     this.recordInteraction(pauseInteraction);
     this.lastInteractionId = pauseInteraction.id;
+
+    // Note: We DON'T remove event listeners during pause anymore
+    // This allows us to continue monitoring for manual actions like screenshots
   }
 
   resumeUIRecording() {
@@ -906,24 +970,31 @@ class TestSnapperRecorder {
   // ========== Screenshot Handling ==========
 
   triggerScreenshot(context) {
-    // Only trigger screenshot if auto-screenshot is enabled in settings
-    if (!this.settings.autoScreenshot) {
-      console.log('Auto-screenshot disabled, skipping screenshot');
+    // Allow screenshots even when paused if forced
+    if (!this.isRecording && !context.forced) {
+      console.log('Not recording and not forced, skipping screenshot');
+      return;
+    }
+
+    // Check auto-screenshot setting only for automatic screenshots
+    if (!context.forced && !this.settings.autoScreenshot) {
+      console.log('Auto-screenshot disabled, skipping automatic screenshot');
       return;
     }
 
     chrome.runtime.sendMessage({
       type: 'CAPTURE_SCREENSHOT',
       data: {
-        type: 'manual_capture',
-        manual: true, // This flag ensures it works even when autoScreenshot is disabled
-        timestamp: Date.now()
+        type: context.forced ? 'manual_capture' : 'auto_capture',
+        manual: context.forced || false,
+        timestamp: Date.now(),
+        context: context
       }
     }, (response) => {
-      if (response.success) {
-        console.log('Manual screenshot captured successfully');
+      if (response && response.success) {
+        console.log('Screenshot captured successfully:', context.forced ? 'manual' : 'auto');
       } else {
-        console.error('Manual screenshot failed:', response.reason);
+        console.error('Screenshot failed:', response?.reason || 'Unknown error');
       }
     });
   }

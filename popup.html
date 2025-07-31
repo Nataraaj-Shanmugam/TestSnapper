@@ -197,9 +197,15 @@
         /* Sessions */
         .sessions-header {
             display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .sessions-title-row {
+            display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 16px;
         }
 
         .sessions-header h3 {
@@ -213,6 +219,38 @@
             font-weight: normal;
         }
 
+        /* Session Management Controls */
+        .session-management {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .session-select-controls {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .session-bulk-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .checkbox-label input {
+            margin-right: 6px;
+            width: auto;
+        }
+
         .session-item {
             background: white;
             border: 1px solid #e5e7eb;
@@ -220,6 +258,7 @@
             padding: 12px;
             margin-bottom: 8px;
             transition: all 0.2s ease;
+            position: relative;
         }
 
         .session-item:hover {
@@ -227,11 +266,23 @@
             box-shadow: 0 2px 4px rgba(59, 130, 246, 0.1);
         }
 
+        .session-item.selected {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .session-checkbox {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+        }
+
         .session-title {
             font-weight: 500;
             font-size: 14px;
             color: #374151;
             margin-bottom: 4px;
+            padding-right: 30px; /* Space for checkbox */
         }
 
         .session-meta {
@@ -347,12 +398,6 @@
             margin: 8px 0;
         }
 
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-        }
-
         .setting-description {
             font-size: 12px;
             color: #6b7280;
@@ -404,22 +449,6 @@
             background: #dc2626 !important;
         }
 
-        /* Test button for development */
-        .test-btn {
-            background: #8b5cf6;
-            color: white;
-            padding: 8px 12px;
-            margin-bottom: 16px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-        }
-
-        .test-btn:hover {
-            background: #7c3aed;
-        }
-
         /* Time frame slider styling */
         .time-frame-container {
             display: flex;
@@ -464,6 +493,33 @@
             border: 2px solid white;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
+
+        /* Session Retention Setting */
+        .retention-info {
+            background: #fef3c7;
+            border: 1px solid #fde68a;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-top: 8px;
+            font-size: 12px;
+            color: #92400e;
+        }
+
+        /* Bulk Actions Confirmation */
+        .bulk-action-warning {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-bottom: 12px;
+            font-size: 12px;
+            color: #991b1b;
+            display: none;
+        }
+
+        .bulk-action-warning.show {
+            display: block;
+        }
     </style>
 </head>
 
@@ -502,9 +558,9 @@
                 </div>
                 <div class="recording-controls">
                     <button id="resume-btn" class="btn btn-success">Resume</button>
-                    <button id="stop-btn" class="btn btn-danger">Stop</button>
+                    <button id="stop-paused-btn" class="btn btn-danger">Stop</button>
                 </div>
-                <button id="screenshot-btn" class="btn btn-success">📸 Screenshot</button>
+                <button id="screenshot-paused-btn" class="btn btn-success">📸 Screenshot</button>
             </div>
         </div>
         <div class="info-section">
@@ -515,6 +571,7 @@
                 <li>Network errors (4xx/5xx) are automatically captured</li>
                 <li>Screenshots can be taken manually or auto-captured</li>
                 <li>All data is stored locally for privacy</li>
+                <li>Sessions auto-cleanup after 2 days</li>
             </ul>
         </div>
     </div>
@@ -522,11 +579,36 @@
     <!-- Sessions Tab -->
     <div id="sessions-tab" class="tab-content hidden">
         <div class="sessions-header">
-            <h3>Test Sessions <span id="session-count" class="session-count">(0)</span></h3>
+            <div class="sessions-title-row">
+                <h3>Test Sessions <span id="session-count" class="session-count">(0)</span></h3>
+            </div>
+            
+            <!-- Session Management Controls -->
+            <div class="session-management" id="session-management" style="display: none;">
+                <div class="session-select-controls">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="select-all-sessions">
+                        Select All
+                    </label>
+                    <button id="deselect-all-btn" class="btn-small btn-primary" style="display: none;">Deselect All</button>
+                </div>
+                
+                <div class="session-bulk-actions">
+                    <button id="delete-selected-btn" class="btn-small btn-danger" disabled>Delete Selected</button>
+                    <button id="clear-all-sessions-btn" class="btn-small btn-danger">Clear All</button>
+                    <button id="cleanup-old-sessions-btn" class="btn-small btn-warning">Cleanup Old</button>
+                </div>
+            </div>
+            
+            <!-- Bulk Action Warning -->
+            <div id="bulk-action-warning" class="bulk-action-warning">
+                ⚠️ This action cannot be undone. Are you sure?
+                <div style="margin-top: 8px;">
+                    <button id="confirm-bulk-action" class="btn-small btn-danger">Confirm</button>
+                    <button id="cancel-bulk-action" class="btn-small btn-primary">Cancel</button>
+                </div>
+            </div>
         </div>
-        
-        <!-- Test button (remove in production) -->
-        <button class="test-btn" onclick="testDocxExport()">🧪 Test DOCX Export</button>
         
         <div id="no-sessions" class="no-sessions">
             <p>No sessions recorded yet</p>
@@ -552,6 +634,15 @@
                 <span class="time-frame-value" id="time-frame-value">2.0s</span>
             </div>
             <p class="setting-description">How long to wait after typing before capturing the input (0.5s - 10s)</p>
+        </div>
+        
+        <div class="setting-group">
+            <label for="session-retention-days">Session Retention (Days)</label>
+            <input type="number" id="session-retention-days" min="1" max="30" value="2">
+            <p class="setting-description">Number of days to keep sessions before auto-cleanup</p>
+            <div class="retention-info">
+                ℹ️ Sessions older than this will be automatically deleted to save storage space
+            </div>
         </div>
         
         <div class="setting-group">
@@ -594,67 +685,6 @@
     <script src="src/docx.js"></script>
     <script src="src/popup.js"></script>
     <script>
-        // Test function for DOCX export (remove in production)
-        async function testDocxExport() {
-            try {
-                if (!window.docx) {
-                    alert('DOCX library not loaded!');
-                    return;
-                }
-
-                const { Document, Packer, Paragraph, TextRun } = window.docx;
-                
-                // Create a simple test document
-                const doc = new Document({
-                    sections: [{
-                        children: [
-                            new Paragraph({
-                                children: [
-                                    new TextRun({ 
-                                        text: "TestSnapper DOCX Export Test", 
-                                        bold: true, 
-                                        size: 32,
-                                        color: "2563EB"
-                                    })
-                                ]
-                            }),
-                            new Paragraph({
-                                children: [
-                                    new TextRun({ text: "✅ DOCX library is working correctly!" })
-                                ]
-                            }),
-                            new Paragraph({
-                                children: [
-                                    new TextRun({ 
-                                        text: "Generated on: " + new Date().toLocaleString(),
-                                        italics: true,
-                                        color: "6B7280"
-                                    })
-                                ]
-                            })
-                        ]
-                    }]
-                });
-
-                const blob = await Packer.toBlob(doc);
-                
-                // Download the test file
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = 'testsnapper_test.docx';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(a.href);
-                
-                console.log('✅ Test DOCX export successful!');
-                
-            } catch (error) {
-                console.error('❌ Test DOCX export failed:', error);
-                alert('DOCX export test failed: ' + error.message);
-            }
-        }
-
         // Initialize popup when DOM is loaded
         document.addEventListener('DOMContentLoaded', () => {
             console.log('🚀 TestSnapper popup initializing...');

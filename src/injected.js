@@ -63,7 +63,41 @@
         case 'RECORDING_STATUS_UPDATE':
           this.updateRecordingStatus(message.data);
           break;
+        case 'FORCE_SCREENSHOT':
+          // Allow screenshot even when paused
+          this.handleForceScreenshot();
+          break;
+        case 'FORCE_STOP':
+          // Allow stop even when paused
+          this.handleForceStop();
+          break;
       }
+    }
+
+    handleForceScreenshot() {
+      // Send screenshot request regardless of pause state
+      this.postMessage({
+        type: 'FORCE_SCREENSHOT_REQUEST',
+        data: {
+          timestamp: Date.now(),
+          relativeTime: this.getActiveRecordingTime(),
+          url: window.location.href,
+          paused: this.isPaused
+        }
+      });
+    }
+
+    handleForceStop() {
+      // Force stop regardless of current state
+      this.postMessage({
+        type: 'FORCE_STOP_REQUEST',
+        data: {
+          timestamp: Date.now(),
+          relativeTime: this.getActiveRecordingTime(),
+          url: window.location.href,
+          paused: this.isPaused
+        }
+      });
     }
 
     updateRecordingStatus(status) {
@@ -74,6 +108,13 @@
       this.isPaused = status.isPaused;
       this.recordingStartTime = status.startTime;
       this.totalPausedTime = status.totalPausedTime || 0;
+
+      console.log('Recording status updated:', {
+        isRecording: this.isRecording,
+        isPaused: this.isPaused,
+        wasRecording,
+        wasPaused
+      });
 
       // Handle state transitions
       if (!wasRecording && this.isRecording) {
@@ -127,8 +168,8 @@
       this.isPaused = true;
       this.pauseStartTime = Date.now();
 
-      // Don't stop interceptors, just mark as paused
-      // This allows us to resume quickly without re-setting up interceptors
+      // Keep interceptors active but mark as paused
+      // This allows screenshots and stops to work even when paused
 
       this.postMessage({
         type: 'ADVANCED_RECORDING_PAUSED',
@@ -138,7 +179,7 @@
         }
       });
 
-      console.log('Advanced recording paused');
+      console.log('Advanced recording paused - screenshots and stop still available');
     }
 
     resumeAdvancedRecording() {
@@ -556,13 +597,15 @@
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'S') {
           event.preventDefault();
           
-          if (this.isRecording && !this.isPaused) {
+          // Allow screenshot even when paused if recording is active
+          if (this.isRecording) {
             this.postMessage({
               type: 'HOTKEY_SCREENSHOT',
               data: {
                 timestamp: Date.now(),
                 relativeTime: this.getActiveRecordingTime(),
-                url: window.location.href
+                url: window.location.href,
+                paused: this.isPaused
               }
             });
           }
@@ -570,7 +613,7 @@
       };
 
       document.addEventListener('keydown', this.screenshotKeyHandler, true);
-      console.log('Screenshot hotkey enabled (Ctrl+Shift+S)');
+      console.log('Screenshot hotkey enabled (Ctrl+Shift+S) - works even when paused');
     }
 
     removeScreenshotHotkey() {

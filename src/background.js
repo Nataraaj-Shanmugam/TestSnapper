@@ -40,6 +40,9 @@ class TestSnapperBackground {
     // Load settings on startup
     await this.loadSettings();
 
+    // Auto-cleanup old sessions on startup
+    await this.cleanupOldSessions();
+
     chrome.webRequest.onBeforeRequest.addListener(
       (details) => this.trackNetworkRequest(details),
       { urls: ["<all_urls>"] },
@@ -96,6 +99,26 @@ class TestSnapperBackground {
     }
   }
 
+  // Auto cleanup old sessions (older than 2 days)
+  async cleanupOldSessions() {
+    try {
+      const result = await chrome.storage.local.get(['sessions']);
+      const sessions = result.sessions || [];
+      const twoDaysAgo = Date.now() - (2 * 24 * 60 * 60 * 1000); // 2 days in milliseconds
+      
+      const validSessions = sessions.filter(session => {
+        return session.startTime && session.startTime > twoDaysAgo;
+      });
+
+      if (validSessions.length !== sessions.length) {
+        await chrome.storage.local.set({ sessions: validSessions });
+        console.log(`Cleaned up ${sessions.length - validSessions.length} old sessions`);
+      }
+    } catch (error) {
+      console.error('Failed to cleanup old sessions:', error);
+    }
+  }
+
   async handleMessage(message, sender, sendResponse) {
     try {
       console.log('Handling message:', message.type);
@@ -149,18 +172,22 @@ class TestSnapperBackground {
           break;
 
         case 'CAPTURE_SCREENSHOT':
-          if (this.isRecording && !this.isPaused) {
+          // Allow screenshots during pause but only if recording is active
+          if (this.isRecording) {
             const isManualCapture = message.data?.manual === true;
-            if (isManualCapture || this.settings.autoScreenshot) {
+            if (isManualCapture || (!this.isPaused && this.settings.autoScreenshot)) {
               await this.captureScreenshot(message.data);
               sendResponse({ success: true });
+            } else if (this.isPaused && !isManualCapture) {
+              console.log('Screenshot skipped - recording is paused and not manual');
+              sendResponse({ success: false, reason: 'Recording is paused' });
             } else {
               console.log('Screenshot skipped - auto-screenshot disabled and not manual');
               sendResponse({ success: false, reason: 'Auto-screenshot disabled' });
             }
           } else {
-            console.log('Screenshot skipped - not recording or paused');
-            sendResponse({ success: false, reason: 'Not recording or recording is paused' });
+            console.log('Screenshot skipped - not recording');
+            sendResponse({ success: false, reason: 'Not recording' });
           }
           break;
 
@@ -168,6 +195,16 @@ class TestSnapperBackground {
           const sessions = await this.getSessions();
           console.log('Retrieved sessions count:', sessions.length);
           sendResponse({ sessions });
+          break;
+
+        case 'DELETE_SESSIONS':
+          await this.deleteSessions(message.sessionIds || []);
+          sendResponse({ success: true });
+          break;
+
+        case 'CLEAR_ALL_SESSIONS':
+          await this.clearAllSessions();
+          sendResponse({ success: true });
           break;
 
         case 'GET_SETTINGS':
@@ -486,10 +523,16 @@ class TestSnapperBackground {
 async captureScreenshot(context = {}) {
   if (!this.isRecording || !this.currentTabId) return;
 
-  // Allow manual screenshots even if auto-screenshot is disabled
+  // Allow manual screenshots even if auto-screenshot is disabled OR if recording is paused
   const isManualCapture = context.manual === true;
   if (!isManualCapture && !this.settings.autoScreenshot) {
     console.log('Auto-screenshot disabled, skipping automatic screenshot');
+    return null;
+  }
+
+  // Allow manual screenshots even when paused
+  if (!isManualCapture && this.isPaused) {
+    console.log('Recording paused, skipping automatic screenshot');
     return null;
   }
 
@@ -644,6 +687,36 @@ async captureScreenshot(context = {}) {
     } catch (error) {
       console.error('Error getting sessions:', error);
       return [];
+    }
+  }
+
+  // Delete selected sessions
+  async deleteSessions(sessionIds) {
+    try {
+      if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+        return;
+      }
+
+      const result = await chrome.storage.local.get(['sessions']);
+      const sessions = result.sessions || [];
+      const filteredSessions = sessions.filter(session => !sessionIds.includes(session.id));
+      
+      await chrome.storage.local.set({ sessions: filteredSessions });
+      console.log(`Deleted ${sessionIds.length} sessions`);
+    } catch (error) {
+      console.error('Error deleting sessions:', error);
+      throw error;
+    }
+  }
+
+  // Clear all sessions
+  async clearAllSessions() {
+    try {
+      await chrome.storage.local.set({ sessions: [] });
+      console.log('All sessions cleared');
+    } catch (error) {
+      console.error('Error clearing all sessions:', error);
+      throw error;
     }
   }
 
