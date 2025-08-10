@@ -1,0 +1,108 @@
+## A. UI / Popup.js Issues
+
+1. Bulk Selection Logic Not Fully Reliable  
+   - `deselectAllSessions` clears `selectedSessions` but may not update UI checkboxes after DOM re-render.  
+   - Risk: User sees boxes checked/unchecked incorrectly.
+
+2. Delete Selected Session Race Condition  
+   - No refresh from storage after deletion, possible stale view if another tab modifies sessions.
+
+3. Stop/Screenshot Buttons Disabled in Pause State  
+   - `updateRecordingUI()` disables these even though background allows them.
+
+4. Manual Screenshot Not Always Enabled  
+   - Likely tied to `isRecording` state; should be always available.
+
+5. Timeline Timestamp Format  
+   - Uses relative seconds instead of `date + hh:mm:ss`.
+
+6. Session Export Format Scope Mismatch  
+   - UI allows CSV/DOCX/PDF but PRD specifies TXT only in v1.0.
+
+7. No “Session Project” Grouping Support  
+   - No `project` property in sessions; all are flat.
+
+8. Missing Full Timeline View  
+   - Shows only last 4 events; no expand/collapse to view all.
+
+9. Possible XSS Risk in Session Title & URL Rendering  
+   - `escapeHtml` used inconsistently; some interpolations unescaped.
+
+10. Race Condition in Auto-Clear Old Sessions  
+    - May delete an ongoing session if it started before cutoff time.
+
+---
+
+## B. Background.js Issues
+
+11. CLEANUP_OLD_SESSIONS Message Handler Missing  
+    - `content.js` sends cleanup request; background doesn’t handle it.
+
+12. Inconsistent Screenshot Quality Setting  
+    - PNG ignores `quality` param in `captureVisibleTab`.
+
+13. Settings Update Fails If Content Script Not Injected  
+    - No injection fallback in `updateSettings`.
+
+14. getLastMeaningfulInteraction Selector Info Limited  
+    - Omits useful context (text/value) for timeline.
+
+15. Network Call Capture Race Condition  
+    - `trackNetworkResponse` assumes `trackNetworkRequest` ran first; may miss cached responses.
+
+16. API Failures Not Pushed Into `apiFailures` Array  
+    - Potential mismatch between failures and popup’s `apiFailures` display.
+
+---
+
+## C. Content.js Issues
+
+17. getLastMeaningfulInteraction Misuse  
+    - Returns `undefined` due to non-async handling of `sendMessage`.
+
+18. Debounce Delay Not Synced with Settings on All Updates  
+    - May remain stale until reload.
+
+19. API Failure Handling Lacks Status Code for Network Errors  
+    - Loses detail when status is 0.
+
+20. Potential Memory Leak in inputDebounceTimers  
+    - Cleared only on pause/stop.
+
+21. Redaction Not Implemented for Screenshots  
+    - No masking/blur for sensitive elements before capture.
+
+---
+
+## D. Injected.js Issues
+
+22. Console Interception May Affect Other Scripts  
+    - Overwrites `console` methods without checking for prior overrides.
+
+23. Fetch/XHR Interception Lacks Restore on Page Navigation  
+    - Once replaced, stays replaced unless stopped.
+
+24. Advanced Recording State Sync Race  
+    - Relies on timely `RECORDING_STATUS_UPDATE`; could miss events if delayed.
+
+25. Screenshot Hotkey Possible Keybinding Conflict  
+    - No config to avoid clashing with site shortcuts.
+
+---
+
+## E. Cross-Module / Integration Issues
+
+26. Paused State Logic Not Fully Consistent Across Layers  
+    - Popup, background, content, and injected handle pause differently.
+
+27. Storage Writes Without Size Checks  
+    - Risk of exceeding `chrome.storage.local` quota with large sessions.
+
+28. Missing Error Handling for Messaging Failures  
+    - Many `sendMessage` calls assume listener exists.
+
+29. Race Between Auto-Cleanup and StopRecording  
+    - Cleanup could remove session being saved.
+
+30. Security Risk – No Sanitization of Recorded Selectors or Values  
+    - Raw selector/value/text stored; XSS if missed during render.
