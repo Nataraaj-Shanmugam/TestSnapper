@@ -3,9 +3,35 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TestSnapper</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #5855eb;
+            --primary-light: #eef2ff;
+            --secondary: #64748b;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --background: #fafbfc;
+            --surface: #ffffff;
+            --surface-hover: #f8fafc;
+            --border: #e2e8f0;
+            --border-hover: #cbd5e1;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-tertiary: #94a3b8;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            --radius-sm: 6px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -13,566 +39,669 @@
         }
 
         body {
-            width: 400px;
-            min-height: 500px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #f9fafb;
-            color: #374151;
+            width: 420px;
+            min-height: 580px;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--background);
+            color: var(--text-primary);
+            font-size: 14px;
+            line-height: 1.5;
         }
 
         .header {
-            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            background: linear-gradient(135deg, var(--primary), #8b5cf6);
             color: white;
-            padding: 16px;
-            text-align: center;
+            padding: 24px 20px;
             position: relative;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="1" fill="white" fill-opacity="0.1"/><circle cx="80" cy="40" r="1.5" fill="white" fill-opacity="0.08"/><circle cx="40" cy="80" r="1" fill="white" fill-opacity="0.12"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+            pointer-events: none;
+        }
+
+        .header-content {
+            position: relative;
+            z-index: 1;
         }
 
         .header h1 {
-            font-size: 18px;
-            font-weight: 600;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            margin-bottom: 4px;
+        }
+
+        .header-subtitle {
+            font-size: 13px;
+            opacity: 0.9;
+            font-weight: 400;
         }
 
         .status-indicator {
             position: absolute;
-            top: 8px;
-            right: 8px;
-            width: 12px;
-            height: 12px;
+            top: 20px;
+            right: 20px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
-            background: #6b7280;
+            background: rgba(255, 255, 255, 0.4);
+            transition: all 0.3s ease;
+            z-index: 2;
+        }
+
+        .status-indicator::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            border-radius: 50%;
+            border: 2px solid transparent;
             transition: all 0.3s ease;
         }
 
         .status-indicator.recording {
             background: #ef4444;
-            animation: pulse 2s infinite;
+            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            animation: pulse-record 2s infinite;
         }
 
         .status-indicator.paused {
             background: #f59e0b;
-            animation: blink 1s infinite alternate;
+            animation: blink 1.5s infinite alternate;
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+        @keyframes pulse-record {
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            }
         }
 
         @keyframes blink {
-            0% { opacity: 1; }
-            100% { opacity: 0.3; }
+            0% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0.3;
+            }
         }
 
         .nav-tabs {
             display: flex;
-            background: white;
-            border-bottom: 1px solid #e5e7eb;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
         }
 
         .nav-btn {
             flex: 1;
-            padding: 12px;
+            padding: 16px 12px;
             border: none;
             background: transparent;
             cursor: pointer;
-            font-size: 14px;
-            color: #6b7280;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
             transition: all 0.2s ease;
+            position: relative;
+            font-family: inherit;
         }
 
         .nav-btn:hover {
-            background: #f3f4f6;
+            background: var(--surface-hover);
+            color: var(--text-primary);
         }
 
         .nav-btn.active {
-            color: #3b82f6;
-            border-bottom: 2px solid #3b82f6;
-            background: #eff6ff;
+            color: var(--primary);
+            background: var(--primary-light);
+        }
+
+        .nav-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--primary);
         }
 
         .tab-content {
-            padding: 20px;
+            padding: 24px 20px;
         }
 
         .hidden {
             display: none !important;
         }
 
-        /* Recording Controls */
-        .recording-status {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-
-        .recording-status h3 {
-            margin-bottom: 8px;
-            font-size: 16px;
-        }
-
-        .status-text {
-            font-size: 14px;
-            color: #6b7280;
-            margin-bottom: 16px;
-        }
-
-        .not-recording .status-text {
-            color: #374151;
-        }
-
-        .recording .status-text {
-            color: #ef4444;
-            font-weight: 500;
-        }
-
-        .paused .status-text {
-            color: #f59e0b;
-            font-weight: 500;
-        }
-
         .btn {
             width: 100%;
-            padding: 12px 16px;
+            padding: 14px 20px;
             border: none;
-            border-radius: 8px;
+            border-radius: var(--radius-md);
             font-size: 14px;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.2s ease;
-            margin-bottom: 8px;
+            margin-bottom: 12px;
+            font-family: inherit;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.2) 50%, transparent 70%);
+            transform: translateX(-100%);
+            transition: transform 0.6s;
+        }
+
+        .btn:hover::before {
+            transform: translateX(100%);
         }
 
         .btn:disabled {
-            opacity: 0.6;
+            opacity: 0.5;
             cursor: not-allowed;
         }
 
+        .btn:disabled::before {
+            display: none;
+        }
+
         .btn-primary {
-            background: #3b82f6;
+            background: var(--primary);
             color: white;
+            box-shadow: var(--shadow-sm);
         }
 
         .btn-primary:hover:not(:disabled) {
-            background: #2563eb;
+            background: var(--primary-hover);
+            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
         }
 
         .btn-warning {
-            background: #f59e0b;
+            background: var(--warning);
             color: white;
+            box-shadow: var(--shadow-sm);
         }
 
         .btn-warning:hover:not(:disabled) {
             background: #d97706;
+            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
         }
 
         .btn-success {
-            background: #10b981;
+            background: var(--success);
             color: white;
+            box-shadow: var(--shadow-sm);
         }
 
         .btn-success:hover:not(:disabled) {
             background: #059669;
+            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
         }
 
         .btn-danger {
-            background: #ef4444;
+            background: var(--danger);
             color: white;
+            box-shadow: var(--shadow-sm);
         }
 
         .btn-danger:hover:not(:disabled) {
             background: #dc2626;
+            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
         }
 
         .recording-controls {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
-        }
-
-        .recording-controls .btn {
-            flex: 1;
-            margin-bottom: 0;
-        }
-
-        /* Sessions */
-        .sessions-header {
-            display: flex;
-            flex-direction: column;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 12px;
-            margin-bottom: 16px;
+            margin-bottom: 20px;
+        }
+
+        .screenshot-btn-container {
+            grid-column: 1 / -1;
+        }
+
+        .sessions-header {
+            margin-bottom: 24px;
         }
 
         .sessions-title-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 16px;
         }
 
         .sessions-header h3 {
-            font-size: 16px;
-            color: #374151;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
         }
 
         .session-count {
             font-size: 12px;
-            color: #6b7280;
-            font-weight: normal;
+            color: var(--text-tertiary);
+            font-weight: 500;
+            background: var(--surface-hover);
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
         }
 
-        /* Session Management Controls */
         .session-management {
             display: flex;
-            gap: 8px;
-            align-items: center;
+            gap: 12px;
             flex-wrap: wrap;
         }
 
-        .session-select-controls {
-            display: flex;
-            gap: 4px;
-            align-items: center;
-        }
-
+        .session-select-controls,
         .session-bulk-actions {
             display: flex;
-            gap: 4px;
+            gap: 8px;
         }
 
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
+        .btn-small {
+            padding: 8px 12px;
             font-size: 12px;
-            color: #6b7280;
+            border: none;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+            font-weight: 500;
+            font-family: inherit;
         }
 
-        .checkbox-label input {
-            margin-right: 6px;
-            width: auto;
+        .btn-small.btn-primary {
+            background: var(--primary-light);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+        }
+
+        .btn-small.btn-primary:hover {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-small.btn-export {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-small.btn-export:hover:not(:disabled) {
+            background: var(--primary-hover);
+        }
+
+        .btn-small.btn-delete {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-small.btn-delete:hover {
+            background: #dc2626;
+        }
+
+        .btn-small:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .session-item {
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 16px;
+            margin-bottom: 12px;
             transition: all 0.2s ease;
             position: relative;
+            box-shadow: var(--shadow-sm);
         }
 
         .session-item:hover {
-            border-color: #3b82f6;
-            box-shadow: 0 2px 4px rgba(59, 130, 246, 0.1);
+            border-color: var(--primary);
+            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
         }
 
         .session-item.selected {
-            border-color: #3b82f6;
-            background: #eff6ff;
+            border-color: var(--primary);
+            background: var(--primary-light);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
         }
 
         .session-checkbox {
             position: absolute;
-            top: 12px;
-            right: 12px;
+            top: 16px;
+            right: 16px;
+            width: 18px;
+            height: 18px;
+            accent-color: var(--primary);
         }
 
         .session-title {
-            font-weight: 500;
+            font-weight: 600;
             font-size: 14px;
-            color: #374151;
-            margin-bottom: 4px;
-            padding-right: 30px; /* Space for checkbox */
+            color: var(--text-primary);
+            margin-bottom: 6px;
+            padding-right: 30px;
+            line-height: 1.4;
         }
 
         .session-meta {
             font-size: 12px;
-            color: #6b7280;
-            margin-bottom: 4px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            font-weight: 500;
         }
 
         .session-url {
             font-size: 11px;
-            color: #9ca3af;
-            font-family: monospace;
-            margin-bottom: 8px;
+            color: var(--text-tertiary);
+            font-family: 'SF Mono', Monaco, monospace;
+            margin-bottom: 12px;
             word-break: break-all;
+            background: var(--surface-hover);
+            padding: 6px 8px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
         }
 
         .session-actions {
             display: flex;
             gap: 8px;
-            margin-top: 8px;
             align-items: center;
+            margin-top: 12px;
         }
 
         .export-controls {
             display: flex;
-            gap: 4px;
+            gap: 6px;
             flex: 1;
         }
 
         .export-format-select {
             flex: 1;
-            padding: 4px 6px;
-            font-size: 11px;
-            border: 1px solid #d1d5db;
-            border-radius: 4px;
-            background: white;
+            padding: 6px 8px;
+            font-size: 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            color: var(--text-primary);
+            font-family: inherit;
         }
 
-        .btn-small {
-            padding: 4px 8px;
-            font-size: 11px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            white-space: nowrap;
-        }
-
-        .btn-export {
-            background: #3b82f6;
-            color: white;
-        }
-
-        .btn-export:hover {
-            background: #2563eb;
-        }
-
-        .btn-delete {
-            background: #ef4444;
-            color: white;
-        }
-
-        .btn-delete:hover {
-            background: #dc2626;
+        .export-format-select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
         }
 
         .no-sessions {
             text-align: center;
-            color: #6b7280;
+            color: var(--text-secondary);
             font-size: 14px;
-            padding: 40px 20px;
+            padding: 60px 20px;
+            background: var(--surface);
+            border-radius: var(--radius-lg);
+            border: 2px dashed var(--border);
         }
 
-        /* Settings */
+        .sessions-list {
+            max-height: 420px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .sessions-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sessions-list::-webkit-scrollbar-track {
+            background: var(--surface-hover);
+            border-radius: 3px;
+        }
+
+        .sessions-list::-webkit-scrollbar-thumb {
+            background: var(--border-hover);
+            border-radius: 3px;
+        }
+
+        .sessions-list::-webkit-scrollbar-thumb:hover {
+            background: var(--text-tertiary);
+        }
+
         .setting-group {
-            margin-bottom: 16px;
+            margin-bottom: 20px;
         }
 
         .setting-group label {
             display: block;
             font-size: 14px;
             font-weight: 500;
-            color: #374151;
-            margin-bottom: 4px;
+            color: var(--text-primary);
+            margin-bottom: 8px;
         }
 
         .setting-group input,
         .setting-group select,
         .setting-group textarea {
             width: 100%;
-            padding: 8px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
             font-size: 14px;
-            transition: border-color 0.2s ease;
+            transition: all 0.2s ease;
+            font-family: inherit;
+            background: var(--surface);
+            color: var(--text-primary);
         }
 
         .setting-group input:focus,
         .setting-group select:focus,
         .setting-group textarea:focus {
             outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
         }
 
-        .setting-group input[type="checkbox"] {
+        .setting-group input[type=checkbox] {
             width: auto;
-            margin-right: 8px;
+            margin-right: 12px;
+            width: 18px;
+            height: 18px;
+            accent-color: var(--primary);
         }
 
-        .setting-group input[type="range"] {
+        .setting-group input[type=range] {
             width: 100%;
-            margin: 8px 0;
+            margin: 12px 0;
+            accent-color: var(--primary);
         }
 
         .setting-description {
             font-size: 12px;
-            color: #6b7280;
-            margin-top: 4px;
+            color: var(--text-secondary);
+            margin-top: 6px;
         }
 
-        .sessions-list {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .pause-indicator {
-            background: #fef3c7;
-            color: #92400e;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            margin-bottom: 12px;
-            border: 1px solid #fde68a;
-        }
-
-        .info-section {
-            background: #f0f9ff;
-            border: 1px solid #bae6fd;
-            border-radius: 8px;
-            padding: 12px;
-            margin-top: 16px;
-        }
-
-        .info-section h4 {
-            color: #0c4a6e;
-            margin-bottom: 8px;
-        }
-
-        .info-section ul {
-            color: #075985;
-        }
-
-        .info-section li {
-            margin-bottom: 4px;
-        }
-
-        /* Export status indicators */
-        .btn-export.success {
-            background: #059669 !important;
-        }
-
-        .btn-export.error {
-            background: #dc2626 !important;
-        }
-
-        /* Time frame slider styling */
         .time-frame-container {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 16px;
         }
 
         .time-frame-value {
             font-weight: 600;
-            color: #3b82f6;
-            min-width: 40px;
+            color: var(--primary);
+            min-width: 48px;
             text-align: center;
-        }
-
-        input[type="range"] {
-            -webkit-appearance: none;
-            appearance: none;
-            height: 6px;
-            border-radius: 3px;
-            background: #e5e7eb;
-            outline: none;
-        }
-
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #3b82f6;
-            cursor: pointer;
-            border: 2px solid white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-
-        input[type="range"]::-moz-range-thumb {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #3b82f6;
-            cursor: pointer;
-            border: 2px solid white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-
-        /* Session Retention Setting */
-        .retention-info {
-            background: #fef3c7;
-            border: 1px solid #fde68a;
-            border-radius: 6px;
+            font-size: 14px;
+            background: var(--primary-light);
             padding: 8px 12px;
-            margin-top: 8px;
-            font-size: 12px;
+            border-radius: var(--radius-sm);
+        }
+
+        .pause-indicator {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
             color: #92400e;
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            margin-bottom: 16px;
+            border: 1px solid #fde68a;
+            font-weight: 500;
         }
 
-        /* Bulk Actions Confirmation */
-        .bulk-action-warning {
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            border-radius: 6px;
-            padding: 8px 12px;
-            margin-bottom: 12px;
-            font-size: 12px;
+        .recording-status {
+            text-align: center;
+            margin-bottom: 24px;
+            padding: 20px;
+            border-radius: var(--radius-lg);
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+
+        .recording-status h3 {
+            margin-bottom: 8px;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .status-text {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 0;
+        }
+
+        .recording .recording-status {
+            background: linear-gradient(135deg, #fef2f2, #fee2e2);
+            border-color: #fca5a5;
+        }
+
+        .recording .status-text {
             color: #991b1b;
-            display: none;
+            font-weight: 500;
         }
 
-        .bulk-action-warning.show {
-            display: block;
+        .paused .recording-status {
+            background: linear-gradient(135deg, #fefbf2, #fef3c7);
+            border-color: #fde68a;
+        }
+
+        .paused .status-text {
+            color: #92400e;
+            font-weight: 500;
+        }
+
+        /* Enhanced visual feedback */
+        .btn.success {
+            background: var(--success) !important;
+        }
+
+        .btn.error {
+            background: var(--danger) !important;
+        }
+
+        .btn-small.success {
+            background: var(--success) !important;
+        }
+
+        .btn-small.error {
+            background: var(--danger) !important;
+        }
+
+        /* Modern focus styles */
+        button:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* Smooth animations */
+        * {
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        /* Modern scroll behavior */
+        html {
+            scroll-behavior: smooth;
         }
     </style>
 </head>
 
 <body>
     <div class="header">
-        <div class="status-indicator" id="status-indicator"></div>
-        <h1>TestSnapper</h1>
+        <div class="header-content">
+            <h1>TestSnapper</h1>
+            <div class="header-subtitle">Professional testing companion</div>
+        </div>
+        <div id="status-indicator" class="status-indicator"></div>
     </div>
-    <nav class="nav-tabs">
+
+    <div class="nav-tabs">
         <button class="nav-btn active" data-tab="record">Record</button>
-        <button class="nav-btn" data-tab="sessions">Sessions</button>
+        <button class="nav-btn" data-tab="sessions">Sessions <span id="session-count">0</span></button>
         <button class="nav-btn" data-tab="settings">Settings</button>
-    </nav>
+    </div>
 
     <!-- Record Tab -->
     <div id="record-tab" class="tab-content">
-        <div class="recording-status">
-            <div id="not-recording" class="not-recording">
-                <h3>Ready to Record</h3>
-                <p class="status-text">Click Start Recording to begin capturing interactions</p>
-                <button id="start-btn" class="btn btn-primary">Start Recording</button>
-            </div>
-            <div id="recording" class="recording hidden">
-                <h3>Recording Active</h3>
-                <p class="status-text">🔴 Capturing user interactions...</p>
-                <div class="recording-controls">
-                    <button id="pause-btn" class="btn btn-warning">Pause</button>
-                    <button id="stop-btn" class="btn btn-danger">Stop</button>
-                </div>
-                <button id="screenshot-btn" class="btn btn-success">📸 Screenshot</button>
-            </div>
-            <div id="paused" class="paused hidden">
-                <h3>Recording Paused</h3>
-                <div class="pause-indicator">
-                    ⏸️ Recording is paused. Click Resume to continue capturing interactions.
-                </div>
-                <div class="recording-controls">
-                    <button id="resume-btn" class="btn btn-success">Resume</button>
-                    <button id="stop-paused-btn" class="btn btn-danger">Stop</button>
-                </div>
-                <button id="screenshot-paused-btn" class="btn btn-success">📸 Screenshot</button>
+        <!-- Recording Status Views -->
+        <div id="not-recording" class="recording-status">
+            <h3>Ready to Record</h3>
+            <p class="status-text">Click Start Recording to begin capturing your session</p>
+        </div>
+
+        <div id="recording" class="recording-status hidden">
+            <h3>Recording Active</h3>
+            <p class="status-text">Currently recording your interactions</p>
+        </div>
+
+        <div id="paused" class="recording-status hidden">
+            <div class="pause-indicator">
+                ⏸️ Recording is paused. You can still take screenshots or stop the session.
             </div>
         </div>
-        <div class="info-section">
-            <h4 style="font-size: 14px; margin-bottom: 8px;">Quick Tips:</h4>
-            <ul style="font-size: 12px; padding-left: 20px;">
-                <li>Start recording before navigating to your test page</li>
-                <li>Use Pause to skip over non-testing activities</li>
-                <li>Network errors (4xx/5xx) are automatically captured</li>
-                <li>Screenshots can be taken manually or auto-captured</li>
-                <li>All data is stored locally for privacy</li>
-                <li>Sessions auto-cleanup after 2 days</li>
-            </ul>
+
+        <div class="recording-controls">
+            <button id="start-btn" class="btn btn-primary">Start Recording</button>
+            <button id="pause-btn" class="btn btn-warning">Pause</button>
+            <button id="resume-btn" class="btn btn-success">Resume</button>
+            <button id="stop-btn" class="btn btn-danger">Stop</button>
+        </div>
+        <div class="screenshot-btn-container">
+            <button id="screenshot-btn" class="btn btn-success">📸 Take Screenshot</button>
         </div>
     </div>
 
@@ -580,122 +709,93 @@
     <div id="sessions-tab" class="tab-content hidden">
         <div class="sessions-header">
             <div class="sessions-title-row">
-                <h3>Test Sessions <span id="session-count" class="session-count">(0)</span></h3>
+                <h3>Saved Sessions</h3>
+                <span class="session-count" id="selected-count">0 selected</span>
             </div>
-            
-            <!-- Session Management Controls -->
-            <div class="session-management" id="session-management" style="display: none;">
+            <div class="session-management">
                 <div class="session-select-controls">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="select-all-sessions">
-                        Select All
-                    </label>
-                    <button id="deselect-all-btn" class="btn-small btn-primary" style="display: none;">Deselect All</button>
+                    <button id="select-all-btn" class="btn-small btn-primary">Select All</button>
+                    <button id="deselect-all-btn" class="btn-small btn-primary">Deselect All</button>
                 </div>
-                
                 <div class="session-bulk-actions">
-                    <button id="delete-selected-btn" class="btn-small btn-danger" disabled>Delete Selected</button>
-                    <button id="clear-all-sessions-btn" class="btn-small btn-danger">Clear All</button>
-                    <button id="cleanup-old-sessions-btn" class="btn-small btn-warning">Cleanup Old</button>
-                </div>
-            </div>
-            
-            <!-- Bulk Action Warning -->
-            <div id="bulk-action-warning" class="bulk-action-warning">
-                ⚠️ This action cannot be undone. Are you sure?
-                <div style="margin-top: 8px;">
-                    <button id="confirm-bulk-action" class="btn-small btn-danger">Confirm</button>
-                    <button id="cancel-bulk-action" class="btn-small btn-primary">Cancel</button>
+                    <button id="export-selected-btn" class="btn-small btn-export" disabled>Export Selected</button>
+                    <button id="delete-selected-btn" class="btn-small btn-delete" disabled>Delete Selected</button>
+                    <button id="clear-all-btn" class="btn-small btn-danger">Clear All</button>
                 </div>
             </div>
         </div>
-        
-        <div id="no-sessions" class="no-sessions">
-            <p>No sessions recorded yet</p>
-            <p style="margin-top: 8px; font-size: 12px;">Start recording to create your first session</p>
-        </div>
+        <div id="no-sessions" class="no-sessions">No sessions recorded yet. Start your first recording!</div>
         <div id="sessions-list" class="sessions-list"></div>
     </div>
 
     <!-- Settings Tab -->
     <div id="settings-tab" class="tab-content hidden">
         <div class="setting-group">
-            <label class="checkbox-label">
-                <input type="checkbox" id="auto-screenshot">
-                Auto-capture Screenshots
-            </label>
-            <p class="setting-description">Automatically take screenshots on each interaction</p>
+            <label><input type="checkbox" id="auto-screenshot"> Enable auto-screenshot</label>
+            <div class="setting-description">Automatically capture screenshots during recording</div>
         </div>
-        
-        <div class="setting-group">
-            <label for="input-time-frame">Input Time Frame</label>
-            <div class="time-frame-container">
-                <input type="range" id="input-time-frame" min="500" max="10000" step="500" value="2000">
-                <span class="time-frame-value" id="time-frame-value">2.0s</span>
-            </div>
-            <p class="setting-description">How long to wait after typing before capturing the input (0.5s - 10s)</p>
-        </div>
-        
-        <div class="setting-group">
-            <label for="session-retention-days">Session Retention (Days)</label>
-            <input type="number" id="session-retention-days" min="1" max="30" value="2">
-            <p class="setting-description">Number of days to keep sessions before auto-cleanup</p>
-            <div class="retention-info">
-                ℹ️ Sessions older than this will be automatically deleted to save storage space
-            </div>
-        </div>
-        
+
         <div class="setting-group">
             <label for="screenshot-quality">Screenshot Quality</label>
             <select id="screenshot-quality">
-                <option value="low">Low (faster)</option>
-                <option value="medium">Medium</option>
-                <option value="high">High (slower)</option>
+                <option value="low">Low (Faster)</option>
+                <option value="medium" selected>Medium (Balanced)</option>
+                <option value="high">High (Better Quality)</option>
+            </select>
+            <div class="setting-description">Higher quality takes more storage space</div>
+        </div>
+
+        <div class="setting-group">
+            <label for="redaction-patterns">Redaction Patterns</label>
+            <input type="text" id="redaction-patterns" placeholder="password,secret,token,api_key">
+            <div class="setting-description">Comma-separated patterns to automatically redact</div>
+        </div>
+
+        <div class="setting-group">
+            <label for="input-time-frame">Input Detection Timeframe</label>
+            <div class="time-frame-container">
+                <input type="range" id="input-time-frame" min="0" max="5000" step="250" value="2000">
+                <span id="time-frame-value" class="time-frame-value">2s</span>
+            </div>
+            <div class="setting-description">How long to wait for user input before capturing</div>
+        </div>
+
+        <div class="setting-group">
+            <label for="style-mode-select">UI Theme</label>
+            <select id="style-mode-select">
+                <option value="modern" selected>Modern</option>
+                <option value="light">Light</option>
             </select>
         </div>
-        
+
+        <div class="setting-group">
+            <label><input type="checkbox" id="dark-mode"> Enable dark mode</label>
+            <div class="setting-description">Switch to dark theme (coming soon)</div>
+        </div>
+
         <div class="setting-group">
             <label for="export-format-select">Default Export Format</label>
             <select id="export-format-select">
-                <option value="txt">TXT (Text)</option>
-                <option value="csv">CSV (Spreadsheet)</option>
-                <option value="docx">DOCX (Word Document)</option>
-                <option value="pdf">PDF (Structured Data)</option>
+                <option value="txt">Plain Text (.txt)</option>
+                <option value="csv">Spreadsheet (.csv)</option>
+                <option value="docx">Word Document (.docx)</option>
+                <option value="pdf">PDF Document (.pdf)</option>
             </select>
-            <p class="setting-description">Default format for session exports</p>
         </div>
-        
+
         <div class="setting-group">
-            <label for="redaction-patterns">Data Redaction Patterns</label>
-            <textarea id="redaction-patterns" rows="3" placeholder="password,secret,token,api_key"></textarea>
-            <p class="setting-description">Comma-separated patterns to redact from logs (case-insensitive)</p>
+            <label for="auto-clear-days">Auto-clear sessions after (days)</label>
+            <input type="number" id="auto-clear-days" min="1" max="30" value="7">
+            <div class="setting-description">Automatically delete sessions older than this many days</div>
         </div>
-        
-        <div class="setting-group">
-            <label class="checkbox-label">
-                <input type="checkbox" id="dark-mode">
-                Dark Mode
-            </label>
-        </div>
-        
+
         <button id="save-settings" class="btn btn-primary">Save Settings</button>
     </div>
 
-    <!-- Scripts -->
-    <script src="src/docx.js"></script>
-    <script src="src/popup.js"></script>
     <script>
-        // Initialize popup when DOM is loaded
-        document.addEventListener('DOMContentLoaded', () => {
-            console.log('🚀 TestSnapper popup initializing...');
-            
-            // Check if docx library loaded
-            if (window.docx) {
-                console.log('✅ DOCX library loaded successfully');
-            } else {
-                console.warn('⚠️ DOCX library not found');
-            }
-        });
+        // This script will be replaced by the external popup.js file
+        // The TestSnapperPopup class from popup.js will handle all functionality
+        console.log('TestSnapper popup HTML loaded - awaiting popup.js initialization');
     </script>
 </body>
 

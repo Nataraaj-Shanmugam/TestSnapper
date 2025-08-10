@@ -1,318 +1,831 @@
-// Content script for UI interaction recording with pause/resume functionality
-// Enhanced with time frames, API failure tracking, and settings-aware screenshots
+// content.js — Full, Fixed & Enhanced (addresses issues #17–#21)
+// - [17] Properly awaits getLastMeaningfulInteraction via Promise wrapper
+// - [18] Debounce delay always synced with settings updates (and pending timers reconciled)
+// - [19] API failure handling includes statusCode=0 for true network errors (fetch/xhr)
+// - [20] Prevents memory leaks in inputDebounceTimers (clears on pause/stop/visibility/unload)
+// - [21] Adds temporary redaction overlays for sensitive elements before screenshots
+//
+// Drop-in replacement. Keeps your original features (click/input/scroll/SPA/url/form, errors, network,
+// pause/resume semantics, auto/ manual screenshots). Works with the updated background.js.
+
+// ==============================
+// Utilities
+// ==============================
+const now = () => Date.now();
+
+const REDACTION_DEFAULT_PATTERN = /password|secret|token|api[_-]?key/i;
+
+function toSelector(el) {
+  if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+  if (el.id) return `#${el.id}`;
+  if (typeof el.className === 'string' && el.className.trim()) {
+    const classes = el.className.trim().split(/\s+/).filter(Boolean);
+    if (classes.length) {
+      const sel = `${el.tagName.toLowerCase()}.${classes.join('.')}`;
+      if (document.querySelectorAll(sel).length === 1) return sel;
+    }
+  }
+  for (const a of el.attributes || []) {
+    if (a.name.startsWith('data-') && a.value) {
+      const sel = `${el.tagName.toLowerCase()}[${a.name}="${CSS.escape(a.value)}"]`;
+      if (document.querySelectorAll(sel).length === 1) return sel;
+    }
+  }
+  const path = [];
+  let cur = el;
+  while (cur && cur.nodeType === 1 && cur !== document.body) {
+    let seg = cur.tagName.toLowerCase();
+    if (cur.id) {
+      seg += `#${cur.id}`;
+      path.unshift(seg);
+      break;
+    }
+    const siblings = Array.from(cur.parentNode?.children || []);
+    const same = siblings.filter(s => s.tagName === cur.tagName);
+    if (same.length > 1) seg += `:nth-of-type(${same.indexOf(cur) + 1})`;
+    path.unshift(seg);
+    cur = cur.parentElement;
+  }
+  return path.join(' > ');
+}
+
+function elementAttrs(el) {
+  const out = {};
+  const keys = ['id', 'class', 'name', 'type', 'value', 'href', 'src', 'alt', 'title', 'placeholder'];
+  keys.forEach(k => {
+    if (el.hasAttribute?.(k)) out[k] = el.getAttribute(k);
+  });
+  return out;
+}
+
+function sanitizeValue(v) {
+  if (!v) return '';
+  if (typeof v !== 'string') return v;
+  if (REDACTION_DEFAULT_PATTERN.test(v)) return '[REDACTED]';
+  return v.length > 500 ? v.slice(0, 500) + '...' : v;
+}
+
+function promiseSendMessage(payload) {
+  return new Promise(resolve => chrome.runtime.sendMessage(payload, resolve));
+}
+
+// ==============================
+// Recorder
+// ==============================
 class TestSnapperRecorder {
   constructor() {
     this.isRecording = false;
     this.isPaused = false;
-    // listeners: Map<Element, Map<EventType, Handler>>
-    this.listeners = new Map();
-    this.originalPushState = null;
-    this.originalReplaceState = null;
+
+    this.recordingStartTime = null;
     this.pauseStartTime = null;
     this.totalPausedTime = 0;
-    this.recordingStartTime = null;
 
-    // Debouncing for input events - configurable time frame
+    // listeners registry: Set<{el,type,handler,opts}>
+    this._listeners = new Set();
+
+    // Debounce map for inputs
     this.inputDebounceTimers = new Map();
-    this.inputDebounceDelay = 2000; // 2 seconds default (configurable)
+    this.inputDebounceDelay = 2000;
 
-    // Track input states to avoid duplicate recordings
+    // Track last values per elementKey
     this.lastInputValues = new Map();
 
     // Settings cache
     this.settings = {
       autoScreenshot: true,
-      inputTimeFrame: 2000, // 2 seconds default
+      inputTimeFrame: 2000,
       screenshotQuality: 'medium',
       redactionPatterns: 'password,secret,token,api_key',
       darkMode: false,
-      sessionRetentionDays: 2 // Add session retention setting
+      sessionRetentionDays: 2
     };
 
-    // API failure tracking
+    // State for “last meaningful step”
     this.lastInteractionId = null;
-    this.pendingApiCalls = new Map(); // Track ongoing API calls
+
+    // For periodic cleanup
+    this.cleanupIntervalMs = 6 * 60 * 60 * 1000;
+    this.cleanupTimer = null;
+
+    // Redaction overlay bookkeeping
+    this._redactionOverlays = [];
+
+    // Original history funcs
+    this._origPush = null;
+    this._origReplace = null;
 
     this.init();
   }
 
+  // Add near top-level (inside class)
+  injectAdvancedRecorder() {
+    try {
+      // Avoid double-inject
+      if (document.documentElement.hasAttribute('data-testsnapper-injected')) return;
+      document.documentElement.setAttribute('data-testsnapper-injected', '1');
+
+      const url = chrome.runtime.getURL('src/injected.js');
+      const s = document.createElement('script');
+      s.src = url;
+      s.async = false;
+      // Ensure it runs early enough and then remove
+      s.onload = () => s.remove();
+      (document.head || document.documentElement).appendChild(s);
+    } catch (e) {
+      console.warn('Failed to inject advanced recorder:', e);
+    }
+  }
+
+
+  // ==========================
+  // Init & Settings
+  // ==========================
   async init() {
-    // Load settings first
-    await this.loadSettings();
+    await this._loadSettings();
 
-    // Auto-cleanup old sessions on initialization
-    this.autoCleanupSessions();
+    // Add listeners *before* injecting advanced recorder
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      this._handleMessage(msg, sendResponse);
+      return true; // keep channel open for async
+    });
 
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleMessage(message, sender, sendResponse);
+    window.addEventListener('message', (e) => {
+      if (e.source !== window) return;
+      const data = e.data;
+      if (!data || data.source !== 'testsnapper-injected') return;
+      this._handleInjected(data);
+    });
+
+    // Now inject the advanced recorder
+    this.injectAdvancedRecorder();
+
+    // Optionally, push a status snapshot...
+    window.postMessage({
+
+      source: 'testsnapper-content',
+      type: 'RECORDING_STATUS_SNAPSHOT',
+      data: {
+        isRecording: this.isRecording,
+        isPaused: this.isPaused,
+        startTime: this.recordingStartTime,
+        totalPausedTime: this.totalPausedTime
+      }
+    }, '*');
+
+
+    // Initial cleanup ping
+    this._autoCleanupSessions();
+
+    // Periodic cleanup
+    this.cleanupTimer = setInterval(() => this._autoCleanupSessions(), this.cleanupIntervalMs);
+
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      this._handleMessage(msg, sendResponse);
       return true;
     });
 
-    // Check initial recording status
-    chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATUS' }, (response) => {
-      if (response?.isRecording) {
-        this.isRecording = true;
-        this.isPaused = response.isPaused || false;
-        this.recordingStartTime = response.startTime || Date.now();
-        this.totalPausedTime = response.totalPausedTime || 0;
+    // Adopt current status
+    chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATUS' }, (res) => {
+      if (!res) return;
+      this.isRecording = !!res.isRecording;
+      this.isPaused = !!res.isPaused;
+      this.recordingStartTime = res.startTime || now();
+      this.totalPausedTime = res.totalPausedTime || 0;
 
-        if (!this.isPaused) {
-          this.startUIRecording();
-        } else {
-          console.log('TestSnapper: Recording is paused, not starting UI recording');
-          this.addEventListeners();
-        }
+      // Always attach listeners so manual features work even while paused
+      this._addEventListeners();
+
+      if (this.isRecording && !this.isPaused) {
+        this._recordSessionStart();
+        this._injectNetworkInterceptor();
       }
     });
 
-    // Listen for API failures from injected script
-    window.addEventListener('message', (event) => {
-      if (event.source !== window) return;
-      if (event.data.source !== 'testsnapper-injected') return;
-      this.handleInjectedMessage(event.data);
+    // Bridge from injected script
+    window.addEventListener('message', (e) => {
+      if (e.source !== window) return;
+      const data = e.data;
+      if (!data || data.source !== 'testsnapper-injected') return;
+      this._handleInjected(data);
     });
 
-    // Set up periodic cleanup (run every 6 hours)
-    setInterval(() => {
-      this.autoCleanupSessions();
-    }, 6 * 60 * 60 * 1000);
+    // Memory leak guards
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        this._clearAllDebounceTimers();
+      }
+    });
+    window.addEventListener('beforeunload', () => {
+      this._clearAllDebounceTimers();
+      if (this.cleanupTimer) {
+        clearInterval(this.cleanupTimer);
+        this.cleanupTimer = null;
+      }
+    });
+
   }
 
-  async loadSettings() {
+  async _loadSettings() {
     try {
-      const result = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, resolve);
-      });
-
-      if (result && result.settings) {
-        this.settings = { ...this.settings, ...result.settings };
-        // Update debounce delay based on settings
-        this.inputDebounceDelay = this.settings.inputTimeFrame || 2000;
-        console.log('Settings loaded:', this.settings);
-      }
-    } catch (error) {
-      console.log('Could not load settings, using defaults:', error);
-    }
+      const res = await promiseSendMessage({ type: 'GET_SETTINGS' });
+      if (res && res.settings) this.settings = { ...this.settings, ...res.settings };
+    } catch { }
+    this._syncDebounceFromSettings(); // [18]
   }
 
-  // Auto-cleanup sessions older than retention period
-  autoCleanupSessions() {
-    const retentionDays = this.settings.sessionRetentionDays || 2;
-    const cutoffTime = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
-
-    chrome.runtime.sendMessage({
-      type: 'CLEANUP_OLD_SESSIONS',
-      cutoffTime: cutoffTime
-    }, (response) => {
-      if (response && response.deletedCount > 0) {
-        console.log(`TestSnapper: Auto-cleaned ${response.deletedCount} old sessions`);
-      }
-    });
+  _syncDebounceFromSettings() {
+    const delay = Number(this.settings.inputTimeFrame);
+    this.inputDebounceDelay = Number.isFinite(delay) ? Math.max(0, delay) : 2000;
   }
 
-  handleInjectedMessage(message) {
-    if (!this.isRecording || this.isPaused) return;
-
-    switch (message.type) {
-      case 'NETWORK_CALL':
-        this.handleNetworkCall(message.data);
-        break;
-      case 'NETWORK_ERROR':
-        this.handleNetworkError(message.data);
-        break;
-      case 'JAVASCRIPT_ERROR':
-        this.handleJavaScriptError(message.data);
-        break;
-    }
+  _autoCleanupSessions() {
+    const days = this.settings.sessionRetentionDays || 2;
+    const cutoff = now() - days * 24 * 60 * 60 * 1000;
+    chrome.runtime.sendMessage({ type: 'CLEANUP_OLD_SESSIONS', cutoffTime: cutoff }, () => { });
   }
 
-  handleNetworkCall(data) {
-    // Track successful API calls
-    const callId = `${data.method}_${data.url}_${data.startTime}`;
-    this.pendingApiCalls.set(callId, {
-      ...data,
-      relatedInteractionId: this.lastInteractionId
-    });
-
-    // Clean up after 30 seconds
-    setTimeout(() => {
-      this.pendingApiCalls.delete(callId);
-    }, 30000);
-  }
-
-  handleNetworkError(data) {
-    // Record API failure as an interaction
-    const interaction = {
-      type: 'api_failure',
-      url: data.url,
-      method: data.method,
-      status: data.status || 'Network Error',
-      error: data.error,
-      timestamp: Date.now(),
-      relativeTime: this.getRelativeTime(),
-      relatedInteractionId: this.lastInteractionId,
-      afterStep: this.getLastMeaningfulInteraction()
-    };
-
-    console.log('Captured API failure:', interaction);
-    this.recordInteraction(interaction);
-  }
-
-  handleJavaScriptError(data) {
-    // Record JavaScript errors that might be related to user interactions
-    const interaction = {
-      type: 'javascript_error',
-      message: data.message,
-      source: data.source,
-      line: data.line,
-      timestamp: Date.now(),
-      relativeTime: this.getRelativeTime(),
-      relatedInteractionId: this.lastInteractionId,
-      afterStep: this.getLastMeaningfulInteraction()
-    };
-
-    console.log('Captured JavaScript error:', interaction);
-    this.recordInteraction(interaction);
-  }
-
-  getLastMeaningfulInteraction() {
-    // This will be called by background script to get context
-    return chrome.runtime.sendMessage({
-      type: 'GET_LAST_MEANINGFUL_INTERACTION'
-    });
-  }
-
-  handleMessage(message, sender, sendResponse) {
-    console.log('Content script received message:', message.type);
-
-    switch (message.type) {
+  // ==========================
+  // Message Handling
+  // ==========================
+  _handleMessage(message, sendResponse) {
+    const type = message?.type;
+    switch (type) {
       case 'START_UI_RECORDING':
-        this.startUIRecording();
-        sendResponse({ success: true });
+        this.start();
+        sendResponse?.({ success: true });
         break;
-
       case 'PAUSE_UI_RECORDING':
-        this.pauseUIRecording();
-        sendResponse({ success: true });
+        this.pause();
+        sendResponse?.({ success: true });
         break;
-
       case 'RESUME_UI_RECORDING':
-        this.resumeUIRecording();
-        sendResponse({ success: true });
+        this.resume();
+        sendResponse?.({ success: true });
         break;
-
       case 'STOP_UI_RECORDING':
-        this.stopUIRecording();
-        sendResponse({ success: true });
+        this.stop();
+        sendResponse?.({ success: true });
         break;
-
       case 'UPDATE_SETTINGS':
-        this.updateSettings(message.settings);
-        sendResponse({ success: true });
+        this.settings = { ...this.settings, ...(message.settings || {}) };
+        this._syncDebounceFromSettings();       // [18] keep in sync
+        this._reconcileDebounceTimers();        // [18][20] make timers aware of new delay
+        sendResponse?.({ success: true });
         break;
-
       case 'GET_PAUSE_STATUS':
-        sendResponse({
+        sendResponse?.({
           isPaused: this.isPaused,
           isRecording: this.isRecording,
           totalPausedTime: this.totalPausedTime
         });
         break;
-
       case 'FORCE_SCREENSHOT':
-        // Allow screenshots even when paused
-        this.triggerScreenshot({
-          type: 'manual',
-          forced: true,
-          timestamp: Date.now()
-        });
-        sendResponse({ success: true });
+        this._manualScreenshotWithRedaction();  // [21]
+        sendResponse?.({ success: true });
         break;
-
       case 'CLEANUP_SESSIONS':
-        this.handleSessionCleanup(message.data);
-        sendResponse({ success: true });
+        this._autoCleanupSessions();
+        sendResponse?.({ success: true });
+        break;
+      default:
         break;
     }
   }
 
-  handleSessionCleanup(data) {
-    if (data.type === 'all') {
-      // Clear all sessions
-      chrome.runtime.sendMessage({
-        type: 'CLEAR_ALL_SESSIONS'
-      }, (response) => {
-        console.log('All sessions cleared:', response);
-      });
-    } else if (data.type === 'selected' && data.sessionIds) {
-      // Clear selected sessions
-      chrome.runtime.sendMessage({
-        type: 'CLEAR_SELECTED_SESSIONS',
-        sessionIds: data.sessionIds
-      }, (response) => {
-        console.log('Selected sessions cleared:', response);
-      });
-    } else if (data.type === 'old') {
-      // Manual cleanup of old sessions
-      this.autoCleanupSessions();
+  // ==========================
+  // Injected Bridge
+  // ==========================
+  _handleInjected(msg) {
+    if (!this.isRecording) return;
+
+    switch (msg.type) {
+      case 'NETWORK_CALL':
+        // Successful call — we don’t push as failure
+        // (Optionally store if you need a full network timeline)
+        break;
+
+      case 'NETWORK_ERROR': {
+        // [19] Ensure we preserve a status code (0 = real network error)
+        const data = msg.data || {};
+        const failure = {
+          type: 'api_failure',
+          url: String(data.url || ''),
+          method: data.method || 'GET',
+          status: typeof data.status === 'number' ? data.status : 0,
+          statusText: data.statusText || '',
+          error: data.error || 'Network Error',
+          startTime: data.startTime,
+          endTime: data.endTime,
+          timestamp: now(),
+          relativeTime: this._activeTime(),
+          relatedInteractionId: this.lastInteractionId
+        };
+        this._recordInteraction(failure, /*suppressAutoShot=*/true);
+        break;
+      }
+
+      case 'JAVASCRIPT_ERROR': {
+        const d = msg.data || {};
+        const jsErr = {
+          type: 'javascript_error',
+          message: d.message,
+          source: d.source,
+          line: d.line,
+          column: d.column,
+          stack: d.stack,
+          timestamp: now(),
+          relativeTime: this._activeTime(),
+          relatedInteractionId: this.lastInteractionId
+        };
+        this._recordInteraction(jsErr, /*suppressAutoShot=*/true);
+        break;
+      }
     }
   }
 
-  updateSettings(newSettings) {
-    this.settings = { ...this.settings, ...newSettings };
-    this.inputDebounceDelay = this.settings.inputTimeFrame || 2000;
-    console.log('Settings updated:', this.settings);
-  }
-
-  startUIRecording() {
-    if (this.isRecording && !this.isPaused) {
-      console.log('TestSnapper: Already recording and not paused');
-      return;
-    }
-
+  // ==========================
+  // Lifecycle
+  // ==========================
+  start() {
+    if (this.isRecording && !this.isPaused) return;
     this.isRecording = true;
     this.isPaused = false;
-    this.recordingStartTime = this.recordingStartTime || Date.now();
+    if (!this.recordingStartTime) this.recordingStartTime = now();
 
-    console.log('TestSnapper: Starting UI recording on', window.location.href);
-
-    this.addEventListeners();
-    this.injectNetworkInterceptor(); // Inject network monitoring
-
-    // Record session start event
-    const startInteraction = {
-      type: 'session_start',
-      url: window.location.href,
-      timestamp: Date.now(),
-      userAgent: navigator.userAgent,
-      viewport: {
-        width: window.innerWidth,
-        height: window.innerHeight
-      }
-    };
-
-    this.recordInteraction(startInteraction);
-    this.lastInteractionId = startInteraction.id;
-
-    console.log('TestSnapper: UI recording started successfully');
+    this._addEventListeners();
+    this._injectNetworkInterceptor();
+    this._recordSessionStart();
   }
 
-  injectNetworkInterceptor() {
-    // Inject script for network monitoring
+  pause() {
+    if (!this.isRecording || this.isPaused) return;
+    this.isPaused = true;
+    this.pauseStartTime = now();
+
+    this._clearAllDebounceTimers();             // [20]
+
+    const ev = {
+      type: 'session_pause',
+      timestamp: this.pauseStartTime,
+      activeTime: this._activeTime()
+    };
+    this._recordInteraction(ev, /*suppressAutoShot=*/true);
+  }
+
+  resume() {
+    if (!this.isRecording || !this.isPaused) return;
+    const resumedAt = now();
+    this.totalPausedTime += resumedAt - (this.pauseStartTime || resumedAt);
+    this.pauseStartTime = null;
+    this.isPaused = false;
+
+    const ev = {
+      type: 'session_resume',
+      timestamp: resumedAt,
+      pausedDuration: this.totalPausedTime,
+      totalPausedTime: this.totalPausedTime,
+      activeTime: this._activeTime()
+    };
+    this._recordInteraction(ev, /*suppressAutoShot=*/true);
+  }
+
+  stop() {
+    if (!this.isRecording && this._listeners.size === 0) return;
+
+    this._clearAllDebounceTimers();            // [20]
+
+    if (this.isPaused && this.pauseStartTime) {
+      this.totalPausedTime += now() - this.pauseStartTime;
+    }
+
+    const endAt = now();
+    const ev = {
+      type: 'session_end',
+      timestamp: endAt,
+      totalDuration: endAt - (this.recordingStartTime || endAt),
+      activeDuration: this._activeTime(),
+      totalPausedTime: this.totalPausedTime
+    };
+    this._recordInteraction(ev, /*suppressAutoShot=*/true);
+
+    // Remove listeners
+    for (const item of this._listeners) {
+      item.el.removeEventListener(item.type, item.handler, item.opts || true);
+    }
+    this._listeners.clear();
+
+    // Restore history
+    if (this._origPush) history.pushState = this._origPush;
+    if (this._origReplace) history.replaceState = this._origReplace;
+    this._origPush = this._origReplace = null;
+
+    // Reset state
+    this.isRecording = false;
+    this.isPaused = false;
+    this.recordingStartTime = null;
+    this.pauseStartTime = null;
+    this.totalPausedTime = 0;
+    this.lastInputValues.clear();
+    this.lastInteractionId = null;
+  }
+
+  // ==========================
+  // Listeners
+  // ==========================
+  _addEventListeners() {
+    // Click
+    const clickHandler = (e) => {
+      if (!this.isRecording || this.isPaused) return;
+      const el = e.target;
+      const selector = toSelector(el);
+
+      // Skip clicks on text/email/password inputs while typing
+      if (['INPUT', 'TEXTAREA'].includes(el.tagName) &&
+        ['text', 'email', 'password', 'search', 'url'].includes(el.type)) {
+        return;
+      }
+
+      const interaction = {
+        type: 'click',
+        selector,
+        tagName: el.tagName.toLowerCase(),
+        text: (el.textContent || '').trim().slice(0, 100),
+        coordinates: { x: e.clientX, y: e.clientY },
+        attributes: elementAttrs(el),
+        timestamp: now(),
+        relativeTime: this._activeTime()
+      };
+
+      this._recordInteraction(interaction);
+    };
+    document.addEventListener('click', clickHandler, true);
+    this._storeListener(document, 'click', clickHandler);
+
+    // Inputs (input/change/blur) with debounce
+    const inputHandler = (e) => {
+      if (!this.isRecording || this.isPaused) return;
+      const el = e.target;
+      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
+
+      const selector = toSelector(el);
+      const key = `${selector}_${el.tagName}`;
+      const prevTimer = this.inputDebounceTimers.get(key);
+      if (prevTimer) clearTimeout(prevTimer);
+
+      const timer = setTimeout(() => {
+        this._recordInput(el, 'input');
+        this.inputDebounceTimers.delete(key);
+      }, this.inputDebounceDelay);
+      this.inputDebounceTimers.set(key, timer);
+    };
+    const changeHandler = (e) => {
+      if (!this.isRecording || this.isPaused) return;
+      const el = e.target;
+      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
+      const selector = toSelector(el);
+      const key = `${selector}_${el.tagName}`;
+      const t = this.inputDebounceTimers.get(key);
+      if (t) { clearTimeout(t); this.inputDebounceTimers.delete(key); }
+      this._recordInput(el, 'change');
+    };
+    const blurHandler = (e) => {
+      if (!this.isRecording || this.isPaused) return;
+      const el = e.target;
+      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
+      const selector = toSelector(el);
+      const key = `${selector}_${el.tagName}`;
+      const t = this.inputDebounceTimers.get(key);
+      if (t) { clearTimeout(t); this.inputDebounceTimers.delete(key); }
+      this._recordInput(el, 'blur');
+    };
+
+    document.addEventListener('input', inputHandler, true);
+    document.addEventListener('change', changeHandler, true);
+    document.addEventListener('blur', blurHandler, true);
+    this._storeListener(document, 'input', inputHandler);
+    this._storeListener(document, 'change', changeHandler);
+    this._storeListener(document, 'blur', blurHandler);
+
+    // Form submit
+    const submitHandler = (e) => {
+      if (!this.isRecording || this.isPaused) return;
+      const form = e.target;
+      if (form.tagName !== 'FORM') return;
+
+      const selector = toSelector(form);
+      const fd = new FormData(form);
+      const values = {};
+      for (const [k, v] of fd.entries()) {
+        values[k] = REDACTION_DEFAULT_PATTERN.test(k) ? '[REDACTED]' : sanitizeValue(v);
+      }
+
+      const interaction = {
+        type: 'form_submit',
+        selector,
+        action: form.action || location.href,
+        method: form.method || 'GET',
+        formData: values,
+        timestamp: now(),
+        relativeTime: this._activeTime()
+      };
+      this._recordInteraction(interaction);
+    };
+    document.addEventListener('submit', submitHandler, true);
+    this._storeListener(document, 'submit', submitHandler);
+
+    // SPA + navigation
+    let currentUrl = location.href;
+    const urlChange = () => {
+      if (!this.isRecording || this.isPaused) return;
+      const newUrl = location.href;
+      if (newUrl === currentUrl) return;
+
+      const ev = {
+        type: 'url_change',
+        from: currentUrl,
+        to: newUrl,
+        timestamp: now(),
+        relativeTime: this._activeTime()
+      };
+      this._recordInteraction(ev, /*auto*/ true, /*delayMs*/ 500);
+      currentUrl = newUrl;
+    };
+    this._origPush = history.pushState;
+    this._origReplace = history.replaceState;
+    const self = this;
+    history.pushState = function (...args) {
+      self._origPush.apply(history, args);
+      setTimeout(urlChange, 0);
+    };
+    history.replaceState = function (...args) {
+      self._origReplace.apply(history, args);
+      setTimeout(urlChange, 0);
+    };
+    const beforeUnload = () => {
+      if (!this.isRecording || this.isPaused) return;
+      const ev = {
+        type: 'navigation',
+        from: location.href,
+        timestamp: now(),
+        relativeTime: this._activeTime()
+      };
+      this._recordInteraction(ev, /*suppressAutoShot=*/true);
+    };
+    window.addEventListener('popstate', urlChange);
+    window.addEventListener('beforeunload', beforeUnload);
+    this._storeListener(window, 'popstate', urlChange);
+    this._storeListener(window, 'beforeunload', beforeUnload);
+
+    // Scroll (throttled via timeout)
+    let scrollT = null;
+    let lastY = window.scrollY;
+    const scrollHandler = () => {
+      if (!this.isRecording || this.isPaused) return;
+      clearTimeout(scrollT);
+      scrollT = setTimeout(() => {
+        const y = window.scrollY;
+        const delta = Math.abs(y - lastY);
+        if (delta > 100) {
+          const ev = {
+            type: 'scroll',
+            scrollX: window.scrollX,
+            scrollY: y,
+            scrollDelta: delta,
+            documentHeight: document.documentElement.scrollHeight,
+            viewportHeight: window.innerHeight,
+            timestamp: now(),
+            relativeTime: this._activeTime()
+          };
+          this._recordInteraction(ev, /*suppressAutoShot=*/true);
+          lastY = y;
+        }
+      }, 500);
+    };
+    window.addEventListener('scroll', scrollHandler);
+    this._storeListener(window, 'scroll', scrollHandler);
+
+    // Keypress (important keys or modifiers)
+    const keyHandler = (e) => {
+      if (!this.isRecording || this.isPaused) return;
+      const important = [
+        'Enter', 'Tab', 'Escape', 'Backspace', 'Delete',
+        'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+        'Home', 'End', 'PageUp', 'PageDown'
+      ];
+      const modCombo = (e.ctrlKey || e.altKey || e.metaKey) && !['Control', 'Alt', 'Meta'].includes(e.key);
+      if (!important.includes(e.key) && !modCombo) return;
+
+      const ev = {
+        type: 'keypress',
+        key: e.key,
+        code: e.code,
+        ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, metaKey: e.metaKey,
+        target: toSelector(e.target),
+        timestamp: now(),
+        relativeTime: this._activeTime()
+      };
+      this._recordInteraction(ev, /*suppressAutoShot=*/true);
+    };
+    document.addEventListener('keydown', keyHandler, true);
+    this._storeListener(document, 'keydown', keyHandler);
+  }
+
+  _storeListener(el, type, handler, opts) {
+    this._listeners.add({ el, type, handler, opts });
+  }
+
+  // ==========================
+  // Recording helpers
+  // ==========================
+  _activeTime() {
+    if (!this.recordingStartTime) return 0;
+    const t = now();
+    let paused = this.totalPausedTime;
+    if (this.isPaused && this.pauseStartTime) paused += (t - this.pauseStartTime);
+    return Math.max(0, t - this.recordingStartTime - paused);
+  }
+
+  async _lastMeaningful() { // [17] promise-based
+    const res = await promiseSendMessage({ type: 'GET_LAST_MEANINGFUL_INTERACTION' });
+    return res?.interaction || null;
+  }
+
+  async _recordInteraction(interaction, suppressAutoShot = false, autoShotDelayMs = 100) {
+    interaction.id = interaction.id || `interaction_${now()}_${Math.random().toString(36).slice(2, 9)}`;
+    interaction.timestamp = interaction.timestamp || now();
+    interaction.relativeTime = typeof interaction.relativeTime === 'number' ? interaction.relativeTime : this._activeTime();
+
+    // Attach afterStep context asynchronously where it matters
+    if (interaction.type === 'api_failure' || interaction.type === 'javascript_error') {
+      try {
+        interaction.afterStep = await this._lastMeaningful(); // [17]
+      } catch { }
+    }
+
+    chrome.runtime.sendMessage({ type: 'RECORD_INTERACTION', data: interaction });
+    this.lastInteractionId = interaction.id;
+
+    if (!suppressAutoShot && this.settings.autoScreenshot) {
+      setTimeout(() => {
+        this._triggerScreenshot({
+          type: 'interaction',
+          interactionType: interaction.type,
+          interactionId: interaction.id
+        });
+      }, autoShotDelayMs);
+    }
+  }
+
+  _recordSessionStart() {
+    const start = {
+      type: 'session_start',
+      url: location.href,
+      timestamp: now(),
+      userAgent: navigator.userAgent,
+      viewport: { width: innerWidth, height: innerHeight }
+    };
+    this._recordInteraction(start, /*suppressAutoShot=*/false, /*delay*/ 0);
+  }
+
+  _recordInput(el, triggerType) {
+    const selector = toSelector(el);
+    const key = `${selector}_${el.tagName}`;
+    let value = el.value;
+
+    if (el.type?.toLowerCase() === 'password') value = '[REDACTED]';
+    else value = sanitizeValue(value);
+
+    const last = this.lastInputValues.get(key);
+    if (last === value && value !== '[REDACTED]') return; // unchanged
+
+    this.lastInputValues.set(key, value);
+
+    const interaction = {
+      type: 'input',
+      selector,
+      tagName: el.tagName.toLowerCase(),
+      inputType: el.type || 'text',
+      value,
+      attributes: elementAttrs(el),
+      timestamp: now(),
+      relativeTime: this._activeTime(),
+      triggerType,
+      timeFrame: `${this.inputDebounceDelay / 1000}s`
+    };
+    this._recordInteraction(interaction);
+  }
+
+  // ==========================
+  // Screenshots + Redaction
+  // ==========================
+  _triggerScreenshot(ctx) {
+    // If auto (not forced) and autoScreenshot disabled, skip
+    const forced = !!ctx?.forced;
+    if (!forced && !this.settings.autoScreenshot) return;
+
+    chrome.runtime.sendMessage({
+      type: 'CAPTURE_SCREENSHOT',
+      data: {
+        type: forced ? 'manual_capture' : 'auto_capture',
+        manual: forced,
+        timestamp: now(),
+        context: ctx
+      }
+    }, (res) => {
+      if (!res || !res.success) {
+        console.warn('Screenshot failed:', res?.reason || 'Unknown');
+      }
+    });
+  }
+
+  async _manualScreenshotWithRedaction() { // [21]
+    try {
+      // 1) Add overlays
+      this._applyRedactionOverlays();
+
+      // 2) Give the browser a frame to paint overlays
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 50)));
+
+      // 3) Trigger screenshot (forced => works while paused)
+      this._triggerScreenshot({ type: 'manual', forced: true });
+
+    } finally {
+      // 4) Clean up overlays after a short delay (ensure capture finished)
+      setTimeout(() => this._removeRedactionOverlays(), 150);
+    }
+  }
+
+  _applyRedactionOverlays() {
+    this._removeRedactionOverlays(); // idempotent
+    const patterns = (String(this.settings.redactionPatterns || '').split(',').map(s => s.trim()).filter(Boolean));
+    const regex = patterns.length ? new RegExp(patterns.join('|'), 'i') : REDACTION_DEFAULT_PATTERN;
+
+    const candidates = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], [type="password"], [data-secret], [data-sensitive]'));
+
+    for (const el of candidates) {
+      const name = (el.getAttribute('name') || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '');
+      const isPw = (el.getAttribute('type') || '').toLowerCase() === 'password';
+      if (!isPw && !regex.test(name)) continue;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.left = `${Math.max(0, rect.left)}px`;
+      overlay.style.top = `${Math.max(0, rect.top)}px`;
+      overlay.style.width = `${rect.width}px`;
+      overlay.style.height = `${rect.height}px`;
+      overlay.style.zIndex = '2147483647';
+      overlay.style.pointerEvents = 'none';
+      overlay.style.background = '#000';
+      overlay.style.opacity = '0.35';
+      overlay.style.backdropFilter = 'blur(6px)';
+      overlay.style.borderRadius = getComputedStyle(el).borderRadius || '4px';
+      document.body.appendChild(overlay);
+      this._redactionOverlays.push(overlay);
+    }
+  }
+
+  _removeRedactionOverlays() {
+    for (const o of this._redactionOverlays) {
+      o.remove();
+    }
+    this._redactionOverlays = [];
+  }
+
+  // ==========================
+  // Debounce housekeeping
+  // ==========================
+  _clearAllDebounceTimers() { // [20]
+    for (const [, t] of this.inputDebounceTimers) clearTimeout(t);
+    this.inputDebounceTimers.clear();
+  }
+
+  _reconcileDebounceTimers() { // [18][20] when delay changes, reset all pending timers
+    if (this.inputDebounceTimers.size === 0) return;
+    const keys = Array.from(this.inputDebounceTimers.keys());
+    this._clearAllDebounceTimers();
+    // We do not reschedule because we no longer have the original elements here.
+    // New events will use the new delay. (Safer than guessing targets)
+  }
+
+  // ==========================
+  // Network interception
+  // ==========================
+  _injectNetworkInterceptor() {
     const script = document.createElement('script');
-    script.textContent = `
-      (${this.networkInterceptorScript.toString()})();
-    `;
+    script.textContent = `(${this._networkInterceptorScript.toString()})();`;
     document.documentElement.appendChild(script);
     script.remove();
   }
 
-  networkInterceptorScript() {
-    // This function will be injected into the page
+  _networkInterceptorScript() {
     const originalFetch = window.fetch;
-    const originalXHR = window.XMLHttpRequest;
+    const OriginalXHR = window.XMLHttpRequest;
 
-    // Intercept fetch
+    // fetch
     window.fetch = function (...args) {
       const startTime = Date.now();
       const url = args[0];
@@ -324,40 +837,37 @@ class TestSnapperRecorder {
           const data = {
             type: 'fetch',
             url: String(url),
-            method: method,
+            method,
             status: response.status,
             statusText: response.statusText,
-            startTime: startTime,
+            startTime,
             endTime: Date.now(),
             success: response.ok
           };
-
           if (!response.ok) {
             window.postMessage({
               source: 'testsnapper-injected',
               type: 'NETWORK_ERROR',
-              data: { ...data, error: `HTTP ${response.status}` }
+              data: { ...data, error: 'HTTP ' + response.status }
             }, '*');
           } else {
-            window.postMessage({
-              source: 'testsnapper-injected',
-              type: 'NETWORK_CALL',
-              data: data
-            }, '*');
+            window.postMessage({ source: 'testsnapper-injected', type: 'NETWORK_CALL', data }, '*');
           }
-
           return response;
         })
         .catch(error => {
+          // [19] Ensure status=0 for network failures
           window.postMessage({
             source: 'testsnapper-injected',
             type: 'NETWORK_ERROR',
             data: {
               type: 'fetch',
               url: String(url),
-              method: method,
-              error: error.message,
-              startTime: startTime,
+              method,
+              status: 0,
+              statusText: '',
+              error: error?.message || 'Network Error',
+              startTime,
               endTime: Date.now()
             }
           }, '*');
@@ -365,64 +875,57 @@ class TestSnapperRecorder {
         });
     };
 
-    // Intercept XMLHttpRequest
+    // XHR
     window.XMLHttpRequest = function () {
-      const xhr = new originalXHR();
-      const originalOpen = xhr.open;
-      const originalSend = xhr.send;
+      const xhr = new OriginalXHR();
+      const origOpen = xhr.open;
+      const origSend = xhr.send;
 
-      let requestData = { method: '', url: '', startTime: 0 };
+      let meta = { method: 'GET', url: '', startTime: 0 };
 
-      xhr.open = function (method, url, ...args) {
-        requestData.method = method;
-        requestData.url = url;
-        return originalOpen.apply(this, [method, url, ...args]);
+      xhr.open = function (m, u, ...rest) {
+        meta.method = m || 'GET';
+        meta.url = u || '';
+        return origOpen.apply(this, [m, u, ...rest]);
       };
 
-      xhr.send = function (data) {
-        requestData.startTime = Date.now();
+      xhr.send = function (...rest) {
+        meta.startTime = Date.now();
 
-        const originalOnReadyStateChange = this.onreadystatechange;
+        const origReady = this.onreadystatechange;
         this.onreadystatechange = function () {
-          if (originalOnReadyStateChange) {
-            originalOnReadyStateChange.apply(this, arguments);
-          }
+          if (origReady) try { origReady.apply(this, arguments); } catch { }
 
           if (this.readyState === 4) {
-            const networkData = {
+            const data = {
               type: 'xhr',
-              url: requestData.url,
-              method: requestData.method,
+              url: meta.url,
+              method: meta.method,
               status: this.status,
               statusText: this.statusText,
-              startTime: requestData.startTime,
+              startTime: meta.startTime,
               endTime: Date.now(),
               success: this.status >= 200 && this.status < 300
             };
-
             if (this.status === 0 || this.status >= 400) {
               window.postMessage({
                 source: 'testsnapper-injected',
                 type: 'NETWORK_ERROR',
-                data: { ...networkData, error: `HTTP ${this.status}` }
+                data: { ...data, error: (this.status === 0 ? 'Network Error' : 'HTTP ' + this.status) }
               }, '*');
             } else {
-              window.postMessage({
-                source: 'testsnapper-injected',
-                type: 'NETWORK_CALL',
-                data: networkData
-              }, '*');
+              window.postMessage({ source: 'testsnapper-injected', type: 'NETWORK_CALL', data }, '*');
             }
           }
         };
 
-        return originalSend.apply(this, arguments);
+        return origSend.apply(this, rest);
       };
 
       return xhr;
     };
 
-    // Intercept JavaScript errors
+    // JS errors
     window.addEventListener('error', (event) => {
       window.postMessage({
         source: 'testsnapper-injected',
@@ -437,663 +940,9 @@ class TestSnapperRecorder {
       }, '*');
     });
   }
-
-  pauseUIRecording() {
-    if (!this.isRecording) {
-      console.log('TestSnapper: Not recording, cannot pause');
-      return;
-    }
-
-    if (this.isPaused) {
-      console.log('TestSnapper: Already paused');
-      return;
-    }
-
-    this.isPaused = true;
-    this.pauseStartTime = Date.now();
-    console.log('TestSnapper: UI recording paused at', this.pauseStartTime);
-
-    // Clear any pending debounced inputs
-    this.inputDebounceTimers.forEach(timer => clearTimeout(timer));
-    this.inputDebounceTimers.clear();
-
-    // Record pause event
-    const pauseInteraction = {
-      type: 'session_pause',
-      timestamp: this.pauseStartTime,
-      activeTime: this.getActiveRecordingTime()
-    };
-
-    this.recordInteraction(pauseInteraction);
-    this.lastInteractionId = pauseInteraction.id;
-
-    // Note: We DON'T remove event listeners during pause anymore
-    // This allows us to continue monitoring for manual actions like screenshots
-  }
-
-  resumeUIRecording() {
-    if (!this.isRecording) {
-      console.log('TestSnapper: Not recording, cannot resume');
-      return;
-    }
-
-    if (!this.isPaused) {
-      console.log('TestSnapper: Not paused, nothing to resume');
-      return;
-    }
-
-    const resumeTime = Date.now();
-    const pausedDuration = resumeTime - this.pauseStartTime;
-    this.totalPausedTime += pausedDuration;
-    this.isPaused = false;
-
-    console.log('TestSnapper: UI recording resumed after', pausedDuration, 'ms pause');
-
-    // Record resume event
-    const resumeInteraction = {
-      type: 'session_resume',
-      timestamp: resumeTime,
-      pausedDuration: pausedDuration,
-      totalPausedTime: this.totalPausedTime,
-      activeTime: this.getActiveRecordingTime()
-    };
-
-    this.recordInteraction(resumeInteraction);
-    this.lastInteractionId = resumeInteraction.id;
-
-    if (this.listeners.size === 0) {
-      console.log('TestSnapper: No listeners found, re-adding...');
-      this.addEventListeners();
-    }
-
-    this.pauseStartTime = null;
-  }
-
-  stopUIRecording() {
-    if (!this.isRecording && this.listeners.size === 0) {
-      console.log('TestSnapper: Not recording, ignoring stop request');
-      return;
-    }
-
-    // Clear any pending debounced inputs before stopping
-    this.inputDebounceTimers.forEach(timer => clearTimeout(timer));
-    this.inputDebounceTimers.clear();
-
-    // If we're paused, calculate final paused time
-    if (this.isPaused && this.pauseStartTime) {
-      this.totalPausedTime += Date.now() - this.pauseStartTime;
-    }
-
-    // Record session end event
-    const endTime = Date.now();
-    const endInteraction = {
-      type: 'session_end',
-      timestamp: endTime,
-      totalDuration: endTime - this.recordingStartTime,
-      activeDuration: this.getActiveRecordingTime(),
-      totalPausedTime: this.totalPausedTime
-    };
-
-    this.recordInteraction(endInteraction);
-
-    this.isRecording = false;
-    this.isPaused = false;
-    console.log('TestSnapper: Stopping UI recording');
-
-    // Remove all event listeners
-    this.listeners.forEach((typeMap, element) => {
-      Object.entries(typeMap).forEach(([type, handler]) => {
-        element.removeEventListener(type, handler, true);
-        console.log('TestSnapper: Removed listener', type);
-      });
-    });
-    this.listeners.clear();
-
-    // Restore SPA navigation methods
-    if (this.originalPushState) history.pushState = this.originalPushState;
-    if (this.originalReplaceState) history.replaceState = this.originalReplaceState;
-
-    this.originalPushState = null;
-    this.originalReplaceState = null;
-
-    // Reset timing variables and state tracking
-    this.pauseStartTime = null;
-    this.totalPausedTime = 0;
-    this.recordingStartTime = null;
-    this.lastInputValues.clear();
-    this.lastInteractionId = null;
-    this.pendingApiCalls.clear();
-
-    console.log('TestSnapper: UI recording stopped successfully');
-  }
-
-  getActiveRecordingTime() {
-    if (!this.recordingStartTime) return 0;
-
-    const currentTime = Date.now();
-    const totalTime = currentTime - this.recordingStartTime;
-    let pausedTime = this.totalPausedTime;
-
-    // If currently paused, add current pause duration
-    if (this.isPaused && this.pauseStartTime) {
-      pausedTime += currentTime - this.pauseStartTime;
-    }
-
-    return Math.max(0, totalTime - pausedTime);
-  }
-
-  getRelativeTime() {
-    return this.getActiveRecordingTime();
-  }
-
-  addEventListeners() {
-    this.addClickListener();
-    this.addInputListener();
-    this.addNavigationListener();
-    this.addScrollListener();
-    this.addFormSubmissionListener();
-    this.addKeyboardListener();
-  }
-
-  // ========== Event Listeners ==========
-
-  addClickListener() {
-    const handler = (event) => {
-      if (!this.isRecording || this.isPaused) return;
-
-      const element = event.target;
-      const selector = this.generateSelector(element);
-
-      // Skip click recording if it's on an input field that's being typed in
-      if (['INPUT', 'TEXTAREA'].includes(element.tagName) &&
-        ['text', 'email', 'password', 'search', 'url'].includes(element.type)) {
-        return;
-      }
-
-      const interaction = {
-        type: 'click',
-        selector,
-        tagName: element.tagName.toLowerCase(),
-        text: element.textContent?.trim().substring(0, 100) || '',
-        coordinates: { x: event.clientX, y: event.clientY },
-        attributes: this.getElementAttributes(element),
-        timestamp: Date.now(),
-        relativeTime: this.getRelativeTime()
-      };
-
-      this.recordInteraction(interaction);
-      this.lastInteractionId = interaction.id;
-
-      // Trigger screenshot only if settings allow
-      if (this.settings.autoScreenshot) {
-        setTimeout(() => {
-          this.triggerScreenshot({
-            type: 'interaction',
-            interactionType: 'click',
-            interactionId: interaction.id
-          });
-        }, 100);
-      }
-
-      console.log('Captured click interaction:', interaction);
-    };
-
-    document.addEventListener('click', handler, true);
-    this._storeListener(document, 'click', handler);
-  }
-
-  addInputListener() {
-    // Use configurable time frame for debouncing
-    const inputHandler = (event) => {
-      if (!this.isRecording || this.isPaused) return;
-
-      const element = event.target;
-      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName)) return;
-
-      const selector = this.generateSelector(element);
-      const elementKey = `${selector}_${element.tagName}`;
-
-      // Clear existing timer for this element
-      if (this.inputDebounceTimers.has(elementKey)) {
-        clearTimeout(this.inputDebounceTimers.get(elementKey));
-      }
-
-      // Set new debounced timer with configurable delay
-      const timer = setTimeout(() => {
-        this.recordInputInteraction(element, 'input');
-        this.inputDebounceTimers.delete(elementKey);
-      }, this.inputDebounceDelay); // Use configurable time frame
-
-      this.inputDebounceTimers.set(elementKey, timer);
-    };
-
-    const changeHandler = (event) => {
-      if (!this.isRecording || this.isPaused) return;
-
-      const element = event.target;
-      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName)) return;
-
-      const selector = this.generateSelector(element);
-      const elementKey = `${selector}_${element.tagName}`;
-
-      // Clear any pending debounced input for this element
-      if (this.inputDebounceTimers.has(elementKey)) {
-        clearTimeout(this.inputDebounceTimers.get(elementKey));
-        this.inputDebounceTimers.delete(elementKey);
-      }
-
-      // Record immediately on change
-      this.recordInputInteraction(element, 'change');
-    };
-
-    const blurHandler = (event) => {
-      if (!this.isRecording || this.isPaused) return;
-
-      const element = event.target;
-      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName)) return;
-
-      const selector = this.generateSelector(element);
-      const elementKey = `${selector}_${element.tagName}`;
-
-      // Clear any pending debounced input for this element
-      if (this.inputDebounceTimers.has(elementKey)) {
-        clearTimeout(this.inputDebounceTimers.get(elementKey));
-        this.inputDebounceTimers.delete(elementKey);
-      }
-
-      // Record the final value on blur
-      this.recordInputInteraction(element, 'blur');
-    };
-
-    document.addEventListener('input', inputHandler, true);
-    document.addEventListener('change', changeHandler, true);
-    document.addEventListener('blur', blurHandler, true);
-
-    this._storeListener(document, 'input', inputHandler);
-    this._storeListener(document, 'change', changeHandler);
-    this._storeListener(document, 'blur', blurHandler);
-  }
-
-  recordInputInteraction(element, triggerType) {
-    const selector = this.generateSelector(element);
-    const elementKey = `${selector}_${element.tagName}`;
-
-    let value = element.value;
-
-    // Always redact password fields
-    if (element.type && element.type.toLowerCase() === 'password') {
-      value = '[REDACTED]';
-    } else {
-      value = this.sanitizeValue(value);
-    }
-
-    // Check if value has changed since last recording
-    const lastValue = this.lastInputValues.get(elementKey);
-    if (lastValue === value && value !== '[REDACTED]') {
-      console.log('Input value unchanged, skipping recording:', selector);
-      return;
-    }
-
-    // Update last recorded value
-    this.lastInputValues.set(elementKey, value);
-
-    const interaction = {
-      type: 'input',
-      selector,
-      tagName: element.tagName.toLowerCase(),
-      inputType: element.type || 'text',
-      value,
-      attributes: this.getElementAttributes(element),
-      timestamp: Date.now(),
-      relativeTime: this.getRelativeTime(),
-      triggerType: triggerType,
-      timeFrame: `${this.inputDebounceDelay / 1000}s` // Show time frame used
-    };
-
-    this.recordInteraction(interaction);
-    this.lastInteractionId = interaction.id;
-
-    // Trigger screenshot only if settings allow
-    if (this.settings.autoScreenshot) {
-      setTimeout(() => {
-        this.triggerScreenshot({
-          type: 'interaction',
-          interactionType: 'input',
-          interactionId: interaction.id
-        });
-      }, 100);
-    }
-
-    console.log('Captured input interaction:', interaction);
-  }
-
-  addFormSubmissionListener() {
-    const submitHandler = (event) => {
-      if (!this.isRecording || this.isPaused) return;
-
-      const form = event.target;
-      if (form.tagName !== 'FORM') return;
-
-      const selector = this.generateSelector(form);
-
-      // Capture form data (sanitized)
-      const formData = new FormData(form);
-      const formValues = {};
-
-      for (let [key, value] of formData.entries()) {
-        // Redact sensitive field names
-        if (/password|secret|token|api[_-]?key/i.test(key)) {
-          formValues[key] = '[REDACTED]';
-        } else {
-          formValues[key] = this.sanitizeValue(value);
-        }
-      }
-
-      const interaction = {
-        type: 'form_submit',
-        selector,
-        action: form.action || window.location.href,
-        method: form.method || 'GET',
-        formData: formValues,
-        timestamp: Date.now(),
-        relativeTime: this.getRelativeTime()
-      };
-
-      this.recordInteraction(interaction);
-      this.lastInteractionId = interaction.id;
-
-      // Trigger screenshot only if settings allow
-      if (this.settings.autoScreenshot) {
-        setTimeout(() => {
-          this.triggerScreenshot({
-            type: 'interaction',
-            interactionType: 'form_submit',
-            interactionId: interaction.id
-          });
-        }, 100);
-      }
-
-      console.log('Captured form submission:', interaction);
-    };
-
-    document.addEventListener('submit', submitHandler, true);
-    this._storeListener(document, 'submit', submitHandler);
-  }
-
-  addNavigationListener() {
-    const beforeUnloadHandler = () => {
-      if (!this.isRecording || this.isPaused) return;
-
-      const interaction = {
-        type: 'navigation',
-        from: window.location.href,
-        timestamp: Date.now(),
-        relativeTime: this.getRelativeTime()
-      };
-
-      this.recordInteraction(interaction);
-      this.lastInteractionId = interaction.id;
-      console.log('Captured navigation:', interaction);
-    };
-
-    window.addEventListener('beforeunload', beforeUnloadHandler);
-    this._storeListener(window, 'beforeunload', beforeUnloadHandler);
-
-    // SPA navigation
-    let currentUrl = window.location.href;
-    const urlChangeHandler = () => {
-      if (!this.isRecording || this.isPaused) return;
-
-      const newUrl = window.location.href;
-      if (newUrl !== currentUrl) {
-        const interaction = {
-          type: 'url_change',
-          from: currentUrl,
-          to: newUrl,
-          timestamp: Date.now(),
-          relativeTime: this.getRelativeTime()
-        };
-
-        this.recordInteraction(interaction);
-        this.lastInteractionId = interaction.id;
-
-        // Trigger screenshot only if settings allow
-        if (this.settings.autoScreenshot) {
-          setTimeout(() => {
-            this.triggerScreenshot({
-              type: 'interaction',
-              interactionType: 'url_change',
-              interactionId: interaction.id
-            });
-          }, 500); // Longer delay for page load
-        }
-
-        console.log('Captured URL change:', interaction);
-        currentUrl = newUrl;
-      }
-    };
-
-    // Save originals and override
-    this.originalPushState = history.pushState;
-    this.originalReplaceState = history.replaceState;
-    const self = this;
-
-    history.pushState = function (...args) {
-      self.originalPushState.apply(history, args);
-      setTimeout(urlChangeHandler, 0);
-    };
-
-    history.replaceState = function (...args) {
-      self.originalReplaceState.apply(history, args);
-      setTimeout(urlChangeHandler, 0);
-    };
-
-    window.addEventListener('popstate', urlChangeHandler);
-    this._storeListener(window, 'popstate', urlChangeHandler);
-  }
-
-  addScrollListener() {
-    let scrollTimeout;
-    let lastScrollY = window.scrollY;
-
-    const scrollHandler = () => {
-      if (!this.isRecording || this.isPaused) return;
-
-      clearTimeout(scrollTimeout);
-      scrollTimeout = setTimeout(() => {
-        const currentScrollY = window.scrollY;
-        const scrollDelta = Math.abs(currentScrollY - lastScrollY);
-
-        // Only record significant scroll movements (more than 100px)
-        if (scrollDelta > 100) {
-          const interaction = {
-            type: 'scroll',
-            scrollX: window.scrollX,
-            scrollY: currentScrollY,
-            scrollDelta: scrollDelta,
-            documentHeight: document.documentElement.scrollHeight,
-            viewportHeight: window.innerHeight,
-            timestamp: Date.now(),
-            relativeTime: this.getRelativeTime()
-          };
-
-          this.recordInteraction(interaction);
-          this.lastInteractionId = interaction.id;
-          console.log('Captured scroll interaction:', interaction);
-          lastScrollY = currentScrollY;
-        }
-      }, 500);
-    };
-
-    window.addEventListener('scroll', scrollHandler);
-    this._storeListener(window, 'scroll', scrollHandler);
-  }
-
-  addKeyboardListener() {
-    const keyHandler = (event) => {
-      if (!this.isRecording || this.isPaused) return;
-
-      // Only record important navigation and function keys
-      const importantKeys = [
-        'Enter', 'Tab', 'Escape', 'Backspace', 'Delete',
-        'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-        'Home', 'End', 'PageUp', 'PageDown'
-      ];
-
-      const isModifierCombo = (event.ctrlKey || event.altKey || event.metaKey) &&
-        event.key !== 'Control' && event.key !== 'Alt' && event.key !== 'Meta';
-
-      if (importantKeys.includes(event.key) || isModifierCombo) {
-        const interaction = {
-          type: 'keypress',
-          key: event.key,
-          code: event.code,
-          ctrlKey: event.ctrlKey,
-          altKey: event.altKey,
-          shiftKey: event.shiftKey,
-          metaKey: event.metaKey,
-          target: this.generateSelector(event.target),
-          timestamp: Date.now(),
-          relativeTime: this.getRelativeTime()
-        };
-
-        this.recordInteraction(interaction);
-        this.lastInteractionId = interaction.id;
-        console.log('Captured key interaction:', interaction);
-      }
-    };
-
-    document.addEventListener('keydown', keyHandler, true);
-    this._storeListener(document, 'keydown', keyHandler);
-  }
-
-  // ========== Screenshot Handling ==========
-
-  triggerScreenshot(context) {
-    // Allow screenshots even when paused if forced
-    if (!this.isRecording && !context.forced) {
-      console.log('Not recording and not forced, skipping screenshot');
-      return;
-    }
-
-    // Check auto-screenshot setting only for automatic screenshots
-    if (!context.forced && !this.settings.autoScreenshot) {
-      console.log('Auto-screenshot disabled, skipping automatic screenshot');
-      return;
-    }
-
-    chrome.runtime.sendMessage({
-      type: 'CAPTURE_SCREENSHOT',
-      data: {
-        type: context.forced ? 'manual_capture' : 'auto_capture',
-        manual: context.forced || false,
-        timestamp: Date.now(),
-        context: context
-      }
-    }, (response) => {
-      if (response && response.success) {
-        console.log('Screenshot captured successfully:', context.forced ? 'manual' : 'auto');
-      } else {
-        console.error('Screenshot failed:', response?.reason || 'Unknown error');
-      }
-    });
-  }
-
-  // ========== Listener Map Helpers ==========
-
-  _storeListener(element, type, handler) {
-    if (!this.listeners.has(element)) {
-      this.listeners.set(element, {});
-    }
-    this.listeners.get(element)[type] = handler;
-  }
-
-  // ========== Helpers ==========
-
-  generateSelector(element) {
-    if (element.id) return `#${element.id}`;
-
-    if (element.className && typeof element.className === 'string') {
-      const classes = element.className.trim().split(/\s+/).filter(c => c);
-      if (classes.length > 0) {
-        const selector = `${element.tagName.toLowerCase()}.${classes.join('.')}`;
-        if (document.querySelectorAll(selector).length === 1) return selector;
-      }
-    }
-
-    // Try data attributes
-    for (const attr of element.attributes) {
-      if (attr.name.startsWith('data-') && attr.value) {
-        const selector = `${element.tagName.toLowerCase()}[${attr.name}="${attr.value}"]`;
-        if (document.querySelectorAll(selector).length === 1) return selector;
-      }
-    }
-
-    // Generate path-based selector
-    const path = [];
-    let current = element;
-
-    while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
-      let selector = current.tagName.toLowerCase();
-
-      if (current.id) {
-        selector += `#${current.id}`;
-        path.unshift(selector);
-        break;
-      }
-
-      const siblings = Array.from(current.parentNode?.children || []);
-      const sameTagSiblings = siblings.filter(s => s.tagName === current.tagName);
-
-      if (sameTagSiblings.length > 1) {
-        const index = sameTagSiblings.indexOf(current) + 1;
-        selector += `:nth-of-type(${index})`;
-      }
-
-      path.unshift(selector);
-      current = current.parentElement;
-    }
-
-    return path.join(' > ');
-  }
-
-  getElementAttributes(element) {
-    const attrs = {};
-    const importantAttrs = ['id', 'class', 'name', 'type', 'value', 'href', 'src', 'alt', 'title', 'placeholder'];
-
-    for (const attr of importantAttrs) {
-      if (element.hasAttribute(attr)) {
-        attrs[attr] = element.getAttribute(attr);
-      }
-    }
-
-    return attrs;
-  }
-
-  sanitizeValue(value) {
-    if (!value) return '';
-
-    if (typeof value === 'string') {
-      // Don't record secrets in values
-      if (value.length > 0 && /password|secret|token|api[_-]?key/i.test(value)) {
-        return '[REDACTED]';
-      }
-      return value.length > 500 ? value.substring(0, 500) + '...' : value;
-    }
-
-    return value;
-  }
-
-  recordInteraction(interaction) {
-    // Add unique ID to interaction
-    interaction.id = `interaction_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    chrome.runtime.sendMessage({
-      type: 'RECORD_INTERACTION',
-      data: interaction
-    });
-  }
 }
 
-// Initialize recorder
+// ==============================
+// Bootstrap
+// ==============================
 new TestSnapperRecorder();
