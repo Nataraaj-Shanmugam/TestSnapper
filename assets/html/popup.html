@@ -1,0 +1,73 @@
+<!-- FILE: src/popup.html -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>TestSnapper</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- No inline styles/scripts per MV3 CSP -->
+    <link rel="stylesheet" href="../css/popup.css" />
+  </head>
+  <body>
+    <header class="ts-pop-header">
+      <h1 class="ts-title">TestSnapper</h1>
+      <div class="ts-llm">
+        <label class="ts-toggle">
+          <input id="llmToggle" type="checkbox" />
+          <span>Enable WebLLM</span>
+        </label>
+        <span id="llmStatus" class="ts-chip ts-chip--idle" aria-live="polite">Idle</span>
+      </div>
+    </header>
+
+    <section class="ts-progress" aria-hidden="true">
+      <div class="ts-progress__label">Model loading… <span id="llmProgressPct">0%</span></div>
+      <div class="ts-progress__bar"><div id="llmProgressBar" class="ts-progress__fill" style="width:0%"></div></div>
+    </section>
+
+    <section class="ts-controls" aria-label="Recording controls">
+      <div class="ts-controls__row">
+        <button id="btnStart" class="ts-btn ts-btn--primary">Start</button>
+        <button id="btnPause" class="ts-btn" disabled>Pause</button>
+        <button id="btnResume" class="ts-btn" disabled>Resume</button>
+        <button id="btnStop" class="ts-btn ts-btn--danger" disabled>Stop</button>
+      </div>
+      <div class="ts-controls__row">
+        <button id="btnScreenshot" class="ts-btn" disabled>Screenshot</button>
+        <button id="btnExportCurrent" class="ts-btn" disabled>Export Current</button>
+      </div>
+      <div class="ts-meta" id="runMeta" aria-live="polite"></div>
+    </section>
+
+    <section class="ts-sessions" aria-label="Recent sessions">
+      <div class="ts-sessions__head">
+        <h2>Sessions</h2>
+        <button id="btnRefresh" class="ts-link">Refresh</button>
+      </div>
+      <ul id="sessionsList" class="ts-sessions__list" role="list">
+        <!-- populated by popup.js -->
+      </ul>
+      <template id="tplSessionItem">
+        <li class="ts-session" data-id="">
+          <div class="ts-session__main">
+            <div class="ts-session__name"></div>
+            <div class="ts-session__meta"></div>
+          </div>
+          <div class="ts-session__actions">
+            <button class="ts-btn ts-btn--small" data-action="open">Open</button>
+            <button class="ts-btn ts-btn--small" data-action="export">Export</button>
+            <button class="ts-link ts-link--danger" data-action="delete">Delete</button>
+          </div>
+        </li>
+      </template>
+    </section>
+
+    <footer class="ts-footer">
+      <div id="stats" class="ts-stats" aria-live="polite">
+        Steps: 0 • Enriched: 0 • Queue: 0 • Mode: —
+      </div>
+    </footer>
+
+    <script type="module" src="../../src/popup.js"></script>
+  </body>
+</html>

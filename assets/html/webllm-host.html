@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>TestSnapper WebLLM Host</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Content Security Policy compliance -->
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f5f5f5;
+        color: #333;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        text-align: center;
+      }
+      .status {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        max-width: 400px;
+        margin: 0 auto;
+      }
+      .status h1 {
+        margin: 0 0 10px 0;
+        font-size: 18px;
+        color: #2196F3;
+      }
+      .status p {
+        margin: 5px 0;
+        color: #666;
+        font-size: 14px;
+      }
+      .progress {
+        width: 100%;
+        height: 6px;
+        background: #e0e0e0;
+        border-radius: 3px;
+        overflow: hidden;
+        margin: 15px 0;
+      }
+      .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #2196F3, #4CAF50);
+        width: 0%;
+        transition: width 0.3s ease;
+      }
+      .ready { color: #4CAF50 !important; }
+      .loading { color: #FF9800 !important; }
+      .error { color: #F44336 !important; }
+    </style>
+  </head>
+  <body>
+    <div class="status">
+      <h1 id="status-title">TestSnapper WebLLM Host</h1>
+      <p id="status-text">Initializing...</p>
+      <div class="progress">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <p id="model-info">Model: Loading...</p>
+      <p id="cache-info">Cache: 0 entries</p>
+    </div>
+
+    <!-- Load WebLLM service as ES module -->
+    <script type="module" src="../../src/webllm-service.js"></script>
+    
+    <script>
+      // Simple UI updates for the host page
+      let statusTitle = document.getElementById('status-title');
+      let statusText = document.getElementById('status-text');
+      let progressBar = document.getElementById('progress-bar');
+      let modelInfo = document.getElementById('model-info');
+      let cacheInfo = document.getElementById('cache-info');
+
+      // Listen for WebLLM status updates
+      window.addEventListener('message', (event) => {
+        if (event.source !== window || !event.data) return;
+        const { data } = event;
+        
+        if (data.source === 'testsnapper-webllm') {
+          switch (data.type) {
+            case 'LLM_READY':
+              statusTitle.textContent = 'WebLLM Ready ✓';
+              statusTitle.className = 'ready';
+              statusText.textContent = 'Model loaded and ready for enrichment';
+              progressBar.style.width = '100%';
+              modelInfo.textContent = `Model: ${data.data?.modelId || 'Unknown'}`;
+              break;
+              
+            case 'INIT_PROGRESS':
+              const pct = Math.round((data.data?.progress || 0) * 100);
+              statusText.textContent = `Loading model... ${pct}%`;
+              statusTitle.className = 'loading';
+              progressBar.style.width = `${pct}%`;
+              break;
+              
+            case 'LLM_STATUS':
+              if (data.data?.ready) {
+                statusTitle.textContent = 'WebLLM Ready ✓';
+                statusTitle.className = 'ready';
+                statusText.textContent = `Mode: ${data.data.mode || 'unknown'}`;
+                modelInfo.textContent = `Model: ${data.data.modelId || 'Unknown'}`;
+                cacheInfo.textContent = `Cache: ${data.data.cacheSize || 0} entries`;
+              }
+              break;
+          }
+        }
+      });
+
+      // Listen for Chrome runtime messages (for debugging)
+      if (typeof chrome !== 'undefined' && chrome.runtime) {
+        chrome.runtime.onMessage.addListener((msg) => {
+          console.log('[WebLLM Host] Runtime message:', msg?.type);
+          
+          switch (msg?.type) {
+            case 'LLM_PROGRESS':
+              const pct = msg.pct || 0;
+              statusText.textContent = `Loading model... ${pct}%`;
+              statusTitle.className = 'loading';
+              progressBar.style.width = `${pct}%`;
+              break;
+              
+            case 'LLM_READY':
+              statusTitle.textContent = 'WebLLM Ready ✓';
+              statusTitle.className = 'ready';
+              statusText.textContent = `Mode: ${msg.mode || 'unknown'}`;
+              progressBar.style.width = '100%';
+              modelInfo.textContent = `Model: ${msg.modelId || 'Unknown'}`;
+              break;
+          }
+        });
+      }
+
+      // Initial status
+      console.log('[WebLLM Host] Host page loaded');
+      statusText.textContent = 'Host loaded, initializing WebLLM...';
+    </script>
+  </body>
+</html>
