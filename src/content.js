@@ -1,948 +1,1227 @@
-// content.js — Full, Fixed & Enhanced (addresses issues #17–#21)
-// - [17] Properly awaits getLastMeaningfulInteraction via Promise wrapper
-// - [18] Debounce delay always synced with settings updates (and pending timers reconciled)
-// - [19] API failure handling includes statusCode=0 for true network errors (fetch/xhr)
-// - [20] Prevents memory leaks in inputDebounceTimers (clears on pause/stop/visibility/unload)
-// - [21] Adds temporary redaction overlays for sensitive elements before screenshots
-//
-// Drop-in replacement. Keeps your original features (click/input/scroll/SPA/url/form, errors, network,
-// pause/resume semantics, auto/ manual screenshots). Works with the updated background.js.
+console.log('[TestSnapper Content] Enhanced content script loading...');
 
-// ==============================
-// Utilities
-// ==============================
-const now = () => Date.now();
+/////////////////////////////
+// State & Configuration   //
+/////////////////////////////
 
-const REDACTION_DEFAULT_PATTERN = /password|secret|token|api[_-]?key/i;
+let recording = false;
+let paused = false;
+let currentSessionId = null;
+let injectedNetworkHook = false;
+let eventId = 0;
 
-function toSelector(el) {
-  if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
-  if (el.id) return `#${el.id}`;
-  if (typeof el.className === 'string' && el.className.trim()) {
-    const classes = el.className.trim().split(/\s+/).filter(Boolean);
-    if (classes.length) {
-      const sel = `${el.tagName.toLowerCase()}.${classes.join('.')}`;
-      if (document.querySelectorAll(sel).length === 1) return sel;
+// Track attached listeners to avoid duplicates
+let listenersAttached = false;
+let navigationHooksSet = false;
+
+// Scroll tracking
+let lastScrollTop = 0;
+let lastScrollLeft = 0;
+let scrollDebounceTimer = null;
+
+// Download tracking
+let downloadEvents = new Set();
+
+// Locator generation settings
+const LOCATOR_STRATEGIES = ['data-testid', 'id', 'name', 'class', 'tag', 'text', 'xpath'];
+const MAX_TEXT_LENGTH = 50;
+const DEBOUNCE_DELAY = 300;
+const SCROLL_DEBOUNCE_DELAY = 500;
+
+/////////////////////////////
+// Utility Functions        //
+/////////////////////////////
+
+function uuid() {
+  return crypto?.randomUUID?.() || 
+    `${Date.now().toString(16)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function debounce(func, delay) {
+  let timeoutId;
+  return function (...args) {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => func.apply(this, args), delay);
+  };
+}
+
+function sanitizeText(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_TEXT_LENGTH);
+}
+
+function getElementText(element) {
+  if (!element) return '';
+  
+  // For input elements, prefer placeholder or label text if no value
+  if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+    return element.value || element.placeholder || element.getAttribute('aria-label') || '';
+  }
+  
+  // For other elements, get visible text
+  const text = element.textContent || element.innerText || element.alt || element.title || '';
+  return sanitizeText(text);
+}
+
+function getElementDescription(element, action) {
+  const tag = element.tagName?.toLowerCase();
+  const type = element.type?.toLowerCase();
+  const text = getElementText(element);
+  const role = element.getAttribute('role');
+  
+  // Generate human-readable descriptions based on element type and action
+  if (action === 'click') {
+    if (tag === 'button' || type === 'button' || role === 'button') {
+      return text ? `Click "${text}" button` : 'Click button';
+    }
+    if (tag === 'a') {
+      return text ? `Click "${text}" link` : `Navigate to ${element.href || 'link'}`;
+    }
+    if (type === 'checkbox') {
+      const checked = element.checked ? 'Check' : 'Uncheck';
+      return text ? `${checked} "${text}" checkbox` : `${checked} checkbox`;
+    }
+    if (type === 'radio') {
+      return text ? `Select "${text}" radio option` : 'Select radio option';
+    }
+    if (type === 'submit') {
+      return text ? `Submit form via "${text}"` : 'Submit form';
+    }
+    if (element.getAttribute('data-testid')) {
+      return `Click ${element.getAttribute('data-testid')} element`;
+    }
+    return text ? `Click "${text}"` : `Click ${tag} element`;
+  }
+  
+  if (action === 'type' || action === 'input') {
+    const label = element.getAttribute('aria-label') || element.placeholder || '';
+    if (type === 'password') {
+      return label ? `Enter password in "${label}" field` : 'Enter password';
+    }
+    if (type === 'email') {
+      return label ? `Enter email in "${label}" field` : 'Enter email address';
+    }
+    if (type === 'search') {
+      return label ? `Search in "${label}" field` : 'Enter search term';
+    }
+    if (tag === 'textarea') {
+      return label ? `Enter text in "${label}" area` : 'Enter multi-line text';
+    }
+    return label ? `Type in "${label}" field` : `Enter text in ${type || 'input'} field`;
+  }
+  
+  if (action === 'select' || action === 'change') {
+    if (tag === 'select') {
+      const selectedText = element.options?.[element.selectedIndex]?.text || element.value;
+      const label = element.getAttribute('aria-label') || element.name || '';
+      return label ? `Select "${selectedText}" from "${label}" dropdown` : `Select "${selectedText}" from dropdown`;
+    }
+    if (type === 'checkbox') {
+      const checked = element.checked ? 'Check' : 'Uncheck';
+      return text ? `${checked} "${text}" option` : `${checked} checkbox`;
+    }
+    if (type === 'radio') {
+      return text ? `Choose "${text}" option` : 'Select radio option';
     }
   }
-  for (const a of el.attributes || []) {
-    if (a.name.startsWith('data-') && a.value) {
-      const sel = `${el.tagName.toLowerCase()}[${a.name}="${CSS.escape(a.value)}"]`;
-      if (document.querySelectorAll(sel).length === 1) return sel;
+  
+  if (action === 'scroll') {
+    return 'Scroll page';
+  }
+  
+  if (action === 'navigate') {
+    return `Navigate to new page: ${element.meta?.toUrl || window.location.href}`;
+  }
+  
+  if (action === 'key') {
+    const key = element.meta?.key;
+    if (key === 'Enter') return 'Press Enter key';
+    if (key === 'Tab') return 'Press Tab key';
+    if (key === 'Escape') return 'Press Escape key';
+    return `Press ${key} key`;
+  }
+  
+  if (action === 'download') {
+    return `Download file: ${element.meta?.filename || 'file'}`;
+  }
+  
+  return `Perform ${action} action`;
+}
+
+/////////////////////////////
+// Locator Generation       //
+/////////////////////////////
+
+function generateLocator(element) {
+  if (!element || element === document || element === window) {
+    return { raw: 'document', norm: 'document' };
+  }
+
+  const strategies = [];
+  
+  // Strategy 1: data-testid (most reliable)
+  const testid = element.getAttribute('data-testid');
+  if (testid) {
+    strategies.push(`[data-testid="${testid}"]`);
+  }
+
+  // Strategy 2: ID (reliable if unique)
+  if (element.id) {
+    strategies.push(`#${element.id}`);
+  }
+
+  // Strategy 3: Name attribute (for forms)
+  const name = element.getAttribute('name');
+  if (name) {
+    strategies.push(`[name="${name}"]`);
+  }
+
+  // Strategy 4: ARIA label (for accessibility)
+  const ariaLabel = element.getAttribute('aria-label');
+  if (ariaLabel) {
+    strategies.push(`[aria-label="${ariaLabel}"]`);
+  }
+
+  // Strategy 5: Class-based (if not too generic)
+  if (element.className && typeof element.className === 'string') {
+    const classes = element.className.split(/\s+/).filter(c => 
+      c.length > 2 && !c.match(/^(btn|button|link|item|text|input|form|container|wrapper|content|active|selected|hover|focus)$/i)
+    );
+    if (classes.length > 0 && classes.length <= 3) {
+      strategies.push(`.${classes.join('.')}`);
     }
   }
+
+  // Strategy 6: Tag with text (for buttons, links)
+  const tag = element.tagName.toLowerCase();
+  const text = getElementText(element);
+  if (text && ['button', 'a', 'span', 'div', 'label', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
+    strategies.push(`${tag}:contains("${text.slice(0, 20)}")`);
+  }
+
+  // Strategy 7: CSS selector path (fallback)
+  if (strategies.length === 0) {
+    strategies.push(generateCSSPath(element));
+  }
+
+  // Use the most specific available strategy
+  const locator = strategies[0] || tag;
+  
+  return {
+    raw: locator,
+    norm: normalizeLocator(locator)
+  };
+}
+
+function generateCSSPath(element) {
   const path = [];
-  let cur = el;
-  while (cur && cur.nodeType === 1 && cur !== document.body) {
-    let seg = cur.tagName.toLowerCase();
-    if (cur.id) {
-      seg += `#${cur.id}`;
-      path.unshift(seg);
+  let current = element;
+  
+  while (current && current !== document.body && path.length < 5) {
+    let selector = current.tagName.toLowerCase();
+    
+    if (current.id) {
+      selector += `#${current.id}`;
+      path.unshift(selector);
       break;
     }
-    const siblings = Array.from(cur.parentNode?.children || []);
-    const same = siblings.filter(s => s.tagName === cur.tagName);
-    if (same.length > 1) seg += `:nth-of-type(${same.indexOf(cur) + 1})`;
-    path.unshift(seg);
-    cur = cur.parentElement;
+    
+    if (current.className && typeof current.className === 'string') {
+      const classes = current.className.split(/\s+/).filter(c => c.length > 0);
+      if (classes.length > 0) {
+        selector += `.${classes[0]}`;
+      }
+    }
+    
+    // Add nth-child if needed for specificity
+    const parent = current.parentElement;
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(el => el.tagName === current.tagName);
+      if (siblings.length > 1) {
+        const index = siblings.indexOf(current) + 1;
+        selector += `:nth-child(${index})`;
+      }
+    }
+    
+    path.unshift(selector);
+    current = current.parentElement;
   }
+  
   return path.join(' > ');
 }
 
-function elementAttrs(el) {
-  const out = {};
-  const keys = ['id', 'class', 'name', 'type', 'value', 'href', 'src', 'alt', 'title', 'placeholder'];
-  keys.forEach(k => {
-    if (el.hasAttribute?.(k)) out[k] = el.getAttribute(k);
-  });
-  return out;
+function normalizeLocator(locator) {
+  return locator
+    .replace(/\s+/g, ' ')
+    .replace(/["']/g, '')
+    .replace(/\[\d+\]/g, '')
+    .trim();
 }
 
-function sanitizeValue(v) {
-  if (!v) return '';
-  if (typeof v !== 'string') return v;
-  if (REDACTION_DEFAULT_PATTERN.test(v)) return '[REDACTED]';
-  return v.length > 500 ? v.slice(0, 500) + '...' : v;
-}
-
-function promiseSendMessage(payload) {
-  return new Promise(resolve => chrome.runtime.sendMessage(payload, resolve));
-}
-
-// ==============================
-// Recorder
-// ==============================
-class TestSnapperRecorder {
-  constructor() {
-    this.isRecording = false;
-    this.isPaused = false;
-
-    this.recordingStartTime = null;
-    this.pauseStartTime = null;
-    this.totalPausedTime = 0;
-
-    // listeners registry: Set<{el,type,handler,opts}>
-    this._listeners = new Set();
-
-    // Debounce map for inputs
-    this.inputDebounceTimers = new Map();
-    this.inputDebounceDelay = 2000;
-
-    // Track last values per elementKey
-    this.lastInputValues = new Map();
-
-    // Settings cache
-    this.settings = {
-      autoScreenshot: true,
-      inputTimeFrame: 2000,
-      screenshotQuality: 'medium',
-      redactionPatterns: 'password,secret,token,api_key',
-      darkMode: false,
-      sessionRetentionDays: 2
-    };
-
-    // State for “last meaningful step”
-    this.lastInteractionId = null;
-
-    // For periodic cleanup
-    this.cleanupIntervalMs = 6 * 60 * 60 * 1000;
-    this.cleanupTimer = null;
-
-    // Redaction overlay bookkeeping
-    this._redactionOverlays = [];
-
-    // Original history funcs
-    this._origPush = null;
-    this._origReplace = null;
-
-    this.init();
-  }
-
-  // Add near top-level (inside class)
-  injectAdvancedRecorder() {
-    try {
-      // Avoid double-inject
-      if (document.documentElement.hasAttribute('data-testsnapper-injected')) return;
-      document.documentElement.setAttribute('data-testsnapper-injected', '1');
-
-      const url = chrome.runtime.getURL('src/injected.js');
-      const s = document.createElement('script');
-      s.src = url;
-      s.async = false;
-      // Ensure it runs early enough and then remove
-      s.onload = () => s.remove();
-      (document.head || document.documentElement).appendChild(s);
-    } catch (e) {
-      console.warn('Failed to inject advanced recorder:', e);
-    }
-  }
-
-
-  // ==========================
-  // Init & Settings
-  // ==========================
-  async init() {
-    await this._loadSettings();
-
-    // Add listeners *before* injecting advanced recorder
-    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-      this._handleMessage(msg, sendResponse);
-      return true; // keep channel open for async
-    });
-
-    window.addEventListener('message', (e) => {
-      if (e.source !== window) return;
-      const data = e.data;
-      if (!data || data.source !== 'testsnapper-injected') return;
-      this._handleInjected(data);
-    });
-
-    // Now inject the advanced recorder
-    this.injectAdvancedRecorder();
-
-    // Optionally, push a status snapshot...
-    window.postMessage({
-
-      source: 'testsnapper-content',
-      type: 'RECORDING_STATUS_SNAPSHOT',
-      data: {
-        isRecording: this.isRecording,
-        isPaused: this.isPaused,
-        startTime: this.recordingStartTime,
-        totalPausedTime: this.totalPausedTime
-      }
-    }, '*');
-
-
-    // Initial cleanup ping
-    this._autoCleanupSessions();
-
-    // Periodic cleanup
-    this.cleanupTimer = setInterval(() => this._autoCleanupSessions(), this.cleanupIntervalMs);
-
-    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-      this._handleMessage(msg, sendResponse);
-      return true;
-    });
-
-    // Adopt current status
-    chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATUS' }, (res) => {
-      if (!res) return;
-      this.isRecording = !!res.isRecording;
-      this.isPaused = !!res.isPaused;
-      this.recordingStartTime = res.startTime || now();
-      this.totalPausedTime = res.totalPausedTime || 0;
-
-      // Always attach listeners so manual features work even while paused
-      this._addEventListeners();
-
-      if (this.isRecording && !this.isPaused) {
-        this._recordSessionStart();
-        this._injectNetworkInterceptor();
-      }
-    });
-
-    // Bridge from injected script
-    window.addEventListener('message', (e) => {
-      if (e.source !== window) return;
-      const data = e.data;
-      if (!data || data.source !== 'testsnapper-injected') return;
-      this._handleInjected(data);
-    });
-
-    // Memory leak guards
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') {
-        this._clearAllDebounceTimers();
-      }
-    });
-    window.addEventListener('beforeunload', () => {
-      this._clearAllDebounceTimers();
-      if (this.cleanupTimer) {
-        clearInterval(this.cleanupTimer);
-        this.cleanupTimer = null;
-      }
-    });
-
-  }
-
-  async _loadSettings() {
-    try {
-      const res = await promiseSendMessage({ type: 'GET_SETTINGS' });
-      if (res && res.settings) this.settings = { ...this.settings, ...res.settings };
-    } catch { }
-    this._syncDebounceFromSettings(); // [18]
-  }
-
-  _syncDebounceFromSettings() {
-    const delay = Number(this.settings.inputTimeFrame);
-    this.inputDebounceDelay = Number.isFinite(delay) ? Math.max(0, delay) : 2000;
-  }
-
-  _autoCleanupSessions() {
-    const days = this.settings.sessionRetentionDays || 2;
-    const cutoff = now() - days * 24 * 60 * 60 * 1000;
-    chrome.runtime.sendMessage({ type: 'CLEANUP_OLD_SESSIONS', cutoffTime: cutoff }, () => { });
-  }
-
-  // ==========================
-  // Message Handling
-  // ==========================
-  _handleMessage(message, sendResponse) {
-    const type = message?.type;
-    switch (type) {
-      case 'START_UI_RECORDING':
-        this.start();
-        sendResponse?.({ success: true });
-        break;
-      case 'PAUSE_UI_RECORDING':
-        this.pause();
-        sendResponse?.({ success: true });
-        break;
-      case 'RESUME_UI_RECORDING':
-        this.resume();
-        sendResponse?.({ success: true });
-        break;
-      case 'STOP_UI_RECORDING':
-        this.stop();
-        sendResponse?.({ success: true });
-        break;
-      case 'UPDATE_SETTINGS':
-        this.settings = { ...this.settings, ...(message.settings || {}) };
-        this._syncDebounceFromSettings();       // [18] keep in sync
-        this._reconcileDebounceTimers();        // [18][20] make timers aware of new delay
-        sendResponse?.({ success: true });
-        break;
-      case 'GET_PAUSE_STATUS':
-        sendResponse?.({
-          isPaused: this.isPaused,
-          isRecording: this.isRecording,
-          totalPausedTime: this.totalPausedTime
-        });
-        break;
-      case 'FORCE_SCREENSHOT':
-        this._manualScreenshotWithRedaction();  // [21]
-        sendResponse?.({ success: true });
-        break;
-      case 'CLEANUP_SESSIONS':
-        this._autoCleanupSessions();
-        sendResponse?.({ success: true });
-        break;
-      default:
-        break;
-    }
-  }
-
-  // ==========================
-  // Injected Bridge
-  // ==========================
-  _handleInjected(msg) {
-    if (!this.isRecording) return;
-
-    switch (msg.type) {
-      case 'NETWORK_CALL':
-        // Successful call — we don’t push as failure
-        // (Optionally store if you need a full network timeline)
-        break;
-
-      case 'NETWORK_ERROR': {
-        // [19] Ensure we preserve a status code (0 = real network error)
-        const data = msg.data || {};
-        const failure = {
-          type: 'api_failure',
-          url: String(data.url || ''),
-          method: data.method || 'GET',
-          status: typeof data.status === 'number' ? data.status : 0,
-          statusText: data.statusText || '',
-          error: data.error || 'Network Error',
-          startTime: data.startTime,
-          endTime: data.endTime,
-          timestamp: now(),
-          relativeTime: this._activeTime(),
-          relatedInteractionId: this.lastInteractionId
-        };
-        this._recordInteraction(failure, /*suppressAutoShot=*/true);
-        break;
-      }
-
-      case 'JAVASCRIPT_ERROR': {
-        const d = msg.data || {};
-        const jsErr = {
-          type: 'javascript_error',
-          message: d.message,
-          source: d.source,
-          line: d.line,
-          column: d.column,
-          stack: d.stack,
-          timestamp: now(),
-          relativeTime: this._activeTime(),
-          relatedInteractionId: this.lastInteractionId
-        };
-        this._recordInteraction(jsErr, /*suppressAutoShot=*/true);
-        break;
-      }
-    }
-  }
-
-  // ==========================
-  // Lifecycle
-  // ==========================
-  start() {
-    if (this.isRecording && !this.isPaused) return;
-    this.isRecording = true;
-    this.isPaused = false;
-    if (!this.recordingStartTime) this.recordingStartTime = now();
-
-    this._addEventListeners();
-    this._injectNetworkInterceptor();
-    this._recordSessionStart();
-  }
-
-  pause() {
-    if (!this.isRecording || this.isPaused) return;
-    this.isPaused = true;
-    this.pauseStartTime = now();
-
-    this._clearAllDebounceTimers();             // [20]
-
-    const ev = {
-      type: 'session_pause',
-      timestamp: this.pauseStartTime,
-      activeTime: this._activeTime()
-    };
-    this._recordInteraction(ev, /*suppressAutoShot=*/true);
-  }
-
-  resume() {
-    if (!this.isRecording || !this.isPaused) return;
-    const resumedAt = now();
-    this.totalPausedTime += resumedAt - (this.pauseStartTime || resumedAt);
-    this.pauseStartTime = null;
-    this.isPaused = false;
-
-    const ev = {
-      type: 'session_resume',
-      timestamp: resumedAt,
-      pausedDuration: this.totalPausedTime,
-      totalPausedTime: this.totalPausedTime,
-      activeTime: this._activeTime()
-    };
-    this._recordInteraction(ev, /*suppressAutoShot=*/true);
-  }
-
-  stop() {
-    if (!this.isRecording && this._listeners.size === 0) return;
-
-    this._clearAllDebounceTimers();            // [20]
-
-    if (this.isPaused && this.pauseStartTime) {
-      this.totalPausedTime += now() - this.pauseStartTime;
-    }
-
-    const endAt = now();
-    const ev = {
-      type: 'session_end',
-      timestamp: endAt,
-      totalDuration: endAt - (this.recordingStartTime || endAt),
-      activeDuration: this._activeTime(),
-      totalPausedTime: this.totalPausedTime
-    };
-    this._recordInteraction(ev, /*suppressAutoShot=*/true);
-
-    // Remove listeners
-    for (const item of this._listeners) {
-      item.el.removeEventListener(item.type, item.handler, item.opts || true);
-    }
-    this._listeners.clear();
-
-    // Restore history
-    if (this._origPush) history.pushState = this._origPush;
-    if (this._origReplace) history.replaceState = this._origReplace;
-    this._origPush = this._origReplace = null;
-
-    // Reset state
-    this.isRecording = false;
-    this.isPaused = false;
-    this.recordingStartTime = null;
-    this.pauseStartTime = null;
-    this.totalPausedTime = 0;
-    this.lastInputValues.clear();
-    this.lastInteractionId = null;
-  }
-
-  // ==========================
-  // Listeners
-  // ==========================
-  _addEventListeners() {
-    // Click
-    const clickHandler = (e) => {
-      if (!this.isRecording || this.isPaused) return;
-      const el = e.target;
-      const selector = toSelector(el);
-
-      // Skip clicks on text/email/password inputs while typing
-      if (['INPUT', 'TEXTAREA'].includes(el.tagName) &&
-        ['text', 'email', 'password', 'search', 'url'].includes(el.type)) {
-        return;
-      }
-
-      const interaction = {
-        type: 'click',
-        selector,
-        tagName: el.tagName.toLowerCase(),
-        text: (el.textContent || '').trim().slice(0, 100),
-        coordinates: { x: e.clientX, y: e.clientY },
-        attributes: elementAttrs(el),
-        timestamp: now(),
-        relativeTime: this._activeTime()
-      };
-
-      this._recordInteraction(interaction);
-    };
-    document.addEventListener('click', clickHandler, true);
-    this._storeListener(document, 'click', clickHandler);
-
-    // Inputs (input/change/blur) with debounce
-    const inputHandler = (e) => {
-      if (!this.isRecording || this.isPaused) return;
-      const el = e.target;
-      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
-
-      const selector = toSelector(el);
-      const key = `${selector}_${el.tagName}`;
-      const prevTimer = this.inputDebounceTimers.get(key);
-      if (prevTimer) clearTimeout(prevTimer);
-
-      const timer = setTimeout(() => {
-        this._recordInput(el, 'input');
-        this.inputDebounceTimers.delete(key);
-      }, this.inputDebounceDelay);
-      this.inputDebounceTimers.set(key, timer);
-    };
-    const changeHandler = (e) => {
-      if (!this.isRecording || this.isPaused) return;
-      const el = e.target;
-      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
-      const selector = toSelector(el);
-      const key = `${selector}_${el.tagName}`;
-      const t = this.inputDebounceTimers.get(key);
-      if (t) { clearTimeout(t); this.inputDebounceTimers.delete(key); }
-      this._recordInput(el, 'change');
-    };
-    const blurHandler = (e) => {
-      if (!this.isRecording || this.isPaused) return;
-      const el = e.target;
-      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
-      const selector = toSelector(el);
-      const key = `${selector}_${el.tagName}`;
-      const t = this.inputDebounceTimers.get(key);
-      if (t) { clearTimeout(t); this.inputDebounceTimers.delete(key); }
-      this._recordInput(el, 'blur');
-    };
-
-    document.addEventListener('input', inputHandler, true);
-    document.addEventListener('change', changeHandler, true);
-    document.addEventListener('blur', blurHandler, true);
-    this._storeListener(document, 'input', inputHandler);
-    this._storeListener(document, 'change', changeHandler);
-    this._storeListener(document, 'blur', blurHandler);
-
-    // Form submit
-    const submitHandler = (e) => {
-      if (!this.isRecording || this.isPaused) return;
-      const form = e.target;
-      if (form.tagName !== 'FORM') return;
-
-      const selector = toSelector(form);
-      const fd = new FormData(form);
-      const values = {};
-      for (const [k, v] of fd.entries()) {
-        values[k] = REDACTION_DEFAULT_PATTERN.test(k) ? '[REDACTED]' : sanitizeValue(v);
-      }
-
-      const interaction = {
-        type: 'form_submit',
-        selector,
-        action: form.action || location.href,
-        method: form.method || 'GET',
-        formData: values,
-        timestamp: now(),
-        relativeTime: this._activeTime()
-      };
-      this._recordInteraction(interaction);
-    };
-    document.addEventListener('submit', submitHandler, true);
-    this._storeListener(document, 'submit', submitHandler);
-
-    // SPA + navigation
-    let currentUrl = location.href;
-    const urlChange = () => {
-      if (!this.isRecording || this.isPaused) return;
-      const newUrl = location.href;
-      if (newUrl === currentUrl) return;
-
-      const ev = {
-        type: 'url_change',
-        from: currentUrl,
-        to: newUrl,
-        timestamp: now(),
-        relativeTime: this._activeTime()
-      };
-      this._recordInteraction(ev, /*auto*/ true, /*delayMs*/ 500);
-      currentUrl = newUrl;
-    };
-    this._origPush = history.pushState;
-    this._origReplace = history.replaceState;
-    const self = this;
-    history.pushState = function (...args) {
-      self._origPush.apply(history, args);
-      setTimeout(urlChange, 0);
-    };
-    history.replaceState = function (...args) {
-      self._origReplace.apply(history, args);
-      setTimeout(urlChange, 0);
-    };
-    const beforeUnload = () => {
-      if (!this.isRecording || this.isPaused) return;
-      const ev = {
-        type: 'navigation',
-        from: location.href,
-        timestamp: now(),
-        relativeTime: this._activeTime()
-      };
-      this._recordInteraction(ev, /*suppressAutoShot=*/true);
-    };
-    window.addEventListener('popstate', urlChange);
-    window.addEventListener('beforeunload', beforeUnload);
-    this._storeListener(window, 'popstate', urlChange);
-    this._storeListener(window, 'beforeunload', beforeUnload);
-
-    // Scroll (throttled via timeout)
-    let scrollT = null;
-    let lastY = window.scrollY;
-    const scrollHandler = () => {
-      if (!this.isRecording || this.isPaused) return;
-      clearTimeout(scrollT);
-      scrollT = setTimeout(() => {
-        const y = window.scrollY;
-        const delta = Math.abs(y - lastY);
-        if (delta > 100) {
-          const ev = {
-            type: 'scroll',
-            scrollX: window.scrollX,
-            scrollY: y,
-            scrollDelta: delta,
-            documentHeight: document.documentElement.scrollHeight,
-            viewportHeight: window.innerHeight,
-            timestamp: now(),
-            relativeTime: this._activeTime()
-          };
-          this._recordInteraction(ev, /*suppressAutoShot=*/true);
-          lastY = y;
-        }
-      }, 500);
-    };
-    window.addEventListener('scroll', scrollHandler);
-    this._storeListener(window, 'scroll', scrollHandler);
-
-    // Keypress (important keys or modifiers)
-    const keyHandler = (e) => {
-      if (!this.isRecording || this.isPaused) return;
-      const important = [
-        'Enter', 'Tab', 'Escape', 'Backspace', 'Delete',
-        'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-        'Home', 'End', 'PageUp', 'PageDown'
-      ];
-      const modCombo = (e.ctrlKey || e.altKey || e.metaKey) && !['Control', 'Alt', 'Meta'].includes(e.key);
-      if (!important.includes(e.key) && !modCombo) return;
-
-      const ev = {
-        type: 'keypress',
-        key: e.key,
-        code: e.code,
-        ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, metaKey: e.metaKey,
-        target: toSelector(e.target),
-        timestamp: now(),
-        relativeTime: this._activeTime()
-      };
-      this._recordInteraction(ev, /*suppressAutoShot=*/true);
-    };
-    document.addEventListener('keydown', keyHandler, true);
-    this._storeListener(document, 'keydown', keyHandler);
-  }
-
-  _storeListener(el, type, handler, opts) {
-    this._listeners.add({ el, type, handler, opts });
-  }
-
-  // ==========================
-  // Recording helpers
-  // ==========================
-  _activeTime() {
-    if (!this.recordingStartTime) return 0;
-    const t = now();
-    let paused = this.totalPausedTime;
-    if (this.isPaused && this.pauseStartTime) paused += (t - this.pauseStartTime);
-    return Math.max(0, t - this.recordingStartTime - paused);
-  }
-
-  async _lastMeaningful() { // [17] promise-based
-    const res = await promiseSendMessage({ type: 'GET_LAST_MEANINGFUL_INTERACTION' });
-    return res?.interaction || null;
-  }
-
-  async _recordInteraction(interaction, suppressAutoShot = false, autoShotDelayMs = 100) {
-    interaction.id = interaction.id || `interaction_${now()}_${Math.random().toString(36).slice(2, 9)}`;
-    interaction.timestamp = interaction.timestamp || now();
-    interaction.relativeTime = typeof interaction.relativeTime === 'number' ? interaction.relativeTime : this._activeTime();
-
-    // Attach afterStep context asynchronously where it matters
-    if (interaction.type === 'api_failure' || interaction.type === 'javascript_error') {
-      try {
-        interaction.afterStep = await this._lastMeaningful(); // [17]
-      } catch { }
-    }
-
-    chrome.runtime.sendMessage({ type: 'RECORD_INTERACTION', data: interaction });
-    this.lastInteractionId = interaction.id;
-
-    if (!suppressAutoShot && this.settings.autoScreenshot) {
-      setTimeout(() => {
-        this._triggerScreenshot({
-          type: 'interaction',
-          interactionType: interaction.type,
-          interactionId: interaction.id
-        });
-      }, autoShotDelayMs);
-    }
-  }
-
-  _recordSessionStart() {
-    const start = {
-      type: 'session_start',
-      url: location.href,
-      timestamp: now(),
+/////////////////////////////
+// Event Detection          //
+/////////////////////////////
+
+function createStepFromEvent(eventType, element, extraData = {}) {
+  const loc = generateLocator(element);
+  const text = getElementText(element);
+  
+  const step = {
+    id: uuid(),
+    ts: Date.now(),
+    action: eventType,
+    name: eventType, // Legacy compatibility
+    locator: loc.raw,
+    locatorRaw: loc.raw,
+    locatorNorm: loc.norm,
+    description: getElementDescription(element, eventType), // Human-readable description
+    element: {
+      tagName: element.tagName?.toLowerCase() || 'unknown',
+      text: text,
+      value: element.value || '',
+      type: element.type || '',
+      href: element.href || '',
+      role: element.getAttribute?.('role') || '',
+      ariaLabel: element.getAttribute?.('aria-label') || '',
+      placeholder: element.placeholder || ''
+    },
+    valueKind: determineValueKind(element, eventType),
+    meta: {
+      url: window.location.href,
+      title: document.title,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight
+      },
       userAgent: navigator.userAgent,
-      viewport: { width: innerWidth, height: innerHeight }
-    };
-    this._recordInteraction(start, /*suppressAutoShot=*/false, /*delay*/ 0);
+      timestamp: new Date().toISOString(),
+      ...extraData
+    }
+  };
+
+  return step;
+}
+
+function determineValueKind(element, eventType) {
+  const tag = element.tagName?.toLowerCase();
+  const type = element.type?.toLowerCase();
+  
+  if (eventType === 'type' || eventType === 'input') {
+    if (type === 'password') return 'password';
+    if (type === 'email') return 'email';
+    if (type === 'number') return 'number';
+    if (type === 'tel') return 'phone';
+    if (type === 'url') return 'url';
+    if (type === 'search') return 'search';
+    if (type === 'date') return 'date';
+    if (type === 'time') return 'time';
+    if (tag === 'textarea') return 'text_multiline';
+    return 'text';
   }
-
-  _recordInput(el, triggerType) {
-    const selector = toSelector(el);
-    const key = `${selector}_${el.tagName}`;
-    let value = el.value;
-
-    if (el.type?.toLowerCase() === 'password') value = '[REDACTED]';
-    else value = sanitizeValue(value);
-
-    const last = this.lastInputValues.get(key);
-    if (last === value && value !== '[REDACTED]') return; // unchanged
-
-    this.lastInputValues.set(key, value);
-
-    const interaction = {
-      type: 'input',
-      selector,
-      tagName: el.tagName.toLowerCase(),
-      inputType: el.type || 'text',
-      value,
-      attributes: elementAttrs(el),
-      timestamp: now(),
-      relativeTime: this._activeTime(),
-      triggerType,
-      timeFrame: `${this.inputDebounceDelay / 1000}s`
-    };
-    this._recordInteraction(interaction);
+  
+  if (eventType === 'click') {
+    if (tag === 'button' || type === 'button') return 'button';
+    if (tag === 'a') return 'link';
+    if (type === 'checkbox') return 'checkbox';
+    if (type === 'radio') return 'radio';
+    if (type === 'submit') return 'submit';
+    if (type === 'file') return 'file_upload';
+    return 'click';
   }
+  
+  if (eventType === 'select' || eventType === 'change') {
+    if (tag === 'select') return 'dropdown';
+    if (type === 'checkbox') return 'checkbox';
+    if (type === 'radio') return 'radio';
+    if (type === 'file') return 'file_upload';
+    return 'change';
+  }
+  
+  if (eventType === 'scroll') return 'scroll';
+  if (eventType === 'navigate') return 'navigation';
+  if (eventType === 'download') return 'download';
+  if (eventType === 'key') return 'keyboard';
+  
+  return 'none';
+}
 
-  // ==========================
-  // Screenshots + Redaction
-  // ==========================
-  _triggerScreenshot(ctx) {
-    // If auto (not forced) and autoScreenshot disabled, skip
-    const forced = !!ctx?.forced;
-    if (!forced && !this.settings.autoScreenshot) return;
+/////////////////////////////
+// Event Handlers           //
+/////////////////////////////
 
+const debouncedSendStep = debounce((step) => {
+  if (!recording || paused || !currentSessionId) return;
+  
+  console.log('[TestSnapper Content] Sending step:', step.description || step.action, step.locator);
+  
+  chrome.runtime.sendMessage({
+    type: 'REC_EVENT',
+    sessionId: currentSessionId,
+    step: step
+  }).catch(error => {
+    console.warn('[TestSnapper Content] Failed to send step:', error);
+  });
+}, DEBOUNCE_DELAY);
+
+function handleClick(event) {
+  if (!recording || paused) return;
+  
+  const element = event.target;
+  
+  // Skip if clicking on scroll bars or outside content area
+  if (element === document.documentElement || element === document.body) return;
+  
+  const step = createStepFromEvent('click', element, {
+    button: event.button,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    coordinates: {
+      x: event.clientX,
+      y: event.clientY,
+      pageX: event.pageX,
+      pageY: event.pageY
+    }
+  });
+  
+  // Add better description based on context
+  step.description = getElementDescription({ ...element, meta: step.meta }, 'click');
+  
+  debouncedSendStep(step);
+}
+
+function handleInput(event) {
+  if (!recording || paused) return;
+  
+  const element = event.target;
+  if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName)) return;
+  
+  const step = createStepFromEvent('type', element, {
+    inputType: event.inputType,
+    valueLength: (element.value || '').length,
+    isComposition: event.isComposing || false
+  });
+  
+  // Enhanced description for input events
+  step.description = getElementDescription({ ...element, meta: step.meta }, 'type');
+  
+  // Don't debounce for password fields or short inputs - capture immediately
+  if (element.type === 'password' || (element.value || '').length <= 3) {
     chrome.runtime.sendMessage({
-      type: 'CAPTURE_SCREENSHOT',
-      data: {
-        type: forced ? 'manual_capture' : 'auto_capture',
-        manual: forced,
-        timestamp: now(),
-        context: ctx
-      }
-    }, (res) => {
-      if (!res || !res.success) {
-        console.warn('Screenshot failed:', res?.reason || 'Unknown');
-      }
-    });
-  }
-
-  async _manualScreenshotWithRedaction() { // [21]
-    try {
-      // 1) Add overlays
-      this._applyRedactionOverlays();
-
-      // 2) Give the browser a frame to paint overlays
-      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 50)));
-
-      // 3) Trigger screenshot (forced => works while paused)
-      this._triggerScreenshot({ type: 'manual', forced: true });
-
-    } finally {
-      // 4) Clean up overlays after a short delay (ensure capture finished)
-      setTimeout(() => this._removeRedactionOverlays(), 150);
-    }
-  }
-
-  _applyRedactionOverlays() {
-    this._removeRedactionOverlays(); // idempotent
-    const patterns = (String(this.settings.redactionPatterns || '').split(',').map(s => s.trim()).filter(Boolean));
-    const regex = patterns.length ? new RegExp(patterns.join('|'), 'i') : REDACTION_DEFAULT_PATTERN;
-
-    const candidates = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"], [type="password"], [data-secret], [data-sensitive]'));
-
-    for (const el of candidates) {
-      const name = (el.getAttribute('name') || '') + ' ' + (el.id || '') + ' ' + (el.placeholder || '');
-      const isPw = (el.getAttribute('type') || '').toLowerCase() === 'password';
-      if (!isPw && !regex.test(name)) continue;
-
-      const rect = el.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) continue;
-
-      const overlay = document.createElement('div');
-      overlay.style.position = 'fixed';
-      overlay.style.left = `${Math.max(0, rect.left)}px`;
-      overlay.style.top = `${Math.max(0, rect.top)}px`;
-      overlay.style.width = `${rect.width}px`;
-      overlay.style.height = `${rect.height}px`;
-      overlay.style.zIndex = '2147483647';
-      overlay.style.pointerEvents = 'none';
-      overlay.style.background = '#000';
-      overlay.style.opacity = '0.35';
-      overlay.style.backdropFilter = 'blur(6px)';
-      overlay.style.borderRadius = getComputedStyle(el).borderRadius || '4px';
-      document.body.appendChild(overlay);
-      this._redactionOverlays.push(overlay);
-    }
-  }
-
-  _removeRedactionOverlays() {
-    for (const o of this._redactionOverlays) {
-      o.remove();
-    }
-    this._redactionOverlays = [];
-  }
-
-  // ==========================
-  // Debounce housekeeping
-  // ==========================
-  _clearAllDebounceTimers() { // [20]
-    for (const [, t] of this.inputDebounceTimers) clearTimeout(t);
-    this.inputDebounceTimers.clear();
-  }
-
-  _reconcileDebounceTimers() { // [18][20] when delay changes, reset all pending timers
-    if (this.inputDebounceTimers.size === 0) return;
-    const keys = Array.from(this.inputDebounceTimers.keys());
-    this._clearAllDebounceTimers();
-    // We do not reschedule because we no longer have the original elements here.
-    // New events will use the new delay. (Safer than guessing targets)
-  }
-
-  // ==========================
-  // Network interception
-  // ==========================
-  _injectNetworkInterceptor() {
-    const script = document.createElement('script');
-    script.textContent = `(${this._networkInterceptorScript.toString()})();`;
-    document.documentElement.appendChild(script);
-    script.remove();
-  }
-
-  _networkInterceptorScript() {
-    const originalFetch = window.fetch;
-    const OriginalXHR = window.XMLHttpRequest;
-
-    // fetch
-    window.fetch = function (...args) {
-      const startTime = Date.now();
-      const url = args[0];
-      const options = args[1] || {};
-      const method = options.method || 'GET';
-
-      return originalFetch.apply(this, args)
-        .then(response => {
-          const data = {
-            type: 'fetch',
-            url: String(url),
-            method,
-            status: response.status,
-            statusText: response.statusText,
-            startTime,
-            endTime: Date.now(),
-            success: response.ok
-          };
-          if (!response.ok) {
-            window.postMessage({
-              source: 'testsnapper-injected',
-              type: 'NETWORK_ERROR',
-              data: { ...data, error: 'HTTP ' + response.status }
-            }, '*');
-          } else {
-            window.postMessage({ source: 'testsnapper-injected', type: 'NETWORK_CALL', data }, '*');
-          }
-          return response;
-        })
-        .catch(error => {
-          // [19] Ensure status=0 for network failures
-          window.postMessage({
-            source: 'testsnapper-injected',
-            type: 'NETWORK_ERROR',
-            data: {
-              type: 'fetch',
-              url: String(url),
-              method,
-              status: 0,
-              statusText: '',
-              error: error?.message || 'Network Error',
-              startTime,
-              endTime: Date.now()
-            }
-          }, '*');
-          throw error;
-        });
-    };
-
-    // XHR
-    window.XMLHttpRequest = function () {
-      const xhr = new OriginalXHR();
-      const origOpen = xhr.open;
-      const origSend = xhr.send;
-
-      let meta = { method: 'GET', url: '', startTime: 0 };
-
-      xhr.open = function (m, u, ...rest) {
-        meta.method = m || 'GET';
-        meta.url = u || '';
-        return origOpen.apply(this, [m, u, ...rest]);
-      };
-
-      xhr.send = function (...rest) {
-        meta.startTime = Date.now();
-
-        const origReady = this.onreadystatechange;
-        this.onreadystatechange = function () {
-          if (origReady) try { origReady.apply(this, arguments); } catch { }
-
-          if (this.readyState === 4) {
-            const data = {
-              type: 'xhr',
-              url: meta.url,
-              method: meta.method,
-              status: this.status,
-              statusText: this.statusText,
-              startTime: meta.startTime,
-              endTime: Date.now(),
-              success: this.status >= 200 && this.status < 300
-            };
-            if (this.status === 0 || this.status >= 400) {
-              window.postMessage({
-                source: 'testsnapper-injected',
-                type: 'NETWORK_ERROR',
-                data: { ...data, error: (this.status === 0 ? 'Network Error' : 'HTTP ' + this.status) }
-              }, '*');
-            } else {
-              window.postMessage({ source: 'testsnapper-injected', type: 'NETWORK_CALL', data }, '*');
-            }
-          }
-        };
-
-        return origSend.apply(this, rest);
-      };
-
-      return xhr;
-    };
-
-    // JS errors
-    window.addEventListener('error', (event) => {
-      window.postMessage({
-        source: 'testsnapper-injected',
-        type: 'JAVASCRIPT_ERROR',
-        data: {
-          message: event.message,
-          source: event.filename,
-          line: event.lineno,
-          column: event.colno,
-          stack: event.error?.stack
-        }
-      }, '*');
-    });
+      type: 'REC_EVENT',
+      sessionId: currentSessionId,
+      step: step
+    }).catch(() => {});
+  } else {
+    debouncedSendStep(step);
   }
 }
 
-// ==============================
-// Bootstrap
-// ==============================
-new TestSnapperRecorder();
+function handleChange(event) {
+  if (!recording || paused) return;
+  
+  const element = event.target;
+  const step = createStepFromEvent('change', element, {
+    selectedValue: element.value,
+    selectedIndex: element.selectedIndex,
+    checked: element.checked,
+    files: element.files ? Array.from(element.files).map(f => ({ name: f.name, size: f.size, type: f.type })) : null
+  });
+  
+  step.description = getElementDescription({ ...element, meta: step.meta }, 'change');
+  
+  debouncedSendStep(step);
+}
+
+function handleKeyDown(event) {
+  if (!recording || paused) return;
+  
+  // Capture important navigation and action keys
+  const captureKeys = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'];
+  
+  if (captureKeys.includes(event.key)) {
+    const step = createStepFromEvent('key', event.target, {
+      key: event.key,
+      code: event.code,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+      metaKey: event.metaKey
+    });
+    
+    // Enhanced key descriptions
+    if (event.key === 'Enter') {
+      step.description = event.target.tagName === 'TEXTAREA' ? 'Press Enter (new line)' : 'Press Enter to submit/confirm';
+    } else if (event.key === 'Tab') {
+      step.description = event.shiftKey ? 'Navigate to previous field (Shift+Tab)' : 'Navigate to next field (Tab)';
+    } else if (event.key === 'Escape') {
+      step.description = 'Press Escape to cancel/close';
+    } else if (event.key.startsWith('Arrow')) {
+      step.description = `Navigate using ${event.key.replace('Arrow', '')} arrow key`;
+    } else {
+      step.description = `Press ${event.key} key`;
+    }
+    
+    debouncedSendStep(step);
+  }
+}
+
+function handleScroll(event) {
+  if (!recording || paused) return;
+  
+  const currentScrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  const currentScrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+  
+  // Only record significant scroll movements
+  const scrollThreshold = 50;
+  const verticalDiff = Math.abs(currentScrollTop - lastScrollTop);
+  const horizontalDiff = Math.abs(currentScrollLeft - lastScrollLeft);
+  
+  if (verticalDiff < scrollThreshold && horizontalDiff < scrollThreshold) return;
+  
+  clearTimeout(scrollDebounceTimer);
+  scrollDebounceTimer = setTimeout(() => {
+    const element = event.target === document ? document.documentElement : event.target;
+    const step = createStepFromEvent('scroll', element, {
+      scrollTop: currentScrollTop,
+      scrollLeft: currentScrollLeft,
+      scrollHeight: document.documentElement.scrollHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      direction: {
+        vertical: currentScrollTop > lastScrollTop ? 'down' : 'up',
+        horizontal: currentScrollLeft > lastScrollLeft ? 'right' : 'left'
+      },
+      distance: {
+        vertical: Math.abs(currentScrollTop - lastScrollTop),
+        horizontal: Math.abs(currentScrollLeft - lastScrollLeft)
+      }
+    });
+    
+    // Enhanced scroll description
+    const direction = currentScrollTop > lastScrollTop ? 'down' : 'up';
+    const distance = Math.round(verticalDiff);
+    step.description = `Scroll ${direction} ${distance}px on page`;
+    
+    lastScrollTop = currentScrollTop;
+    lastScrollLeft = currentScrollLeft;
+    
+    chrome.runtime.sendMessage({
+      type: 'REC_EVENT',
+      sessionId: currentSessionId,
+      step: step
+    }).catch(() => {});
+    
+  }, SCROLL_DEBOUNCE_DELAY);
+}
+
+/////////////////////////////
+// Download Detection       //
+/////////////////////////////
+
+function setupDownloadDetection() {
+  // Monitor for download links
+  document.addEventListener('click', (event) => {
+    if (!recording || paused) return;
+    
+    const element = event.target;
+    const href = element.href || element.closest('a')?.href;
+    
+    if (href && (element.download !== undefined || href.match(/\.(pdf|doc|docx|xls|xlsx|csv|txt|zip|rar|tar|gz)$/i))) {
+      const filename = element.download || href.split('/').pop() || 'unknown';
+      const downloadId = `${href}-${Date.now()}`;
+      
+      if (!downloadEvents.has(downloadId)) {
+        downloadEvents.add(downloadId);
+        
+        setTimeout(() => downloadEvents.delete(downloadId), 5000); // Clean up after 5 seconds
+        
+        const step = createStepFromEvent('download', element, {
+          filename: filename,
+          url: href,
+          fileType: filename.split('.').pop()?.toLowerCase() || 'unknown',
+          downloadAttribute: element.download || null
+        });
+        
+        step.description = `Download file "${filename}"`;
+        
+        chrome.runtime.sendMessage({
+          type: 'REC_EVENT',
+          sessionId: currentSessionId,
+          step: step
+        }).catch(() => {});
+      }
+    }
+  }, true);
+}
+
+/////////////////////////////
+// Navigation Tracking      //
+/////////////////////////////
+
+function captureNavigation(url, trigger = 'unknown') {
+  if (!recording || paused) return;
+  
+  const step = createStepFromEvent('navigate', document.body || document.documentElement, {
+    fromUrl: document.referrer || 'direct',
+    toUrl: url,
+    trigger: trigger,
+    navigationTiming: performance.timing ? {
+      loadStart: performance.timing.navigationStart,
+      domReady: performance.timing.domContentLoadedEventEnd,
+      loadComplete: performance.timing.loadEventEnd
+    } : null
+  });
+  
+  // Enhanced navigation descriptions
+  const urlObj = new URL(url);
+  const domain = urlObj.hostname;
+  const path = urlObj.pathname;
+  
+  if (trigger === 'pushState' || trigger === 'replaceState') {
+    step.description = `Navigate to ${path} (SPA navigation)`;
+  } else if (trigger === 'hashchange') {
+    step.description = `Navigate to section ${urlObj.hash}`;
+  } else if (trigger === 'popstate') {
+    step.description = 'Navigate back/forward in browser history';
+  } else {
+    step.description = `Navigate to new page: ${domain}${path}`;
+  }
+  
+  // Navigation should be captured immediately
+  chrome.runtime.sendMessage({
+    type: 'REC_EVENT',
+    sessionId: currentSessionId,
+    step: step
+  }).catch(() => {});
+}
+
+function setupNavigationHooks() {
+  if (navigationHooksSet) {
+    console.log('[TestSnapper Content] Navigation hooks already set');
+    return;
+  }
+  
+  navigationHooksSet = true;
+  console.log('[TestSnapper Content] Setting up enhanced navigation hooks');
+  
+  // History API hooks for SPA navigation
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  
+  history.pushState = function(...args) {
+    const result = originalPushState.apply(this, args);
+    setTimeout(() => captureNavigation(window.location.href, 'pushState'), 10);
+    return result;
+  };
+  
+  history.replaceState = function(...args) {
+    const result = originalReplaceState.apply(this, args);
+    setTimeout(() => captureNavigation(window.location.href, 'replaceState'), 10);
+    return result;
+  };
+  
+  // Hash change detection
+  window.addEventListener('hashchange', () => {
+    captureNavigation(window.location.href, 'hashchange');
+  }, true);
+  
+  // Popstate for back/forward
+  window.addEventListener('popstate', (event) => {
+    setTimeout(() => captureNavigation(window.location.href, 'popstate'), 10);
+  }, true);
+  
+  // Before unload (page leaving)
+  window.addEventListener('beforeunload', () => {
+    if (recording && !paused && currentSessionId) {
+      chrome.runtime.sendMessage({
+        type: 'PAGE_UNLOAD',
+        sessionId: currentSessionId,
+        url: window.location.href
+      }).catch(() => {});
+    }
+  });
+}
+
+/////////////////////////////
+// Event Listener Setup     //
+/////////////////////////////
+
+function attachEventListeners() {
+  if (listenersAttached) {
+    console.log('[TestSnapper Content] Event listeners already attached');
+    return;
+  }
+  
+  listenersAttached = true;
+  console.log('[TestSnapper Content] Attaching comprehensive event listeners');
+  
+  // Use capture phase to catch events before they're handled by the page
+  document.addEventListener('click', handleClick, true);
+  document.addEventListener('input', handleInput, true);
+  document.addEventListener('change', handleChange, true);
+  document.addEventListener('keydown', handleKeyDown, true);
+  
+  // Scroll events (with throttling)
+  window.addEventListener('scroll', handleScroll, { passive: true });
+  document.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+  
+  // Focus events for form navigation
+  document.addEventListener('focus', (event) => {
+    if (!recording || paused) return;
+    
+    const element = event.target;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName)) {
+      const step = createStepFromEvent('focus', element);
+      step.description = `Focus on ${getElementDescription({ ...element, meta: step.meta }, 'focus').replace('Click ', '').toLowerCase()}`;
+      debouncedSendStep(step);
+    }
+  }, true);
+  
+  // Form submission detection
+  document.addEventListener('submit', (event) => {
+    if (!recording || paused) return;
+    
+    const form = event.target;
+    const step = createStepFromEvent('submit', form, {
+      formMethod: form.method || 'GET',
+      formAction: form.action || window.location.href,
+      formData: new FormData(form)
+    });
+    
+    step.description = `Submit form ${form.name || form.id || 'on page'}`;
+    
+    chrome.runtime.sendMessage({
+      type: 'REC_EVENT',
+      sessionId: currentSessionId,
+      step: step
+    }).catch(() => {});
+  }, true);
+  
+  // Set up download detection
+  setupDownloadDetection();
+  
+  console.log('[TestSnapper Content] All event listeners attached successfully');
+}
+
+/////////////////////////////
+// Network Hook Injection   //
+/////////////////////////////
+
+function injectNetworkHook() {
+  if (injectedNetworkHook) {
+    console.log('[TestSnapper Content] Network hook already injected');
+    return;
+  }
+  
+  injectedNetworkHook = true;
+  console.log('[TestSnapper Content] Injecting enhanced network capture hook');
+  
+  try {
+    const script = document.createElement('script');
+    script.textContent = `
+      // Enhanced Network Monitoring
+      (function() {
+        console.log('[TestSnapper Injected] Network monitoring setup complete');
+      })();
+    `;
+    
+    script.onload = function() {
+      this.remove();
+      console.log('[TestSnapper Content] Enhanced network hook injected successfully');
+    };
+    script.onerror = function() {
+      console.warn('[TestSnapper Content] Failed to load network hook');
+      injectedNetworkHook = false;
+    };
+    (document.head || document.documentElement).appendChild(script);
+  } catch (error) {
+    console.error('[TestSnapper Content] Network hook injection failed:', error);
+    injectedNetworkHook = false;
+  }
+}
+
+/////////////////////////////
+// Message Handling         //
+/////////////////////////////
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('[TestSnapper Content] Received message:', message.type, message);
+  
+  switch (message.type) {
+    case 'PING':
+      console.log('[TestSnapper Content] Responding to PING');
+      sendResponse({ 
+        ok: true, 
+        recording, 
+        paused, 
+        sessionId: currentSessionId,
+        url: window.location.href,
+        title: document.title
+      });
+      break;
+      
+    case 'REC_START':
+      console.log('[TestSnapper Content] Starting enhanced recording:', message.sessionId);
+      recording = true;
+      paused = false;
+      currentSessionId = message.sessionId;
+      eventId = 0;
+      
+      // Reset scroll tracking
+      lastScrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      lastScrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+      
+      // Ensure all hooks are set up
+      if (!listenersAttached) attachEventListeners();
+      if (!navigationHooksSet) setupNavigationHooks();
+      if (!injectedNetworkHook) injectNetworkHook();
+      
+      // Send initial page load event
+      const initialStep = createStepFromEvent('navigate', document.documentElement, {
+        trigger: 'recording_start',
+        fromUrl: document.referrer || 'direct',
+        toUrl: window.location.href
+      });
+      initialStep.description = `Begin recording on page: ${document.title}`;
+      
+      chrome.runtime.sendMessage({
+        type: 'REC_EVENT',
+        sessionId: currentSessionId,
+        step: initialStep
+      }).catch(() => {});
+      
+      sendResponse({ ok: true, message: 'Recording started with enhanced features' });
+      break;
+      
+    case 'REC_STOP':
+      console.log('[TestSnapper Content] Stopping recording');
+      recording = false;
+      paused = false;
+      currentSessionId = null;
+      downloadEvents.clear();
+      sendResponse({ ok: true, message: 'Recording stopped' });
+      break;
+      
+    case 'REC_PAUSE':
+      console.log('[TestSnapper Content] Pausing recording');
+      paused = true;
+      sendResponse({ ok: true, message: 'Recording paused' });
+      break;
+      
+    case 'REC_RESUME':
+      console.log('[TestSnapper Content] Resuming recording');
+      paused = false;
+      sendResponse({ ok: true, message: 'Recording resumed' });
+      break;
+      
+    case 'GET_PAGE_INFO':
+      sendResponse({
+        ok: true,
+        pageInfo: {
+          url: window.location.href,
+          title: document.title,
+          domain: window.location.hostname,
+          path: window.location.pathname,
+          readyState: document.readyState,
+          scrollPosition: {
+            top: window.pageYOffset || document.documentElement.scrollTop,
+            left: window.pageXOffset || document.documentElement.scrollLeft
+          },
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight
+          },
+          documentSize: {
+            width: document.documentElement.scrollWidth,
+            height: document.documentElement.scrollHeight
+          }
+        }
+      });
+      break;
+      
+    case 'INJECT_CUSTOM_STEP':
+      if (recording && !paused && currentSessionId) {
+        const customStep = {
+          id: uuid(),
+          ts: Date.now(),
+          action: 'custom',
+          name: 'custom',
+          description: message.description || 'Custom test step',
+          locator: 'manual',
+          locatorRaw: 'manual',
+          locatorNorm: 'manual',
+          element: { tagName: 'manual' },
+          valueKind: 'custom',
+          meta: {
+            url: window.location.href,
+            title: document.title,
+            timestamp: new Date().toISOString(),
+            customData: message.data || {}
+          }
+        };
+        
+        chrome.runtime.sendMessage({
+          type: 'REC_EVENT',
+          sessionId: currentSessionId,
+          step: customStep
+        }).catch(() => {});
+        
+        sendResponse({ ok: true, message: 'Custom step added' });
+      } else {
+        sendResponse({ ok: false, error: 'Not recording' });
+      }
+      break;
+      
+    default:
+      console.warn('[TestSnapper Content] Unknown message type:', message.type);
+      sendResponse({ ok: false, error: 'UNKNOWN_MESSAGE_TYPE' });
+      break;
+  }
+  
+  return true; // Keep message channel open for async responses
+});
+
+/////////////////////////////
+// Page Context Integration //
+/////////////////////////////
+
+// Listen for network events from injected script
+window.addEventListener('message', (event) => {
+  if (event.source !== window) return;
+  if (!event.data || event.data.source !== 'testsnapper-injected') return;
+  
+  if (recording && !paused && currentSessionId) {
+    const netEvent = event.data.net;
+    
+    // Create human-readable network descriptions
+    if (netEvent.type === 'request') {
+      netEvent.description = `Making ${netEvent.method} request to ${new URL(netEvent.url).pathname}`;
+    } else if (netEvent.type === 'response') {
+      if (netEvent.isDownload) {
+        netEvent.description = `Downloaded file from ${new URL(netEvent.url).pathname} (${netEvent.status})`;
+      } else {
+        netEvent.description = `Received response from ${new URL(netEvent.url).pathname} (${netEvent.status})`;
+      }
+    } else if (netEvent.type === 'error') {
+      netEvent.description = `Network error for ${new URL(netEvent.url).pathname}: ${netEvent.error}`;
+    }
+    
+    // Forward network events to background
+    chrome.runtime.sendMessage({
+      type: 'NETWORK_EVENT',
+      sessionId: currentSessionId,
+      net: netEvent
+    }).catch(() => {});
+  }
+});
+
+// Enhanced error handling and recovery
+window.addEventListener('error', (event) => {
+  if (recording && !paused && currentSessionId) {
+    console.warn('[TestSnapper Content] Page error detected:', event.error);
+    
+    chrome.runtime.sendMessage({
+      type: 'PAGE_ERROR',
+      sessionId: currentSessionId,
+      error: {
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+        stack: event.error?.stack
+      }
+    }).catch(() => {});
+  }
+});
+
+/////////////////////////////
+// Enhanced Descriptions    //
+/////////////////////////////
+
+function getElementDescription(element, action) {
+  const tag = element.tagName?.toLowerCase();
+  const type = element.type?.toLowerCase();
+  const text = getElementText(element);
+  const role = element.getAttribute?.('role');
+  const ariaLabel = element.getAttribute?.('aria-label');
+  const placeholder = element.placeholder;
+  
+  // Use aria-label or placeholder for better context
+  const contextText = ariaLabel || placeholder || text;
+  
+  // Generate human-readable descriptions based on element type and action
+  if (action === 'click') {
+    if (tag === 'button' || type === 'button' || role === 'button') {
+      if (contextText.toLowerCase().includes('submit')) return `Submit form by clicking "${contextText}" button`;
+      if (contextText.toLowerCase().includes('save')) return `Save by clicking "${contextText}" button`;
+      if (contextText.toLowerCase().includes('cancel')) return `Cancel by clicking "${contextText}" button`;
+      if (contextText.toLowerCase().includes('delete')) return `Delete by clicking "${contextText}" button`;
+      if (contextText.toLowerCase().includes('edit')) return `Edit by clicking "${contextText}" button`;
+      if (contextText.toLowerCase().includes('add')) return `Add item by clicking "${contextText}" button`;
+      return contextText ? `Click "${contextText}" button` : 'Click button';
+    }
+    
+    if (tag === 'a') {
+      const href = element.href || '';
+      if (href.includes('mailto:')) return `Send email via "${contextText}" link`;
+      if (href.includes('tel:')) return `Call phone number via "${contextText}" link`;
+      if (downloadExtensions.test(href)) return `Download "${href.split('/').pop()}" file`;
+      return contextText ? `Navigate via "${contextText}" link` : `Open link to ${new URL(href).hostname}`;
+    }
+    
+    if (type === 'checkbox') {
+      const checked = element.checked ? 'Check' : 'Uncheck';
+      return contextText ? `${checked} "${contextText}" option` : `${checked} checkbox`;
+    }
+    
+    if (type === 'radio') {
+      return contextText ? `Select "${contextText}" radio option` : 'Select radio option';
+    }
+    
+    if (type === 'submit') {
+      return contextText ? `Submit form via "${contextText}"` : 'Submit form';
+    }
+    
+    if (element.getAttribute('data-testid')) {
+      const testId = element.getAttribute('data-testid');
+      return `Interact with ${testId.replace(/-/g, ' ')} element`;
+    }
+    
+    // Special cases for common UI patterns
+    if (contextText.toLowerCase().includes('menu')) return `Open "${contextText}" menu`;
+    if (contextText.toLowerCase().includes('close') || contextText === '×') return 'Close dialog/modal';
+    if (contextText.toLowerCase().includes('search')) return `Click search for "${contextText}"`;
+    if (role === 'tab') return `Switch to "${contextText}" tab`;
+    if (role === 'menuitem') return `Select "${contextText}" from menu`;
+    
+    return contextText ? `Click on "${contextText}"` : `Click ${tag} element`;
+  }
+  
+  if (action === 'type' || action === 'input') {
+    const fieldContext = ariaLabel || placeholder || element.name || '';
+    
+    if (type === 'password') {
+      return fieldContext ? `Enter password in "${fieldContext}" field` : 'Enter password';
+    }
+    if (type === 'email') {
+      return fieldContext ? `Enter email address in "${fieldContext}" field` : 'Enter email address';
+    }
+    if (type === 'search') {
+      return fieldContext ? `Search for text in "${fieldContext}" field` : 'Enter search term';
+    }
+    if (type === 'url') {
+      return fieldContext ? `Enter URL in "${fieldContext}" field` : 'Enter website URL';
+    }
+    if (type === 'tel') {
+      return fieldContext ? `Enter phone number in "${fieldContext}" field` : 'Enter phone number';
+    }
+    if (type === 'number') {
+      return fieldContext ? `Enter number in "${fieldContext}" field` : 'Enter numeric value';
+    }
+    if (type === 'date') {
+      return fieldContext ? `Select date in "${fieldContext}" field` : 'Select date';
+    }
+    if (type === 'time') {
+      return fieldContext ? `Set time in "${fieldContext}" field` : 'Set time';
+    }
+    if (tag === 'textarea') {
+      return fieldContext ? `Enter text in "${fieldContext}" text area` : 'Enter multi-line text';
+    }
+    
+    return fieldContext ? `Type in "${fieldContext}" field` : `Enter text in ${type || 'input'} field`;
+  }
+  
+  if (action === 'change' || action === 'select') {
+    if (tag === 'select') {
+      const selectedText = element.options?.[element.selectedIndex]?.text || element.value;
+      const fieldName = ariaLabel || element.name || 'dropdown';
+      return `Select "${selectedText}" from "${fieldName}" dropdown`;
+    }
+    if (type === 'file') {
+      const files = element.files ? Array.from(element.files).map(f => f.name).join(', ') : 'file(s)';
+      return `Upload file(s): ${files}`;
+    }
+    if (type === 'checkbox') {
+      const checked = element.checked ? 'Enable' : 'Disable';
+      return contextText ? `${checked} "${contextText}" option` : `${checked} checkbox`;
+    }
+    if (type === 'radio') {
+      return contextText ? `Choose "${contextText}" option` : 'Select radio option';
+    }
+  }
+  
+  if (action === 'scroll') {
+    const direction = element.meta?.direction?.vertical || 'down';
+    const distance = element.meta?.distance?.vertical || 0;
+    if (distance > 1000) {
+      return `Scroll ${direction} significantly (${Math.round(distance)}px)`;
+    } else if (distance > 300) {
+      return `Scroll ${direction} moderately`;
+    } else {
+      return `Scroll ${direction} slightly`;
+    }
+  }
+  
+  if (action === 'navigate') {
+    const trigger = element.meta?.trigger;
+    const toUrl = element.meta?.toUrl || window.location.href;
+    const urlObj = new URL(toUrl);
+    
+    if (trigger === 'pushState' || trigger === 'replaceState') {
+      return `Navigate to "${urlObj.pathname}" section (single-page app)`;
+    } else if (trigger === 'hashchange') {
+      return `Jump to "${urlObj.hash}" section on page`;
+    } else if (trigger === 'popstate') {
+      return 'Go back/forward in browser history';
+    } else if (trigger === 'recording_start') {
+      return `Start recording on page: "${document.title}"`;
+    } else {
+      return `Navigate to new page: "${urlObj.hostname}${urlObj.pathname}"`;
+    }
+  }
+  
+  if (action === 'key') {
+    const key = element.meta?.key;
+    const targetTag = element.element?.tagName;
+    
+    if (key === 'Enter') {
+      if (targetTag === 'textarea') return 'Press Enter to add new line';
+      if (targetTag === 'input') return 'Press Enter to submit/confirm input';
+      return 'Press Enter to proceed';
+    } else if (key === 'Tab') {
+      return element.meta?.shiftKey ? 'Move to previous field (Shift+Tab)' : 'Move to next field (Tab)';
+    } else if (key === 'Escape') {
+      return 'Press Escape to cancel or close';
+    } else if (key?.startsWith('Arrow')) {
+      const direction = key.replace('Arrow', '').toLowerCase();
+      return `Navigate using ${direction} arrow key`;
+    } else if (key === 'Backspace') {
+      return 'Delete previous character (Backspace)';
+    } else if (key === 'Delete') {
+      return 'Delete next character (Delete)';
+    } else {
+      return `Press ${key} key`;
+    }
+  }
+  
+  if (action === 'download') {
+    const filename = element.meta?.filename || 'file';
+    const fileType = element.meta?.fileType || 'unknown';
+    return `Download ${fileType.toUpperCase()} file: "${filename}"`;
+  }
+  
+  if (action === 'focus') {
+    return contextText ? `Focus on "${contextText}" field` : `Focus on ${tag} field`;
+  }
+  
+  if (action === 'submit') {
+    const formName = element.name || element.id || 'form';
+    return `Submit "${formName}" form`;
+  }
+  
+  if (action === 'custom') {
+    return element.description || 'Custom test action';
+  }
+  
+  return `Perform ${action} action on ${tag} element`;
+}
+
+/////////////////////////////
+// Page State Monitoring    //
+/////////////////////////////
+
+function monitorPageChanges() {
+  // Monitor for dynamic content changes that might affect test steps
+  const observer = new MutationObserver((mutations) => {
+    if (!recording || paused) return;
+    
+    let significantChanges = false;
+    
+    mutations.forEach((mutation) => {
+      // Track significant DOM changes that might affect test reliability
+      if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType === 1 && node.tagName) { // Element node
+            const tag = node.tagName.toLowerCase();
+            // Track addition of interactive elements
+            if (['button', 'input', 'select', 'textarea', 'a'].includes(tag)) {
+              significantChanges = true;
+            }
+          }
+        });
+      }
+    });
+    
+    if (significantChanges) {
+      console.log('[TestSnapper Content] Significant DOM changes detected');
+      // Could send a DOM_CHANGE event if needed for test stability analysis
+    }
+  });
+  
+  observer.observe(document.body || document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: false
+  });
+}
+
+/////////////////////////////
+// Initialization           //
+/////////////////////////////
+
+function initialize() {
+  console.log('[TestSnapper Content] Initializing enhanced content script');
+  
+  // Always set up the basic hooks on load
+  attachEventListeners();
+  setupNavigationHooks();
+  
+  // Set up page monitoring
+  if (document.body) {
+    monitorPageChanges();
+  } else {
+    document.addEventListener('DOMContentLoaded', monitorPageChanges);
+  }
+  
+  // Initialize scroll position tracking
+  lastScrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  lastScrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+  
+  // Log successful initialization with enhanced details
+  console.log('[TestSnapper Content] Enhanced content script initialized successfully');
+  console.log('[TestSnapper Content] Page URL:', window.location.href);
+  console.log('[TestSnapper Content] Page title:', document.title);
+  console.log('[TestSnapper Content] Document ready state:', document.readyState);
+  console.log('[TestSnapper Content] Viewport size:', window.innerWidth, 'x', window.innerHeight);
+}
+
+// Initialize immediately when script loads
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initialize);
+} else {
+  initialize();
+}
+
+// Also ensure initialization on various page states
+if (document.readyState === 'complete') {
+  // Page fully loaded
+  setTimeout(initialize, 100);
+} else {
+  window.addEventListener('load', () => {
+    setTimeout(initialize, 200); // Give a bit more time for complex pages
+  });
+}
+
+// Handle page visibility changes (for browser tab switching)
+document.addEventListener('visibilitychange', () => {
+  if (recording && !paused && currentSessionId && !document.hidden) {
+    console.log('[TestSnapper Content] Page became visible, ensuring hooks are active');
+    // Re-initialize if needed when page becomes visible again
+    if (!listenersAttached) attachEventListeners();
+  }
+});
+
+console.log('[TestSnapper Content] Enhanced content script loaded successfully');

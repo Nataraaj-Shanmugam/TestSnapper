@@ -1,108 +1,265 @@
-## A. UI / Popup.js Issues
+===========================
+FILE: manifest.json
+===========================
+- Set MV3 service worker as module:
+  "background": { "service_worker": "src/background.js", "type": "module" }
 
-1. Bulk Selection Logic Not Fully Reliable  
-   - `deselectAllSessions` clears `selectedSessions` but may not update UI checkboxes after DOM re-render.  
-   - Risk: User sees boxes checked/unchecked incorrectly.
+- Default popup:
+  "action": { "default_popup": "src/popup.html" }
 
-2. Delete Selected Session Race Condition  
-   - No refresh from storage after deletion, possible stale view if another tab modifies sessions.
+- Permissions (minimum):
+  "permissions": ["activeTab", "tabs", "storage", "scripting", "downloads"]
 
-3. Stop/Screenshot Buttons Disabled in Pause State  
-   - `updateRecordingUI()` disables these even though background allows them.
+- Host permissions:
+  "host_permissions": ["<all_urls>"]
 
-4. Manual Screenshot Not Always Enabled  
-   - Likely tied to `isRecording` state; should be always available.
+- Web accessible resources (add all used pages/assets):
+  "web_accessible_resources": [{
+    "resources": [
+      "src/injected.js",
+      "src/webllm-service.js",
+      "src/webllm-host.html",
+      "export_view.html",
+      "assets/webllm/*",
+      "assets/css/*",
+      "assets/js/*"
+    ],
+    "matches": ["<all_urls>"]
+  }]
 
-5. Timeline Timestamp Format  
-   - Uses relative seconds instead of `date + hh:mm:ss`.
+- Content Security Policy (no inline, allow wasm eval if required by WebLLM):
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  }
 
-6. Session Export Format Scope Mismatch  
-   - UI allows CSV/DOCX/PDF but PRD specifies TXT only in v1.0.
+- Optional devtools permission (if you rely on it):
+  add "devtools" only if using chrome.devtools.* APIs.
 
-7. No “Session Project” Grouping Support  
-   - No `project` property in sessions; all are flat.
 
-8. Missing Full Timeline View  
-   - Shows only last 4 events; no expand/collapse to view all.
+===========================
+FILE: src/background.js
+===========================
+- Convert to ESM (top-level use of `export` if needed; ensure no globals leak).
 
-9. Possible XSS Risk in Session Title & URL Rendering  
-   - `escapeHtml` used inconsistently; some interpolations unescaped.
+- Add Offscreen Document manager for WebLLM host:
+  • function ensureOffscreen(): create once via chrome.offscreen.createDocument({ url:'src/webllm-host.html', reasons:['BLOBS'], justification:'Run WebLLM with WebGPU/CPU' })
+  • function closeOffscreenWhenIdle(): optional cleanup timer.
 
-10. Race Condition in Auto-Clear Old Sessions  
-    - May delete an ongoing session if it started before cutoff time.
+- Add message contract handling (listen to runtime.onMessage):
+  • 'REC_START'           -> init session state, call ensureOffscreen(), signal LLM init if toggle true.
+  • 'REC_STOP'            -> finalize session, flush queues, persist.
+  • 'REC_EVENT'           -> accept raw step, pre-enqueue (bounded), schedule batch flush.
+  • 'LLM_READY'           -> set llmReady=true; notify popup.
+  • 'LLM_ENRICH_BATCH'    -> (from you to offscreen) send; (from offscreen to you) handle results.
+  • 'LLM_ENRICH_RESULT'   -> merge enriched text back into steps.
+  • 'LLM_PROGRESS'        -> propagate to popup.
+  • 'EXPORT_OPEN'         -> chrome.tabs.create({ url:'export_view.html?session=<id>' })
+  • 'EXPORT_SAVE'         -> persist edited steps & metadata.
+  • 'SCREENSHOT_SAVED'    -> attach image refs.
 
----
+- Implement per-session queues & batching:
+  • Map<sessionId, Step[]> pendingQueue
+  • debounce flush (150–250ms)
+  • takeBatch(sessionId, N=25)
+  • Back-pressure: if offscreen reports BUSY, pause flush; resume on READY.
 
-## B. Background.js Issues
+- Add LRU cache for enrichment:
+  • key = hash(`${action}|${normalizedLocator}|${valueKind}|${url}`)
+  • If cache hit, skip LLM call, directly fill enriched.
 
-11. CLEANUP_OLD_SESSIONS Message Handler Missing  
-    - `content.js` sends cleanup request; background doesn’t handle it.
+- Persistence:
+  • Use chrome.storage.local (or IndexedDB wrapper) with schema:
+    { sessions: { [id]: { meta, steps[], network[], shots[] } } }
+  • Snapshot large sessions every 200 steps.
 
-12. Inconsistent Screenshot Quality Setting  
-    - PNG ignores `quality` param in `captureVisibleTab`.
+- HAR export (MVP):
+  • Build minimal HAR JSON from stored network logs.
+  • Provide download via chrome.downloads.download(Blob URL).
 
-13. Settings Update Fails If Content Script Not Injected  
-    - No injection fallback in `updateSettings`.
+- Error handling & telemetry:
+  • try/catch around message plumbing; bubble {type:'ERROR', code, detail} to popup.
+  • Maintain counters: {stepsTotal, stepsEnriched, avgLatencyMs, queueLen}.
 
-14. getLastMeaningfulInteraction Selector Info Limited  
-    - Omits useful context (text/value) for timeline.
 
-15. Network Call Capture Race Condition  
-    - `trackNetworkResponse` assumes `trackNetworkRequest` ran first; may miss cached responses.
+===========================
+FILE: src/webllm-service.js
+===========================
+- THIS FILE RUNS IN AN OFFSCREEN PAGE (NOT SERVICE WORKER). Load it from webllm-host.html.
 
-16. API Failures Not Pushed Into `apiFailures` Array  
-    - Potential mismatch between failures and popup’s `apiFailures` display.
+- Boot sequence:
+  • On load: init() -> CreateMLCEngine with local assets
+      const base = chrome.runtime.getURL('assets/webllm/');
+      engine = await CreateMLCEngine({ model_id:'qwen2.5-1.5b-q4f32_1', model_url: base });
+  • Send {type:'LLM_READY', modelId:'qwen2.5-1.5b'} on success.
+  • Emit {type:'LLM_PROGRESS', pct} during model load if API supports it.
 
----
+- Message handling:
+  • onMessage('LLM_ENRICH_BATCH'): for each step -> build compact prompt, call engine.chat.completions.create({ temperature:0.1, max_tokens:32, stop:['\n'] })
+  • Sanitize output to one imperative sentence <= 16 words.
+  • Return {type:'LLM_ENRICH_RESULT', reqId, results:[{id, enriched}...]}
 
-## C. Content.js Issues
+- Concurrency:
+  • Serialize batches or run with small concurrency (2–3 at most) depending on device flag.
+  • If WebGPU missing -> set degraded=true; still serve requests via WASM/CPU.
 
-17. getLastMeaningfulInteraction Misuse  
-    - Returns `undefined` due to non-async handling of `sendMessage`.
+- Caching (optional duplicate guard within this process):
+  • Local Map cache keyed by sha1(prompt).
 
-18. Debounce Delay Not Synced with Settings on All Updates  
-    - May remain stale until reload.
+- Robustness:
+  • Timeouts per batch (e.g., 10s). On timeout -> return minimal fallback: `${verb} ${shortLocator}`
 
-19. API Failure Handling Lacks Status Code for Network Errors  
-    - Loses detail when status is 0.
 
-20. Potential Memory Leak in inputDebounceTimers  
-    - Cleared only on pause/stop.
+===========================
+FILE: src/webllm-host.html (NEW)
+===========================
+- Purpose: offscreen document shell to host WebLLM engine.
 
-21. Redaction Not Implemented for Screenshots  
-    - No masking/blur for sensitive elements before capture.
+- Minimal structure:
+  <!doctype html>
+  <html>
+    <head><meta charset="utf-8" /></head>
+    <body>
+      <script type="module" src="./webllm-service.js"></script>
+    </body>
+  </html>
 
----
+- No inline scripts/styles. Only module script for webllm-service.js.
 
-## D. Injected.js Issues
 
-22. Console Interception May Affect Other Scripts  
-    - Overwrites `console` methods without checking for prior overrides.
+===========================
+FILE: src/content.js
+===========================
+- Event capture improvements:
+  • Build robust selector:
+    1) [data-testid] or [data-test] or [data-qa]
+    2) Accessible role/name via ARIA if available
+    3) #id, [name]
+    4) Fallback CSS with :nth-of-type, trimmed of dynamic suffixes (digits/uuids)
+  • Collect: { id, action, locatorRaw, locatorNorm, valueKind, meta:{url,title,timestamp} }
 
-23. Fetch/XHR Interception Lacks Restore on Page Navigation  
-    - Once replaced, stays replaced unless stopped.
+- De-dupe & coalesce:
+  • If same {action, locatorNorm} within 250ms, merge into one event.
 
-24. Advanced Recording State Sync Race  
-    - Relies on timely `RECORDING_STATUS_UPDATE`; could miss events if delayed.
+- Client-side redaction BEFORE sending:
+  • Values: redact by regex (/password|token|secret|api[_-]?key|otp|aadhaar|pan|mobile/i).
+  • For text inputs: store valueKind='text_redacted' rather than actual value.
 
-25. Screenshot Hotkey Possible Keybinding Conflict  
-    - No config to avoid clashing with site shortcuts.
+- Messaging:
+  • On user interactions -> chrome.runtime.sendMessage({type:'REC_EVENT', sessionId, step})
+  • On start/pause/resume/stop -> send respective messages from popup trigger.
 
----
+- Injection guard:
+  • Ensure injected listeners removed on stop/navigation to avoid duplicates.
 
-## E. Cross-Module / Integration Issues
 
-26. Paused State Logic Not Fully Consistent Across Layers  
-    - Popup, background, content, and injected handle pause differently.
+===========================
+FILE: src/injected.js
+===========================
+- Purpose: page-context helpers if needed (e.g., intercept fetch/XHR headers for network meta, safe console).
 
-27. Storage Writes Without Size Checks  
-    - Risk of exceeding `chrome.storage.local` quota with large sessions.
+- Add safe shims:
+  • Wrap console to tag sessionId (optional).
+  • Intercept fetch/XHR to tag correlation ids with DOM events (if required for linking).
 
-28. Missing Error Handling for Messaging Failures  
-    - Many `sendMessage` calls assume listener exists.
+- Hotkeys:
+  • Ctrl+Shift+R -> toggle recording (guard when input focused).
+  • Ctrl+Shift+S -> quick screenshot trigger (send message to content -> background).
 
-29. Race Between Auto-Cleanup and StopRecording  
-    - Cleanup could remove session being saved.
+- Cleanup:
+  • On beforeunload: detach all listeners, flush pending markers.
 
-30. Security Risk – No Sanitization of Recorded Selectors or Values  
-    - Raw selector/value/text stored; XSS if missed during render.
+
+===========================
+FILE: src/popup.html
+===========================
+- Remove any inline <script> / inline style.
+- Link external built JS/CSS only:
+  <link rel="stylesheet" href="../assets/css/popup.css" />
+  <script type="module" src="./popup.js"></script>
+
+- Layout (tabs or sections):
+  • Controls: Start, Pause/Resume, Stop, Screenshot, Export
+  • AI section:
+     - Toggle: "Enable WebLLM Enrichment"
+     - Status chip: Idle / Initializing / Ready / Degraded
+     - Progress bar for first model load
+     - Model info row: "Qwen2.5 1.5B (WebGPU/WASM)"
+  • Recent Sessions list with Export buttons
+
+- ARIA + keyboard focus order for accessibility.
+
+
+===========================
+FILE: src/popup.js
+===========================
+- Wire buttons to background:
+  • Start -> send {type:'REC_START', sessionId, llm:toggleState}
+  • Pause/Resume -> {type:'REC_PAUSE'}/{type:'REC_RESUME'}
+  • Stop -> {type:'REC_STOP'}
+  • Screenshot -> {type:'CAPTURE_SCREENSHOT'}
+  • Export -> {type:'EXPORT_OPEN', sessionId}
+
+- Manage WebLLM toggle state in chrome.storage.local ('llmEnabled').
+
+- Listen to updates from background/offscreen:
+  • 'LLM_READY' -> set status Ready
+  • 'LLM_PROGRESS' -> update progress bar
+  • 'ERROR' -> show toast with code/detail
+  • Telemetry poll (optional): show queue length, latency, enriched count
+
+- Session list:
+  • Render from chrome.storage.local sessions index
+  • Each item: name/date/duration/steps/errors + Export button
+
+- CSP safe:
+  • No eval/Function(), no inline handlers.
+
+
+===========================
+FILE: export_view.html
+===========================
+- No inline scripts or styles.
+- Include:
+  <link rel="stylesheet" href="assets/css/export.css" />
+  <script type="module" src="assets/js/export.js"></script>
+
+- UI requirements:
+  • Header with session name + "Save" + "Download .txt" + "Download .docx"
+  • Toolbar: [Select All] [Unselect All] [Bulk Delete] [Undo]
+  • Steps list:
+     - Each step: checkbox, line number, contenteditable enriched text (max 160 chars), raw toggle
+     - Validation message on overflow
+  • Footer stats: total steps, selected, deleted (pending)
+
+- Query sessionId from URL (?session=<id>) and load session data via chrome.runtime.sendMessage.
+
+
+===========================
+FILE: assets/js/export.js (NEW)
+===========================
+- Fetch session:
+  • chrome.runtime.sendMessage({type:'EXPORT_LOAD', sessionId}) -> receive {steps, meta}
+
+- Inline editing:
+  • Use contenteditable divs + input sanitization (strip newlines, cap length)
+  • Track dirty state; enable "Save" when changed
+
+- Bulk operations:
+  • Maintain selection set; on bulk delete -> move items to a temp "trash" array
+  • Provide Undo (30s window or until Save)
+
+- Downloads:
+  • .txt builder -> MVP TestSnapper format (title, date, meta, steps)
+  • .docx builder -> lightweight docx.js (headings + numbered list)
+
+- Save:
+  • After "Save" or after downloads (if you choose), send:
+    chrome.runtime.sendMessage({type:'EXPORT_SAVE', sessionId, steps:updatedSteps})
+
+
+===========================
+FILE: assets/css/popup.css & assets/css/export.css (NEW)
+===========================
+- Move all inline styles from popup/export pages into these files.
+- Provide minimal Tailwind-like utility classes or your own BEM styles.
+- Ensure high contrast & focus outlines for accessibility.

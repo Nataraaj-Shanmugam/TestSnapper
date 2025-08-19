@@ -1,793 +1,913 @@
-// background.js — Fixed & Enhanced (issues 11–16)
-// Preserves original behavior and structure, adds targeted fixes:
-//
-// - [11] Adds CLEANUP_OLD_SESSIONS message handler (returns deletedCount)
-// - [12] Makes screenshot quality effective (uses JPEG when quality matters; PNG for "high")
-// - [13] UPDATE_SETTINGS now injects content.js if needed and retries message
-// - [14] getLastMeaningfulInteraction returns richer context (selector + text/value snippet)
-// - [15] Network capture race-proofing: if response/error arrives before request, synthesize request
-// - [16] Ensure API failures are pushed into session.apiFailures with timestamps
-//
-// Notes:
-// • This is a drop-in replacement. It keeps your original message types & flow.
-// • If your content script lives at a different path than 'src/content.js', update that constant below.
+///////////////////////////////
+// Constants & Configuration //
+///////////////////////////////
 
-class TestSnapperBackground {
-  constructor() {
-    this.isRecording = false;
-    this.isPaused = false;
-    this.currentSession = null;
-    this.tabNetworkData = new Map();
-    this.currentTabId = null;
-    this.pauseStartTime = null;
-    this.totalPausedTime = 0;
-    this.screenshotQueue = [];
+const LLM_MODEL_ID = 'Llama-3.2-1B-Instruct-q4f32_1-MLC';
+const LLM_ASSETS_BASE = 'assets/webllm/';
 
-    // Settings with defaults
-    this.settings = {
-      autoScreenshot: true,
-      inputTimeFrame: 2000, // 2 seconds default
-      screenshotQuality: 'medium', // low | medium | high
-      redactionPatterns: 'password,secret,token,api_key',
-      darkMode: false,
-      defaultExportFormat: 'txt'
-    };
+const BATCH_SIZE = 25;
+const BATCH_DEBOUNCE_MS = 200;
+const BATCH_TIMEOUT_MS = 10000;
+const SNAPSHOT_EVERY_N_STEPS = 200;
+const MAX_QUEUE_LEN = 500;
+const LRU_CACHE_SIZE = 5000;
 
-    // Path to your content script (adjust if needed)
-    this.CONTENT_SCRIPT_PATH = 'src/content.js';
+const STORAGE_KEYS = {
+  SESSIONS_INDEX: 'ts.sessions.index',
+  SESSION_PREFIX: 'ts.session.',
+  SETTINGS: 'ts.settings',
+  TELEMETRY: 'ts.telemetry',
+};
 
-    this.init();
+//////////////////////
+// In-Memory State  //
+//////////////////////
+
+const sessionState = new Map(); // id -> { meta, steps[], network[], shots[] }
+const pendingQueue = new Map(); // id -> [rawStep,...]
+const batchTimers = new Map();  // id -> timeoutId
+const pendingReqs = new Map();  // reqId -> { sessionId, startedAt, size }
+
+let llmReady = false;
+let llmMode = 'unknown';
+let llmEnabledDefault = true;
+const recordingState = new Map(); // sessionId -> { recording: boolean, paused: boolean }
+
+// Host info for running WebLLM when Offscreen API is missing
+let llmHost = { mode: null, windowId: null, tabId: null };
+
+// Simple LRU for enrichment cache
+class LRU {
+  constructor(limit) { this.limit = limit; this.map = new Map(); }
+  get(k) { if (!this.map.has(k)) return undefined; const v = this.map.get(k); this.map.delete(k); this.map.set(k, v); return v; }
+  set(k, v) { if (this.map.has(k)) this.map.delete(k); this.map.set(k, v); if (this.map.size > this.limit) this.map.delete(this.map.keys().next().value); }
+}
+const enrichCache = new LRU(LRU_CACHE_SIZE);
+
+//////////////////////
+// Utility Helpers  //
+//////////////////////
+
+const delay = (ms) => new Promise(r => setTimeout(r, ms));
+const nowIso = () => new Date().toISOString();
+
+function uuid() {
+  if (crypto?.randomUUID) return crypto.randomUUID();
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+}
+
+function coalesceSessionId(msg) {
+  return msg?.sessionId || msg?.sid || msg?.session || 'default';
+}
+
+async function getSettings() {
+  const { [STORAGE_KEYS.SETTINGS]: s } = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
+  return s || { llmEnabled: llmEnabledDefault, redactionPatterns: [] };
+}
+
+async function setSettings(obj) {
+  await chrome.storage.local.set({ [STORAGE_KEYS.SETTINGS]: obj });
+}
+
+async function getSessionsIndex() {
+  const { [STORAGE_KEYS.SESSIONS_INDEX]: idx } = await chrome.storage.local.get(STORAGE_KEYS.SESSIONS_INDEX);
+  return Array.isArray(idx) ? idx : [];
+}
+
+async function upsertSessionsIndex(meta) {
+  const idx = await getSessionsIndex();
+  const i = idx.findIndex(x => x.id === meta.id);
+  if (i >= 0) idx[i] = { ...idx[i], ...meta };
+  else idx.unshift(meta);
+  await chrome.storage.local.set({ [STORAGE_KEYS.SESSIONS_INDEX]: idx });
+}
+
+async function loadSession(id) {
+  const key = STORAGE_KEYS.SESSION_PREFIX + id;
+  const { [key]: data } = await chrome.storage.local.get(key);
+  return data || null;
+}
+
+async function saveSession(id, data) {
+  const key = STORAGE_KEYS.SESSION_PREFIX + id;
+  await chrome.storage.local.set({ [key]: data });
+}
+
+async function setTelemetry(t) {
+  await chrome.storage.local.set({ [STORAGE_KEYS.TELEMETRY]: t });
+}
+
+function minimalizeStep(s) {
+  const action = s?.action || s?.name || 'Action';
+  const loc = s?.locatorNorm || s?.locatorRaw || s?.locator || '';
+  return `${action} ${loc}`.trim();
+}
+
+function hashKey(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24); }
+  return (h >>> 0).toString(16);
+}
+
+// Active tab + screenshot helpers
+async function getActiveTab() {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tabs && tabs[0] ? tabs[0] : null;
+}
+
+async function getActiveTabId() {
+  const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return t?.id || null;
+}
+
+async function captureAndStoreScreenshot(sessionId) {
+  const s = sessionState.get(sessionId);
+  if (!s) return { ok: false, error: 'SESSION_NOT_FOUND' };
+
+  const tab = await getActiveTab();
+  const windowId = tab?.windowId ?? undefined;
+  const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+
+  const shot = {
+    id: uuid(),
+    ts: Date.now(),
+    dataUrl,
+    tabId: tab?.id ?? null,
+    url: tab?.url || '',
+    title: tab?.title || '',
+    stepId: (s.steps && s.steps.length) ? s.steps[s.steps.length - 1].id : null,
+  };
+
+  s.shots.push(shot);
+  s.updated = Date.now();
+  await saveSession(sessionId, s);
+
+  await upsertSessionsIndex({
+    id: s.id, name: s.name, updated: s.updated,
+    stepCount: s.steps.length,
+    errorCount: (s.network || []).filter(n => n.status >= 400).length
+  });
+
+  return { ok: true, shotId: shot.id };
+}
+
+//////////////////////////////
+// WebLLM Host Functions
+//////////////////////////////
+
+async function hasOffscreenAPI() {
+  try { return !!chrome.offscreen && typeof chrome.offscreen.createDocument === 'function'; }
+  catch { return false; }
+}
+
+async function hasOffscreen() {
+  if (!(await hasOffscreenAPI())) return false;
+  if (chrome.offscreen?.hasDocument) {
+    try { return await chrome.offscreen.hasDocument(); } catch { return false; }
+  }
+  return false;
+}
+
+async function ensureOffscreen() {
+  if (!(await hasOffscreenAPI())) throw new Error('OFFSCREEN_API_UNAVAILABLE');
+  if (await hasOffscreen()) return;
+  await chrome.offscreen.createDocument({
+    url: 'assets/html/webllm-host.html',
+    reasons: ['IFRAME_SCRIPTING'],
+    justification: 'Run WebLLM in an offscreen document for local enrichment',
+  });
+}
+
+async function ensureLLMHost() {
+  console.log('[TestSnapper Background] Ensuring LLM host...');
+  if (llmHost.mode) {
+    console.log('[TestSnapper Background] LLM host already exists:', llmHost.mode);
+    return;
   }
 
-  async init() {
-    console.log('TestSnapper Background Service Worker initialized');
+  if (await hasOffscreenAPI()) {
+    try {
+      await ensureOffscreen();
+      llmHost.mode = 'offscreen';
+      console.log('[TestSnapper Background] Created offscreen LLM host');
+      return;
+    } catch (e) {
+      console.warn('[TestSnapper Background] Offscreen not available, falling back to minimized window', e);
+    }
+  }
 
-    chrome.runtime.onInstalled.addListener(() => {
-      console.log('TestSnapper extension installed');
-      this.initializeStorage();
+  const url = chrome.runtime.getURL('assets/html/webllm-host.html');
+  try {
+    const allTabs = await chrome.tabs.query({});
+    const existing = allTabs.find(t => t.url === url);
+    if (existing) {
+      llmHost = { mode: 'tab', windowId: existing.windowId, tabId: existing.id };
+      console.log('[TestSnapper Background] Found existing LLM host tab:', existing.id);
+      return;
+    }
+  } catch { }
+  
+  const win = await chrome.windows.create({
+    url, type: 'popup', focused: false, state: 'minimized', width: 420, height: 320
+  });
+  llmHost = { mode: 'tab', windowId: win.id, tabId: win.tabs?.[0]?.id || null };
+  console.log('[TestSnapper Background] Created minimized window LLM host:', llmHost);
+}
+
+async function llmAvailable() {
+  if (llmHost.mode) return true;
+  if (await hasOffscreen()) return true;
+  return false;
+}
+
+/////////////////////////////////
+// Content Script Injection    //
+/////////////////////////////////
+
+async function pingContentScript(tabId) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { type: 'PING' });
+    return response?.ok === true;
+  } catch (e) {
+    console.warn('[TestSnapper Background] PING failed:', e);
+    return false;
+  }
+}
+
+async function injectContentScript(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['src/content.js']
     });
+    console.log('[TestSnapper Background] Injected content script into tab:', tabId);
+    return true;
+  } catch (e) {
+    console.error('[TestSnapper Background] Failed to inject content script:', e);
+    return false;
+  }
+}
 
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleMessage(message, sender, sendResponse);
-      return true; // keep channel open for async responses
-    });
+async function ensureContentScript(tabId) {
+  const isPresent = await pingContentScript(tabId);
+  if (isPresent) {
+    console.log('[TestSnapper Background] Content script already present');
+    return true;
+  }
+  
+  console.log('[TestSnapper Background] Content script not present, injecting...');
+  return await injectContentScript(tabId);
+}
 
-    // Load settings on startup
-    await this.loadSettings();
+/////////////////////////
+// Recording Lifecycle //
+/////////////////////////
 
-    // Auto-cleanup old sessions on startup
-    await this.cleanupOldSessions();
+async function startRecording({ sessionId, llm }) {
+  console.log('[TestSnapper Background] Starting recording:', sessionId);
+  const settings = await getSettings();
+  const llmEnabled = typeof llm === 'boolean' ? llm : settings.llmEnabled;
 
-    // Network listeners
-    chrome.webRequest.onBeforeRequest.addListener(
-      (details) => this.trackNetworkRequest(details),
-      { urls: ["<all_urls>"] },
-      ["requestBody"]
-    );
+  const session = {
+    id: sessionId,
+    name: `Session ${new Date().toLocaleString()}`,
+    created: Date.now(),
+    updated: Date.now(),
+    meta: { browser: 'Chrome', os: (navigator?.userAgentData?.platform || 'unknown') },
+    steps: [],
+    network: [],
+    shots: [],
+  };
 
-    chrome.webRequest.onCompleted.addListener(
-      (details) => this.trackNetworkResponse(details),
-      { urls: ["<all_urls>"] },
-      ["responseHeaders"]
-    );
+  sessionState.set(sessionId, session);
+  recordingState.set(sessionId, { recording: true, paused: false });
 
-    chrome.webRequest.onErrorOccurred.addListener(
-      (details) => this.trackNetworkError(details),
-      { urls: ["<all_urls>"] }
-    );
+  await saveSession(sessionId, session);
+  await upsertSessionsIndex({
+    id: session.id,
+    name: session.name,
+    created: session.created,
+    updated: session.updated,
+    stepCount: 0,
+    errorCount: 0
+  });
 
-    chrome.tabs.onRemoved.addListener((tabId) => {
-      if (this.currentTabId === tabId && this.isRecording) {
-        console.log('Recorded tab closed, stopping recording');
-        this.stopRecording();
-      }
-      this.tabNetworkData.delete(tabId);
-    });
-
-    // In init(), after your other listeners:
-    chrome.commands.onCommand.addListener(async (command) => {
+  // Ensure content script is present before starting recording
+  const tabId = await getActiveTabId();
+  if (tabId) {
+    const scriptReady = await ensureContentScript(tabId);
+    if (scriptReady) {
       try {
-        switch (command) {
-          case 'toggle-recording':
-            if (this.isRecording) {
-              await this.stopRecording();
-            } else {
-              const tab = await this.getActiveTab();
-              if (!tab) throw new Error('No active tab');
-              await this.startRecording(tab);
-            }
-            break;
-
-          case 'pause-resume-recording':
-            if (!this.isRecording) return;
-            if (this.isPaused) {
-              await this.resumeRecording();
-            } else {
-              await this.pauseRecording();
-            }
-            break;
-
-          case 'take-screenshot':
-            // Always allow manual capture, even when paused
-            if (!this.isRecording) return;
-            await this.captureScreenshot({ type: 'hotkey', manual: true, allowWhenPaused: true });
-            break;
-        }
-      } catch (err) {
-        console.warn('Command handling failed:', command, err);
+        await chrome.tabs.sendMessage(tabId, { type: 'REC_START', sessionId });
+        console.log('[TestSnapper Background] Sent REC_START to content script');
+      } catch (e) {
+        console.warn('[TestSnapper Background] Failed to notify content script of recording start:', e);
       }
+    }
+  }
+
+  console.log('[TestSnapper Background] Session state created and saved:', session);
+}
+
+async function stopRecording({ sessionId }) {
+  await flushAllBatches(sessionId);
+  const s = sessionState.get(sessionId);
+  if (s) {
+    s.updated = Date.now();
+    await saveSession(sessionId, s);
+    await upsertSessionsIndex({
+      id: s.id,
+      name: s.name,
+      updated: s.updated,
+      stepCount: s.steps.length,
+      errorCount: (s.network || []).filter(n => (n.status >= 400)).length,
     });
-
   }
+  clearDebounce(sessionId);
+  pendingQueue.delete(sessionId);
+  recordingState.delete(sessionId);
 
-  // Add these helpers as class methods (outside init)
-  async getActiveTab() {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    return tab || null;
-  }
-
-
-  async initializeStorage() {
+  // Notify content script
+  const tabId = await getActiveTabId();
+  if (tabId) {
     try {
-      const result = await chrome.storage.local.get(['sessions', 'settings']);
-      if (!result.sessions) {
-        await chrome.storage.local.set({ sessions: [] });
-        console.log('Initialized empty sessions storage');
-      }
-      if (!result.settings) {
-        await chrome.storage.local.set({ settings: this.settings });
-        console.log('Initialized default settings');
-      } else {
-        this.settings = { ...this.settings, ...result.settings };
-      }
-    } catch (error) {
-      console.error('Failed to initialize storage:', error);
+      await chrome.tabs.sendMessage(tabId, { type: 'REC_STOP' });
+    } catch (e) {
+      console.warn('[TestSnapper Background] Failed to notify content script of recording stop:', e);
+    }
+  }
+}
+
+function pauseRecording(sessionId) {
+  const state = recordingState.get(sessionId);
+  if (state) state.paused = true;
+}
+
+function resumeRecording(sessionId) {
+  const state = recordingState.get(sessionId);
+  if (state) state.paused = false;
+}
+
+/////////////////////////
+// Step Ingestion Flow //
+/////////////////////////
+
+function enqueueStep(sessionId, step) {
+  const q = pendingQueue.get(sessionId) || [];
+  if (q.length >= MAX_QUEUE_LEN) return;
+  q.push({ ...step, id: step.id || uuid(), ts: step.ts || Date.now() });
+  pendingQueue.set(sessionId, q);
+  debounceFlush(sessionId);
+}
+
+function debounceFlush(sessionId) {
+  clearDebounce(sessionId);
+  const t = setTimeout(() => flushBatches(sessionId), BATCH_DEBOUNCE_MS);
+  batchTimers.set(sessionId, t);
+}
+
+function clearDebounce(sessionId) {
+  const t = batchTimers.get(sessionId);
+  if (t) clearTimeout(t);
+  batchTimers.delete(sessionId);
+}
+
+async function flushBatches(sessionId) {
+  const q = pendingQueue.get(sessionId);
+  if (!q || q.length === 0) return;
+
+  const batch = q.splice(0, BATCH_SIZE);
+  pendingQueue.set(sessionId, q);
+
+  const s = sessionState.get(sessionId);
+  if (!s) return;
+  const beforeLen = s.steps.length;
+  s.steps.push(...batch.map(b => ({ ...b, enriched: null })));
+  s.updated = Date.now();
+
+  if (s.steps.length - beforeLen >= SNAPSHOT_EVERY_N_STEPS || s.steps.length % SNAPSHOT_EVERY_N_STEPS === 0) {
+    await saveSession(sessionId, s);
+  }
+
+  // Enrichment logic
+  const toEnrich = [];
+  const cachedResults = [];
+  for (const step of batch) {
+    const key = hashKey(`${step.action || step.name}|${step.locatorNorm || step.locatorRaw}|${step.valueKind || ''}|${step.meta?.url || ''}`);
+    const hit = enrichCache.get(key);
+    if (hit) cachedResults.push({ id: step.id, enriched: hit });
+    else toEnrich.push({ ...step, _cacheKey: key });
+  }
+
+  if (cachedResults.length) {
+    applyEnriched(sessionId, cachedResults, true);
+  }
+
+  const settings = await getSettings();
+  if (settings.llmEnabled && (await llmAvailable())) {
+    if (toEnrich.length) {
+      const reqId = uuid();
+      pendingReqs.set(reqId, { sessionId, startedAt: performance.now(), steps: toEnrich });
+      chrome.runtime.sendMessage({ type: 'LLM_ENRICH_BATCH', reqId, steps: toEnrich })
+        .then(() => startBatchTimeout(reqId))
+        .catch(() => {
+          const fallback = toEnrich.map(t => ({ id: t.id, enriched: minimalizeStep(t) }));
+          applyEnriched(sessionId, fallback, false);
+          pendingReqs.delete(reqId);
+        });
+    }
+  } else {
+    if (toEnrich.length) {
+      const fallback = toEnrich.map(t => ({ id: t.id, enriched: minimalizeStep(t) }));
+      applyEnriched(sessionId, fallback, false);
     }
   }
 
-  async loadSettings() {
-    try {
-      const result = await chrome.storage.local.get(['settings']);
-      if (result.settings) {
-        this.settings = { ...this.settings, ...result.settings };
-        console.log('Settings loaded:', this.settings);
-      }
-    } catch (error) {
-      console.error('Failed to load settings:', error);
+  await updateTelemetry();
+}
+
+function startBatchTimeout(reqId) {
+  setTimeout(() => {
+    const rec = pendingReqs.get(reqId);
+    if (!rec) return;
+    const { sessionId, steps = [] } = rec;
+    const fallback = steps.map(t => ({ id: t.id, enriched: minimalizeStep(t) }));
+    applyEnriched(sessionId, fallback, false);
+    pendingReqs.delete(reqId);
+  }, BATCH_TIMEOUT_MS);
+}
+
+function applyEnriched(sessionId, results, fromCache) {
+  const s = sessionState.get(sessionId);
+  if (!s) return;
+  const byId = new Map(results.map(r => [r.id, r.enriched]));
+  for (const step of s.steps) {
+    if (byId.has(step.id)) {
+      step.enriched = sanitizeEnriched(byId.get(step.id));
     }
   }
-
-  // Auto cleanup old sessions (older than 2 days by default)
-  async cleanupOldSessions(cutoffTimeMs) {
-    try {
-      const result = await chrome.storage.local.get(['sessions']);
-      const sessions = result.sessions || [];
-      const cutoff = typeof cutoffTimeMs === 'number'
-        ? cutoffTimeMs
-        : (Date.now() - (2 * 24 * 60 * 60 * 1000)); // 2 days
-
-      const validSessions = sessions.filter(session => {
-        return session.startTime && session.startTime > cutoff;
-      });
-
-      if (validSessions.length !== sessions.length) {
-        await chrome.storage.local.set({ sessions: validSessions });
-        console.log(`Cleaned up ${sessions.length - validSessions.length} old sessions`);
-      }
-      return { deletedCount: sessions.length - validSessions.length };
-    } catch (error) {
-      console.error('Failed to cleanup old sessions:', error);
-      return { deletedCount: 0, error: error.message };
+  if (!fromCache) {
+    for (const r of results) {
+      const orig = s.steps.find(x => x.id === r.id);
+      if (!orig) continue;
+      const key = hashKey(`${orig.action || orig.name}|${orig.locatorNorm || orig.locatorRaw}|${orig.valueKind || ''}|${orig.meta?.url || ''}`);
+      enrichCache.set(key, stepToSentence(orig));
     }
   }
+}
 
-  async handleMessage(message, sender, sendResponse) {
+function sanitizeEnriched(txt) {
+  if (!txt || typeof txt !== 'string') return '';
+  let s = txt.replace(/\s+/g, ' ').trim();
+  if (s.length > 160) s = s.slice(0, 157) + '...';
+  return s;
+}
+
+function stepToSentence(step) {
+  return step.enriched || minimalizeStep(step);
+}
+
+/////////////////////////////
+// Network & HAR Functions //
+/////////////////////////////
+
+function addNetworkEvent(sessionId, net) {
+  const s = sessionState.get(sessionId);
+  if (!s) return;
+  s.network.push({
+    ...net,
+    id: net.id || uuid(),
+    ts: net.ts || Date.now(),
+  });
+}
+
+function buildHar(session) {
+  return {
+    log: {
+      version: '1.2',
+      creator: { name: 'TestSnapper', version: '1.1' },
+      entries: (session.network || []).map(n => ({
+        startedDateTime: new Date(n.ts || Date.now()).toISOString(),
+        time: n.time || 0,
+        request: {
+          method: n.method || 'GET',
+          url: n.url || '',
+          httpVersion: 'HTTP/1.1',
+          headers: redactHeaders(n.requestHeaders || []),
+          queryString: [],
+          headersSize: -1,
+          bodySize: (n.requestBody || '').length || -1,
+        },
+        response: {
+          status: n.status || 0,
+          statusText: n.statusText || '',
+          httpVersion: 'HTTP/1.1',
+          headers: redactHeaders(n.responseHeaders || []),
+          content: { size: (n.responseBody || '').length || 0, mimeType: n.mimeType || '' },
+          redirectURL: '',
+          headersSize: -1,
+          bodySize: (n.responseBody || '').length || -1,
+        },
+        cache: {},
+        timings: { send: 0, wait: n.wait || 0, receive: n.receive || 0 },
+        pageref: session.name || `Session ${session.id}`,
+      })),
+    },
+  };
+}
+
+function redactHeaders(arr) {
+  const SENSITIVE = /(authorization|token|secret|api[-_]?key|cookie|set-cookie)/i;
+  return (arr || []).map(h => ({
+    name: h.name,
+    value: SENSITIVE.test(h.name) ? '***redacted***' : ('' + h.value).slice(0, 200),
+  }));
+}
+
+async function downloadJson(filename, obj) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  await chrome.downloads.download({ url, filename, saveAs: true });
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+async function downloadTxt(filename, text) {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  await chrome.downloads.download({ url, filename, saveAs: true });
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/////////////////////////
+// Export View Support //
+/////////////////////////
+
+function toTxt(session) {
+  const lines = [
+    `Test Case: ${session.name}`,
+    `Date: ${nowIso()}`,
+    `Browser: ${session.meta?.browser || 'Chrome'}, OS: ${session.meta?.os || 'Unknown'}`,
+    `Steps:`,
+    ...session.steps.map((s, i) => `${i + 1}. ${stepToSentence(s)}`),
+    ``,
+    `Failed Network Calls:`,
+    ...(session.network || [])
+      .filter(n => (n.status >= 400))
+      .map(n => `- ${n.method || 'GET'} ${n.url} [${n.status} ${n.statusText || ''}]`),
+  ];
+  return lines.join('\n');
+}
+
+//////////////////////
+// Telemetry Update //
+//////////////////////
+
+async function updateTelemetry() {
+  let stepsTotal = 0;
+  let stepsEnriched = 0;
+  let queueLen = 0;
+  for (const s of sessionState.values()) {
+    stepsTotal += s.steps.length;
+    stepsEnriched += s.steps.filter(x => !!x.enriched).length;
+  }
+  for (const q of pendingQueue.values()) queueLen += q.length;
+
+  const avgLatencyMs = computeAvgLatency();
+  await setTelemetry({ stepsTotal, stepsEnriched, avgLatencyMs, queueLen });
+}
+
+function computeAvgLatency() {
+  let total = 0, count = 0;
+  for (const r of pendingReqs.values()) { total += (performance.now() - r.startedAt); count++; }
+  return count ? Math.round(total / count) : 0;
+}
+
+function sendSafe(sendResponse, payload) {
+  try { sendResponse?.(payload); } catch { }
+}
+
+async function flushAllBatches(sessionId) {
+  // Drain the queue completely
+  while (true) {
+    const q = pendingQueue.get(sessionId);
+    if (!q || q.length === 0) break;
+    await flushBatches(sessionId); // existing function
+  }
+}
+
+/////////////////////////////////////////
+// Runtime Messages (Fixed Router)     //
+/////////////////////////////////////////
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // console.log('[TestSnapper Background] Received message:', msg?.type, msg);
+  
+  (async () => {
     try {
-      switch (message.type) {
-        case 'START_RECORDING': {
-          const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-          const activeTab = tabs[0];
-          if (!activeTab) throw new Error('No active tab found');
-          const sessionId = await this.startRecording(activeTab);
-          sendResponse({ success: true, sessionId });
+      const type = msg?.type;
+      // console.log('[TestSnapper Background] Processing message:', type, msg);
+
+      switch (type) {
+        case 'REC_START': {
+          const sid = coalesceSessionId(msg);
+          console.log('[TestSnapper Background] Starting recording for session:', sid);
+          
+          await startRecording({ sessionId: sid, llm: msg.llm });
+          
+          console.log('[TestSnapper Background] Sending success response for REC_START');
+          sendSafe(sendResponse, { ok: true });
           break;
         }
 
-        case 'PAUSE_RECORDING': {
-          const sessionId = await this.pauseRecording();
-          sendResponse({ success: true, sessionId });
+        case 'REC_STOP': {
+          const sid = coalesceSessionId(msg);
+          console.log('[TestSnapper Background] Stopping recording for session:', sid);
+          
+          await stopRecording({ sessionId: sid });
+          sendSafe(sendResponse, { ok: true });
           break;
         }
 
-        case 'RESUME_RECORDING': {
-          const sessionId = await this.resumeRecording();
-          sendResponse({ success: true, sessionId });
-          break;
-        }
-
-        case 'STOP_RECORDING': {
-          const sessionId = await this.stopRecording();
-          sendResponse({ success: true, sessionId });
-          break;
-        }
-
-        case 'GET_RECORDING_STATUS': {
-          const status = {
-            isRecording: this.isRecording,
-            isPaused: this.isPaused,
-            currentSession: this.currentSession?.id || null,
-            startTime: this.currentSession?.startTime,
-            totalPausedTime: this.totalPausedTime
-          };
-          sendResponse(status);
-          break;
-        }
-
-        case 'RECORD_INTERACTION': {
-          if (this.isRecording && !this.isPaused) {
-            const tab = sender.tab || { id: this.currentTabId, url: this.currentSession?.url || '' };
-            await this.recordInteraction(message.data, tab);
+        case 'REC_PAUSE': {
+          const sid = coalesceSessionId(msg);
+          console.log('[TestSnapper Background] Pausing recording for session:', sid);
+          
+          try { 
+            const tabId = await getActiveTabId(); 
+            if (tabId) await chrome.tabs.sendMessage(tabId, { type: 'REC_PAUSE' }); 
+          } catch (e) {
+            console.warn('[TestSnapper Background] Failed to notify content script:', e);
           }
-          sendResponse({ success: true });
+          
+          pauseRecording(sid);
+          sendSafe(sendResponse, { ok: true });
+          break;
+        }
+
+        case 'REC_RESUME': {
+          const sid = coalesceSessionId(msg);
+          console.log('[TestSnapper Background] Resuming recording for session:', sid);
+          
+          try { 
+            const tabId = await getActiveTabId(); 
+            if (tabId) await chrome.tabs.sendMessage(tabId, { type: 'REC_RESUME' }); 
+          } catch (e) {
+            console.warn('[TestSnapper Background] Failed to notify content script:', e);
+          }
+          
+          resumeRecording(sid);
+          sendSafe(sendResponse, { ok: true });
+          break;
+        }
+
+        case 'REC_EVENT': {
+          const sid = coalesceSessionId(msg);
+          console.log('[TestSnapper Background] Received step:', sid, msg.step);
+
+          if (!sessionState.has(sid)) {
+            console.error('[TestSnapper Background] Session not found:', sid);
+            sendSafe(sendResponse, { ok: false, error: 'SESSION_NOT_FOUND' });
+          } else {
+            enqueueStep(sid, msg.step);
+            sendSafe(sendResponse, { ok: true });
+          }
           break;
         }
 
         case 'CAPTURE_SCREENSHOT': {
-          // Allow screenshots during pause only if manual
-          if (!this.isRecording) {
-            sendResponse({ success: false, reason: 'Not recording' });
-            break;
+          const sid = coalesceSessionId(msg);
+          const res = await captureAndStoreScreenshot(sid).catch((e) => ({ ok: false, error: String(e?.message || e) }));
+          sendSafe(sendResponse, res);
+          break;
+        }
+
+        case 'NETWORK_EVENT': {
+          addNetworkEvent(coalesceSessionId(msg), msg.net); 
+          sendSafe(sendResponse, { ok: true });
+          break;
+        }
+
+        case 'LLM_INIT': {
+          await ensureLLMHost();
+          sendSafe(sendResponse, { ok: true });
+          break;
+        }
+
+        case 'GET_STATUS': {
+          await updateTelemetry();
+          const { [STORAGE_KEYS.TELEMETRY]: tel } = await chrome.storage.local.get(STORAGE_KEYS.TELEMETRY);
+          
+          let activeSessionId = null;
+          let isRecording = false;
+          let isPaused = false;
+          
+          for (const [sid, state] of recordingState.entries()) {
+            if (state.recording) {
+              activeSessionId = sid;
+              isRecording = true;
+              isPaused = state.paused || false;
+              break;
+            }
           }
-          const isManualCapture = message.data?.manual === true;
-          if (isManualCapture || (!this.isPaused && this.settings.autoScreenshot)) {
-            await this.captureScreenshot(message.data);
-            sendResponse({ success: true });
-          } else if (this.isPaused && !isManualCapture) {
-            sendResponse({ success: false, reason: 'Recording is paused' });
+
+          sendSafe(sendResponse, {
+            ok: true,
+            llm: { ready: llmReady, mode: llmMode },
+            telemetry: tel || {},
+            recording: isRecording,
+            paused: isPaused,
+            sessionId: activeSessionId,
+          });
+          break;
+        }
+
+        case 'EXPORT_OPEN': {
+          const sid = coalesceSessionId(msg);
+          await chrome.tabs.create({ url: `assets/html/export_view.html?session=${encodeURIComponent(sid)}` });
+          sendSafe(sendResponse, { ok: true });
+          break;
+        }
+
+        case 'EXPORT_LOAD': {
+          const sid = coalesceSessionId(msg);
+          const session = await loadSession(sid);
+          if (!session) {
+            sendSafe(sendResponse, { ok: false, error: 'SESSION_NOT_FOUND' });
           } else {
-            sendResponse({ success: false, reason: 'Auto-screenshot disabled' });
+            sendSafe(sendResponse, { ok: true, session });
           }
           break;
         }
 
-        case 'GET_SESSIONS': {
-          const sessions = await this.getSessions();
-          sendResponse({ sessions });
+        case 'EXPORT_SAVE': {
+          const sid = coalesceSessionId(msg);
+          const session = sessionState.get(sid) || await loadSession(sid);
+          if (!session) {
+            sendSafe(sendResponse, { ok: false, error: 'SESSION_NOT_FOUND' });
+          } else {
+            if (msg.steps && Array.isArray(msg.steps)) {
+              const updates = new Map(msg.steps.map(s => [s.id, s.enriched]));
+              session.steps.forEach(step => {
+                if (updates.has(step.id)) {
+                  step.enriched = updates.get(step.id);
+                }
+              });
+            }
+            
+            session.updated = Date.now();
+            await saveSession(sid, session);
+            if (sessionState.has(sid)) {
+              sessionState.set(sid, session);
+            }
+            
+            // Update sessions index
+            await upsertSessionsIndex({
+              id: session.id,
+              name: session.name,
+              updated: session.updated,
+              stepCount: session.steps.length,
+              errorCount: (session.network || []).filter(n => n.status >= 400).length
+            });
+            
+            sendSafe(sendResponse, { ok: true });
+          }
           break;
         }
 
-        case 'DELETE_SESSIONS': {
-          // supports message.sessionIds (old) or message.ids (new)
-          await this.deleteSessions(message.sessionIds || message.ids || []);
-          sendResponse({ success: true });
+        case 'EXPORT_TXT': {
+          const sid = coalesceSessionId(msg);
+          const session = sessionState.get(sid) || await loadSession(sid);
+          if (!session) {
+            sendSafe(sendResponse, { ok: false, error: 'SESSION_NOT_FOUND' });
+          } else {
+            const txt = toTxt(session);
+            const filename = `testsnapper_${session.name.replace(/[^a-zA-Z0-9]/g, '_')}.txt`;
+            await downloadTxt(filename, txt);
+            sendSafe(sendResponse, { ok: true });
+          }
           break;
         }
 
-        case 'CLEAR_ALL_SESSIONS': {
-          await this.clearAllSessions();
-          sendResponse({ success: true });
+        case 'EXPORT_HAR': {
+          const sid = coalesceSessionId(msg);
+          const session = sessionState.get(sid) || await loadSession(sid);
+          if (!session) {
+            sendSafe(sendResponse, { ok: false, error: 'SESSION_NOT_FOUND' });
+          } else {
+            const har = buildHar(session);
+            const filename = `testsnapper_${session.name.replace(/[^a-zA-Z0-9]/g, '_')}.har`;
+            await downloadJson(filename, har);
+            sendSafe(sendResponse, { ok: true });
+          }
+          break;
+        }
+
+        case 'SET_SETTINGS': {
+          const cur = await getSettings();
+          const newSettings = { ...cur, ...(msg.settings || {}) };
+          await setSettings(newSettings);
+          
+          // If LLM was just enabled, ensure host is ready
+          if (newSettings.llmEnabled && !cur.llmEnabled) {
+            try {
+              await ensureLLMHost();
+            } catch (e) {
+              console.warn('[TestSnapper Background] Failed to ensure LLM host:', e);
+            }
+          }
+          
+          sendSafe(sendResponse, { ok: true });
           break;
         }
 
         case 'GET_SETTINGS': {
-          sendResponse({ settings: this.settings });
+          const settings = await getSettings();
+          sendSafe(sendResponse, { ok: true, settings });
           break;
         }
 
-        case 'UPDATE_SETTINGS': {
-          await this.updateSettings(message.settings);
-          sendResponse({ success: true });
-          break;
-        }
-
-        case 'GET_LAST_MEANINGFUL_INTERACTION': {
-          const lastInteraction = this.getLastMeaningfulInteraction();
-          sendResponse({ interaction: lastInteraction });
-          break;
-        }
-
-        case 'EXPORT_SESSION': {
-          const exportData = await this.exportSession(message.sessionId, message.format || 'txt');
-          if (exportData) {
-            sendResponse({ exportData });
-          } else {
-            sendResponse({ success: false, error: 'Session not found' });
-          }
-          break;
-        }
-
-        // [11] CLEANUP_OLD_SESSIONS support from content.js
-        case 'CLEANUP_OLD_SESSIONS': {
-          const cutoffTime = typeof message.cutoffTime === 'number' ? message.cutoffTime : undefined;
-          const { deletedCount, error } = await this.cleanupOldSessions(cutoffTime);
-          sendResponse({ success: !error, deletedCount, error });
-          break;
-        }
-
-        default:
-          console.warn('Unknown message type:', message.type);
-          sendResponse({ success: false, error: 'Unknown message type' });
-      }
-    } catch (error) {
-      console.error('Error handling message:', message?.type, error);
-      try { sendResponse({ success: false, error: error.message }); } catch { }
-    }
-    return true;
-  }
-
-  // [13] Robust settings update: try sendMessage; if it fails, inject content.js and retry
-  async updateSettings(newSettings) {
-    try {
-      this.settings = { ...this.settings, ...newSettings };
-      await chrome.storage.local.set({ settings: this.settings });
-
-      if (this.currentTabId) {
-        try {
-          await chrome.tabs.sendMessage(this.currentTabId, {
-            type: 'UPDATE_SETTINGS',
-            settings: this.settings
-          });
-        } catch (err) {
-          console.log('Content script likely not injected; injecting and retrying UPDATE_SETTINGS...');
+        case 'LLM_READY': {
+          llmReady = true;
+          llmMode = msg.mode || 'unknown';
+          console.log('[TestSnapper Background] LLM ready:', llmMode);
+          
+          // Forward to popup/extension pages
           try {
-            await chrome.scripting.executeScript({
-              target: { tabId: this.currentTabId },
-              files: [this.CONTENT_SCRIPT_PATH]
-            });
-            await new Promise(r => setTimeout(r, 100));
-            await chrome.tabs.sendMessage(this.currentTabId, {
-              type: 'UPDATE_SETTINGS',
-              settings: this.settings
-            });
-          } catch (injectionErr) {
-            console.warn('Failed to inject content script for UPDATE_SETTINGS:', injectionErr?.message);
+            chrome.runtime.sendMessage(msg).catch(() => {});
+          } catch (e) {
+            console.warn('[TestSnapper Background] Failed to forward LLM_READY:', e);
           }
+          
+          sendSafe(sendResponse, { ok: true });
+          break;
+        }
+
+        case 'LLM_PROGRESS': {
+          console.log('[TestSnapper Background] LLM progress:', msg.pct);
+          
+          // Forward to popup/extension pages  
+          try {
+            chrome.runtime.sendMessage(msg).catch(() => {});
+          } catch (e) {
+            console.warn('[TestSnapper Background] Failed to forward LLM_PROGRESS:', e);
+          }
+          
+          sendSafe(sendResponse, { ok: true });
+          break;
+        }
+
+        case 'LLM_ENRICH_RESULT': {
+          const { reqId, results } = msg;
+          const req = pendingReqs.get(reqId);
+          if (!req) {
+            console.warn('[TestSnapper Background] Unknown reqId:', reqId);
+            sendSafe(sendResponse, { ok: false, error: 'UNKNOWN_REQ_ID' });
+          } else {
+            console.log('[TestSnapper Background] Applying enriched results:', results.length);
+            pendingReqs.delete(reqId);
+            applyEnriched(req.sessionId, results, false);
+            await updateTelemetry();
+            sendSafe(sendResponse, { ok: true });
+          }
+          break;
+        }
+
+        default: {
+          console.error('[TestSnapper Background] Unknown message type:', msg?.type);
+          sendSafe(sendResponse, { ok: false, error: 'UNKNOWN_MESSAGE', type: msg?.type });
+          break;
         }
       }
-
-      console.log('Settings updated:', this.settings);
-    } catch (error) {
-      console.error('Failed to update settings:', error);
-      throw error;
+      
+    } catch (err) {
+      console.error('[TestSnapper Background] Message handler error:', err);
+      chrome.runtime.sendMessage({ type: 'ERROR', code: 'BG_ERROR', detail: String(err?.message || err) }).catch(() => { });
+      sendSafe(sendResponse, { ok: false, error: 'EXCEPTION', detail: String(err?.message || err) });
     }
-  }
+  })();
+  return true; // keep message channel open for async responses
+});
 
-  // [14] Richer last-meaningful-interaction context (include value/text snippet)
-  getLastMeaningfulInteraction() {
-    if (!this.currentSession || !this.currentSession.interactions) {
-      return null;
+/////////////////////////////
+// Install/Startup Hooks   //
+/////////////////////////////
+
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('TestSnapper Background Service Worker initialized');
+  chrome.storage.local.get([STORAGE_KEYS.SETTINGS]).then(res => {
+    if (!res[STORAGE_KEYS.SETTINGS]) {
+      setSettings({ llmEnabled: true, redactionPatterns: [] });
     }
-    const meaningfulTypes = ['click', 'input', 'form_submit', 'url_change'];
-    const interactions = this.currentSession.interactions;
+  });
+});
 
-    for (let i = interactions.length - 1; i >= 0; i--) {
-      const it = interactions[i];
-      if (meaningfulTypes.includes(it.type)) {
-        const snippet = (it.value || it.text || '');
-        const safeSnippet = typeof snippet === 'string'
-          ? (snippet.length > 40 ? snippet.slice(0, 40) + '…' : snippet)
-          : '';
-
-        return {
-          step: i + 1,
-          type: it.type,
-          selector: it.selector,
-          value: it.value ? safeSnippet : undefined,
-          text: (!it.value && safeSnippet) ? safeSnippet : undefined,
-          timestamp: it.timestamp,
-          relativeTime: it.relativeTime
-        };
-      }
-    }
-
-    return null;
-  }
-
-  async startRecording(tab) {
-    try {
-      console.log('Starting recording for tab:', tab.id, tab.url);
-      if (this.isRecording) {
-        console.log('Already recording, stopping current session first');
-        await this.stopRecording();
-      }
-
-      this.isRecording = true;
-      this.isPaused = false;
-      this.pauseStartTime = null;
-      this.totalPausedTime = 0;
-      this.currentTabId = tab.id;
-      this.screenshotQueue = [];
-
-      this.currentSession = {
-        id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        name: `Session ${new Date().toLocaleString()}`,
-        url: tab.url,
-        startTime: Date.now(),
-        interactions: [],
-        networkCalls: [],
-        screenshots: [],
-        pauseEvents: [],
-        apiFailures: [], // Track API failures separately
-        metadata: {
-          browser: 'Chrome',
-          version: navigator.userAgent,
-          os: navigator.platform,
-          date: new Date().toISOString(),
-          tabId: tab.id,
-          settings: { ...this.settings } // Store settings used during recording
-        }
-      };
-
-      this.tabNetworkData.set(tab.id, { requests: new Map(), failures: [] });
-
-      try {
-        await chrome.tabs.sendMessage(tab.id, { type: 'START_UI_RECORDING' });
-        console.log('Content script already present, started recording');
-      } catch (error) {
-        console.log('Content script not present, injecting...');
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          files: [this.CONTENT_SCRIPT_PATH]
-        });
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await chrome.tabs.sendMessage(tab.id, { type: 'START_UI_RECORDING' });
-        console.log('Content script injected and recording started');
-      }
-
-      // Take initial screenshot only if auto-screenshot is enabled
-      if (this.settings.autoScreenshot) {
-        await this.captureScreenshot({ type: 'session_start' });
-      }
-
-      return this.currentSession.id;
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      this.isRecording = false;
-      this.isPaused = false;
-      this.currentSession = null;
-      this.currentTabId = null;
-      throw error;
-    }
-  }
-
-  async pauseRecording() {
-    if (!this.isRecording || !this.currentSession) {
-      return null;
-    }
-    if (this.isPaused) {
-      return this.currentSession.id;
-    }
-
-    this.isPaused = true;
-    this.pauseStartTime = Date.now();
-
-    const pauseEvent = {
-      type: 'pause',
-      timestamp: Date.now(),
-      relativeTime: Date.now() - this.currentSession.startTime
-    };
-    this.currentSession.pauseEvents.push(pauseEvent);
-
-    // Take screenshot when paused only if auto-screenshot is enabled
-    if (this.settings.autoScreenshot) {
-      await this.captureScreenshot({ type: 'session_pause', timestamp: pauseEvent.timestamp });
-    }
-
-    if (this.currentTabId) {
-      try {
-        await chrome.tabs.sendMessage(this.currentTabId, { type: 'PAUSE_UI_RECORDING' });
-      } catch { }
-    }
-
-    return this.currentSession.id;
-  }
-
-  async resumeRecording() {
-    if (!this.isRecording || !this.currentSession) {
-      return null;
-    }
-    if (!this.isPaused) {
-      return this.currentSession.id;
-    }
-
-    if (this.pauseStartTime) {
-      this.totalPausedTime += Date.now() - this.pauseStartTime;
-      this.pauseStartTime = null;
-    }
-
-    this.isPaused = false;
-
-    const resumeEvent = {
-      type: 'resume',
-      timestamp: Date.now(),
-      relativeTime: Date.now() - this.currentSession.startTime,
-      pausedDuration: this.totalPausedTime
-    };
-    this.currentSession.pauseEvents.push(resumeEvent);
-
-    // Take screenshot when resumed only if auto-screenshot is enabled
-    if (this.settings.autoScreenshot) {
-      await this.captureScreenshot({ type: 'session_resume', timestamp: resumeEvent.timestamp });
-    }
-
-    if (this.currentTabId) {
-      try {
-        await chrome.tabs.sendMessage(this.currentTabId, { type: 'RESUME_UI_RECORDING' });
-      } catch { }
-    }
-
-    return this.currentSession.id;
-  }
-
-  async stopRecording() {
-    if (!this.isRecording || !this.currentSession) {
-      return null;
-    }
-
-    if (this.isPaused && this.pauseStartTime) {
-      this.totalPausedTime += Date.now() - this.pauseStartTime;
-    }
-
-    // Take final screenshot only if auto-screenshot is enabled
-    if (this.settings.autoScreenshot) {
-      await this.captureScreenshot({ type: 'session_end' });
-    }
-
-    if (this.currentTabId) {
-      try {
-        await chrome.tabs.sendMessage(this.currentTabId, { type: 'STOP_UI_RECORDING' });
-      } catch { }
-    }
-
-    this.isRecording = false;
-    this.isPaused = false;
-    this.currentSession.endTime = Date.now();
-    this.currentSession.duration = this.currentSession.endTime - this.currentSession.startTime;
-    this.currentSession.activeDuration = this.currentSession.duration - this.totalPausedTime;
-
-    try {
-      await this.saveSession(this.currentSession);
-      console.log('Session saved successfully');
-    } catch (error) {
-      console.error('Failed to save session:', error);
-      throw error;
-    }
-
-    const sessionId = this.currentSession.id;
-    this.currentSession = null;
-    this.currentTabId = null;
-    this.pauseStartTime = null;
-    this.totalPausedTime = 0;
-    this.screenshotQueue = [];
-    return sessionId;
-  }
-
-  // [12] Effective screenshot quality:
-  // - PNG ignores "quality", so use PNG for high, JPEG for medium/low to honor quality value
-  async captureScreenshot(context = {}) {
-    if (!this.isRecording || !this.currentTabId) return null;
-
-    const isManualCapture = context.manual === true;
-    if (!isManualCapture && !this.settings.autoScreenshot) {
-      console.log('Auto-screenshot disabled, skipping automatic screenshot');
-      return null;
-    }
-    if (!isManualCapture && this.isPaused) {
-      console.log('Recording paused, skipping automatic screenshot');
-      return null;
-    }
-
-    try {
-      const wantHigh = (this.settings.screenshotQuality === 'high');
-      const format = wantHigh ? 'png' : 'jpeg';
-      const quality =
-        this.settings.screenshotQuality === 'low' ? 50 :
-          this.settings.screenshotQuality === 'medium' ? 80 : 100;
-
-      const screenshot = await chrome.tabs.captureVisibleTab(null, {
-        format,
-        quality
-      });
-
-      const screenshotData = {
-        id: `screenshot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        timestamp: Date.now(),
-        relativeTime: Date.now() - this.currentSession.startTime,
-        dataUrl: screenshot,
-        context: context,
-        url: this.currentSession?.url || '',
-        manual: isManualCapture
-      };
-
-      if (this.currentSession) {
-        this.currentSession.screenshots.push(screenshotData);
-        console.log('Screenshot captured:', context.type || (isManualCapture ? 'manual' : 'auto'));
-      }
-
-      return screenshotData;
-    } catch (error) {
-      console.error('Error capturing screenshot:', error);
-      return null;
-    }
-  }
-
-  async recordInteraction(interaction, tab) {
-    if (!this.isRecording || !this.currentSession || this.isPaused) {
-      return;
-    }
-
-    const recordedInteraction = {
-      ...interaction,
-      id: interaction.id || `int_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`, // ensure id
-      timestamp: Date.now(),
-      relativeTime: Date.now() - this.currentSession.startTime,
-      url: tab.url
-    };
-
-    this.currentSession.interactions.push(recordedInteraction);
-  }
-
-  // === Network Tracking ===
-
-  trackNetworkRequest(details) {
-    if (!this.isRecording || this.isPaused || details.tabId !== this.currentTabId) return;
-    const tabData = this.tabNetworkData.get(details.tabId);
-    if (!tabData) return;
-    tabData.requests.set(details.requestId, {
-      url: details.url,
-      method: details.method,
-      timestamp: details.timeStamp,
-      requestBody: details.requestBody
-    });
-  }
-
-  // [15] Race-proof: if request missing (e.g., cache), synthesize a minimal request so response is still tracked
-  trackNetworkResponse(details) {
-    if (!this.isRecording || this.isPaused || details.tabId !== this.currentTabId) return;
-    const tabData = this.tabNetworkData.get(details.tabId);
-    if (!tabData) return;
-    let request = tabData.requests.get(details.requestId);
-    if (!request) {
-      request = {
-        url: details.url,
-        method: 'GET',
-        timestamp: details.timeStamp,
-        requestBody: undefined,
-        synthesized: true
-      };
-      tabData.requests.set(details.requestId, request);
-    }
-
-    if (details.statusCode >= 400) {
-      const failedCall = {
-        ...request,
-        statusCode: details.statusCode,
-        statusLine: details.statusLine,
-        responseHeaders: details.responseHeaders,
-        completedTime: details.timeStamp,
-        relatedInteractionId: this.getLastInteractionId(),
-        afterStep: this.getLastMeaningfulInteraction(),
-        timestamp: Date.now()
-      };
-
-      tabData.failures.push(failedCall);
-
-      if (this.currentSession) {
-        this.currentSession.networkCalls.push(failedCall);
-        // [16] Always add to apiFailures with relativeTime + timestamp
-        this.currentSession.apiFailures.push({
-          ...failedCall,
-          type: 'api_failure',
-          relativeTime: Date.now() - this.currentSession.startTime
-        });
-      }
-    }
-  }
-
-  trackNetworkError(details) {
-    if (!this.isRecording || this.isPaused || details.tabId !== this.currentTabId) return;
-    const tabData = this.tabNetworkData.get(details.tabId);
-    if (!tabData) return;
-    let request = tabData.requests.get(details.requestId);
-    if (!request) {
-      request = {
-        url: details.url,
-        method: 'GET',
-        timestamp: details.timeStamp,
-        requestBody: undefined,
-        synthesized: true
-      };
-      tabData.requests.set(details.requestId, request);
-    }
-
-    const errorCall = {
-      ...request,
-      error: details.error,
-      completedTime: details.timeStamp,
-      relatedInteractionId: this.getLastInteractionId(),
-      afterStep: this.getLastMeaningfulInteraction(),
-      timestamp: Date.now()
-    };
-
-    tabData.failures.push(errorCall);
-
-    if (this.currentSession) {
-      this.currentSession.networkCalls.push(errorCall);
-      // [16] Always add to apiFailures
-      this.currentSession.apiFailures.push({
-        ...errorCall,
-        type: 'network_error',
-        relativeTime: Date.now() - this.currentSession.startTime
-      });
-    }
-  }
-
-  getLastInteractionId() {
-    if (!this.currentSession || !this.currentSession.interactions?.length) return null;
-    return this.currentSession.interactions[this.currentSession.interactions.length - 1].id || null;
-  }
-
-  // === Storage helpers ===
-  async saveSession(session) {
-    const result = await chrome.storage.local.get(['sessions']);
-    const sessions = result.sessions || [];
-    sessions.push(session);
-    await chrome.storage.local.set({ sessions });
-  }
-
-  async getSessions() {
-    const result = await chrome.storage.local.get(['sessions']);
-    return result.sessions || [];
-  }
-
-  async deleteSessions(sessionIds) {
-    try {
-      if (!Array.isArray(sessionIds) || sessionIds.length === 0) return;
-      const result = await chrome.storage.local.get(['sessions']);
-      const sessions = result.sessions || [];
-      const filtered = sessions.filter(s => !sessionIds.includes(s.id));
-      await chrome.storage.local.set({ sessions: filtered });
-    } catch (error) {
-      console.error('Error deleting sessions:', error);
-      throw error;
-    }
-  }
-
-  async clearAllSessions() {
-    await chrome.storage.local.set({ sessions: [] });
-  }
-
-  // === Export helpers (kept compatible with your existing popup.js) ===
-  async exportSession(sessionId, format = 'txt') {
-    try {
-      const sessions = await this.getSessions();
-      const session = sessions.find(s => s.id === sessionId);
-      if (!session) return null;
-
-      switch (format.toLowerCase()) {
-        case 'txt': return this.exportAsTxt(session);
-        case 'csv': return this.exportAsCsv?.(session);
-        case 'docx': return this.exportAsDocx?.(session);
-        case 'pdf': return this.exportAsPdf?.(session);
-        default: throw new Error('Unsupported export format: ' + format);
-      }
-    } catch (e) {
-      console.error('Export error:', e);
-      return null;
-    }
-  }
-
-  // Minimal TXT export to keep background self-contained (your richer impl can remain)
-  exportAsTxt(session) {
-    let txt = `TestSnapper Session: ${session.name}\nURL: ${session.url}\nStart: ${new Date(session.startTime).toLocaleString()}\n`;
-    txt += `Duration: ${Math.round((session.duration || 0) / 1000)}s (active ${Math.round((session.activeDuration || 0) / 1000)}s)\n`;
-    txt += `Interactions: ${session.interactions?.length || 0}, Screenshots: ${session.screenshots?.length || 0}, API Failures: ${session.apiFailures?.length || 0}\n\n`;
-    (session.interactions || []).forEach((i, idx) => {
-      txt += `${idx + 1}. [${Math.round((i.relativeTime || 0) / 1000)}s] ${i.type.toUpperCase()} ${i.selector ? `"${i.selector}"` : ''}\n`;
-    });
-    return { txtContent: txt, session, filename: `${session.name.replace(/[^a-z0-9]/gi, '_')}.txt`, mimeType: 'text/plain' };
-  }
-}
-
-console.log('Initializing TestSnapper background service...');
-new TestSnapperBackground();
+// Tidy up tab host on suspend (offscreen is auto-managed by Chrome)
+chrome.runtime.onSuspend?.addListener(async () => {
+  for (const t of batchTimers.values()) clearTimeout(t);
+  batchTimers.clear();
+  
+  // Clear pending requests to avoid memory leaks
+  pendingReqs.clear();
+  
+  console.log('[TestSnapper Background] Service worker suspending, cleaned up timers');
+});

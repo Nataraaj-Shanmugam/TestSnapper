@@ -1,189 +1,269 @@
-// Enhanced Popup script for TestSnapper extension with bulk session management and auto-clear
+// popup.js — FINAL (bulk buttons fixed + export selected + per-session export/delete +
+// style modes + pause-safe controls + visible labels + duplicate “Select All” guard)
 
+/* ==============================================
+   Constants & Helpers
+================================================= */
+const STYLE_LIGHT = 'light';
+const STYLE_MODERN = 'modern';
+
+function escapeHTML(str) {
+  if (!str) return '';
+  return str.replace(/[&<>'"]/g, (t) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[t]||t));
+}
+function formatTimestamp(ts) { return ts ? new Date(ts).toLocaleString() : ''; }
+
+const LIGHT_CSS = `
+body{font-family:Arial,sans-serif;font-size:14px;margin:0;padding:0;background:#fff;color:#333}
+.header{padding:8px 12px;border-bottom:1px solid #ddd;font-weight:bold}
+.nav-btn{background:none;border:none;padding:6px 12px;cursor:pointer;transition:background-color .2s}
+.nav-btn:hover{background:rgba(0,0,0,.05)}
+.nav-btn.active{border-bottom:2px solid #3b82f6;font-weight:bold}
+.session-item{padding:8px;border-bottom:1px solid #eee}
+.session-item:hover{background:rgba(0,0,0,.02)}
+.session-timeline{margin-top:6px}
+.timeline-toggle{color:#3b82f6;cursor:pointer}
+.timeline-toggle:hover{text-decoration:underline}
+.selected{outline:2px solid #2563eb20;border-radius:6px}
+.btn-small{padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer}
+.btn-primary{border-color:#2563eb}
+.btn-danger{border-color:#ef4444}
+.btn-export{border-color:#10b981}
+.hidden{display:none}
+`;
+
+const MODERN_CSS = `
+body{font-family:"Segoe UI",Tahoma,sans-serif;font-size:14px;margin:0;padding:0;background:var(--bg,#f8f9fa);color:var(--fg,#222)}
+.header{padding:12px 16px;border-bottom:1px solid #ccc;font-weight:bold;background:var(--header,#fff)}
+.nav-btn{background:none;border:none;padding:10px 14px;cursor:pointer;font-size:14px;transition:background-color .25s,color .25s;border-radius:6px}
+.nav-btn:hover{background:rgba(59,130,246,.1);color:#2563eb}
+.nav-btn.active{background:#2563eb;color:#fff}
+.session-item{background:var(--card,#fff);margin:8px 12px;padding:10px 14px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);transition:box-shadow .2s}
+.session-item:hover{box-shadow:0 2px 6px rgba(0,0,0,.12)}
+.session-timeline{margin-top:8px;padding:8px;background:rgba(0,0,0,.02);border-radius:4px}
+.timeline-toggle{color:#2563eb;cursor:pointer;font-weight:500;margin-top:4px;display:inline-block}
+.timeline-toggle:hover{text-decoration:underline}
+.selected{outline:2px solid #2563eb40}
+.btn-small{padding:4px 8px;border:1px solid #33415533;border-radius:8px;background:var(--header,#fff);cursor:pointer}
+.btn-primary{border-color:#2563eb}
+.btn-danger{border-color:#ef4444}
+.btn-export{border-color:#10b981}
+.hidden{display:none}
+body.dark{--bg:#1f2937;--fg:#f9fafb;--header:#111827;--card:#374151}
+`;
+
+function injectStyle(css) {
+  let tag = document.getElementById('dynamic-style');
+  if (!tag) { tag = document.createElement('style'); tag.id = 'dynamic-style'; document.head.appendChild(tag); }
+  tag.textContent = css;
+}
+function applyStyleMode(mode, darkMode) {
+  if (mode === STYLE_LIGHT) { injectStyle(LIGHT_CSS); document.body.classList.remove('dark'); }
+  else { injectStyle(MODERN_CSS); document.body.classList.toggle('dark', !!darkMode); }
+}
+
+// Tolerate both old and new checkbox classes
+function getSessionCheckboxes() {
+  return Array.from(document.querySelectorAll('.session-checkbox, .session-select'));
+}
+
+/* ==============================================
+   Visibility fixes for blank-looking buttons
+================================================= */
+(function ensureButtonTextCSS() {
+  const fix = document.createElement('style');
+  fix.id = 'btn-text-visibility-fix';
+  fix.textContent = `
+    .btn-small { color: var(--fg, #111) !important; }
+    /* If a button has no text, show its data-label (fallback) */
+    .btn-small:empty::after { content: attr(data-label); }
+  `;
+  document.head.appendChild(fix);
+})();
+
+function ensureBulkButtonLabels() {
+  const setIfEmpty = (el, label) => {
+    if (!el) return;
+    const hasText = el.textContent && el.textContent.trim().length > 0;
+    if (!hasText) {
+      el.textContent = label;                 // primary
+      el.setAttribute('data-label', label);   // fallback via CSS
+      el.setAttribute('aria-label', label);
+      el.title = label;
+    }
+  };
+  setIfEmpty(document.getElementById('select-all-btn'), 'Select All');
+  setIfEmpty(document.getElementById('deselect-all-btn'), 'Deselect All');
+  setIfEmpty(document.getElementById('export-selected-btn'), 'Export Selected');
+  setIfEmpty(document.getElementById('delete-selected-btn'), 'Delete Selected');
+  setIfEmpty(document.getElementById('clear-all-btn') || document.getElementById('clear-all-sessions-btn'), 'Clear All');
+}
+
+function hideDuplicateSelectAllIfPresent() {
+  const btn = document.getElementById('select-all-btn');
+  const cb  = document.getElementById('select-all-sessions');
+  if (btn && cb) {
+    const label = cb.closest('label') || cb;
+    label.style.display = 'none';
+  }
+}
+
+/* ==============================================
+   Popup Class
+================================================= */
 class TestSnapperPopup {
   constructor() {
     this.isRecording = false;
     this.isPaused = false;
     this.sessions = [];
     this.selectedSessions = new Set();
+    this.expandedTimelines = new Set();
+
     this.settings = {
       autoScreenshot: true,
-      inputTimeFrame: 2000, // 2 seconds default
+      inputTimeFrame: 2000,
       screenshotQuality: 'medium',
       redactionPatterns: 'password,secret,token,api_key',
       darkMode: false,
       defaultExportFormat: 'txt',
-      autoClearDays: 2 // Auto-clear sessions after 2 days
+      autoClearDays: 2,
+      styleMode: STYLE_MODERN
     };
+
     this.currentTab = 'record';
-    this.init();
+    this.$ = {};
   }
 
   async init() {
     console.log('TestSnapper Popup initializing...');
+    this.$.sessionsList = document.getElementById('sessions-list');
+    this.$.noSessions = document.getElementById('no-sessions');
+    this.$.sessionCount = document.getElementById('session-count');
+
+    applyStyleMode(this.settings.styleMode, this.settings.darkMode);
     this.setupEventListeners();
-    
-    // Auto-clear old sessions before loading data
+
     await this.autoClearOldSessions();
-    
-    await this.loadData();
+    await this.loadRecordingStatus();
+    await this.loadSessions();
+    await this.loadSettings();
+
+    applyStyleMode(this.settings.styleMode, this.settings.darkMode);
     this.updateUI();
     console.log('TestSnapper Popup initialized');
   }
 
-  async autoClearOldSessions() {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS' });
-      if (response && Array.isArray(response.sessions)) {
-        const sessions = response.sessions;
-        const cutoffTime = Date.now() - (this.settings.autoClearDays * 24 * 60 * 60 * 1000);
-        
-        const validSessions = sessions.filter(session => {
-          return session.startTime && session.startTime > cutoffTime;
-        });
-
-        if (validSessions.length < sessions.length) {
-          console.log(`Auto-clearing ${sessions.length - validSessions.length} old sessions`);
-          await chrome.storage.local.set({ sessions: validSessions });
-        }
-      }
-    } catch (error) {
-      console.log('Auto-clear failed:', error);
-    }
-  }
-
+  /* ---------------- Events ---------------- */
   setupEventListeners() {
-    // Tab navigation
     document.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        this.switchTab(e.target.dataset.tab);
-      });
+      btn.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
     });
 
-    // Recording controls
-    document.getElementById('start-btn').addEventListener('click', () => {
-      this.startRecording();
-    });
-    document.getElementById('pause-btn').addEventListener('click', () => {
-      this.pauseRecording();
-    });
-    document.getElementById('resume-btn').addEventListener('click', () => {
-      this.resumeRecording();
-    });
-    document.getElementById('stop-btn').addEventListener('click', () => {
-      this.stopRecording();
+    const startBtn = document.getElementById('start-btn');
+    const pauseBtn = document.getElementById('pause-btn');
+    const resumeBtn = document.getElementById('resume-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    if (startBtn) startBtn.addEventListener('click', () => this.startRecording());
+    if (pauseBtn) pauseBtn.addEventListener('click', () => this.pauseRecording());
+    if (resumeBtn) resumeBtn.addEventListener('click', () => this.resumeRecording());
+    if (stopBtn) stopBtn.addEventListener('click', () => this.stopRecording());
+
+    document.querySelectorAll('#screenshot-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.captureManualScreenshot());
+      btn.disabled = false; // keep usable while paused
     });
 
-    // Manual screenshot (works even when paused)
-    const screenshotBtns = document.querySelectorAll('#screenshot-btn');
-    screenshotBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.captureManualScreenshot();
-      });
-    });
+    const saveSettingsBtn = document.getElementById('save-settings');
+    if (saveSettingsBtn) saveSettingsBtn.addEventListener('click', () => this.saveSettings());
 
-    // Settings save
-    document.getElementById('save-settings').addEventListener('click', () => {
-      this.saveSettings();
-    });
-
-    // Input time frame slider
     const timeFrameSlider = document.getElementById('input-time-frame');
     const timeFrameValue = document.getElementById('time-frame-value');
     if (timeFrameSlider && timeFrameValue) {
       timeFrameSlider.addEventListener('input', (e) => {
-        const value = parseInt(e.target.value);
-        timeFrameValue.textContent = `${value / 1000}s`;
-        this.settings.inputTimeFrame = value;
+        const v = Math.max(0, parseInt(e.target.value || '2000', 10));
+        timeFrameValue.textContent = `${v/1000}s`;
+        this.settings.inputTimeFrame = v;
       });
     }
 
-    // Export format selector in settings
     const exportFormatSelect = document.getElementById('export-format-select');
     if (exportFormatSelect) {
       exportFormatSelect.addEventListener('change', (e) => {
-        this.settings.defaultExportFormat = e.target.value;
-        this.saveSettings();
+        this.settings.defaultExportFormat = (e.target.value || 'txt').toLowerCase();
+        this.persistSettingsSilently();
       });
     }
 
-    // Bulk session management
+    const styleModeSelect = document.getElementById('style-mode-select');
+    if (styleModeSelect) {
+      styleModeSelect.addEventListener('change', (e) => {
+        this.settings.styleMode = (e.target.value === STYLE_LIGHT) ? STYLE_LIGHT : STYLE_MODERN;
+        applyStyleMode(this.settings.styleMode, this.settings.darkMode);
+        this.persistSettingsSilently();
+      });
+    }
+
+    const darkModeCheckbox = document.getElementById('dark-mode');
+    if (darkModeCheckbox) {
+      darkModeCheckbox.addEventListener('change', (e) => {
+        this.settings.darkMode = !!e.target.checked;
+        applyStyleMode(this.settings.styleMode, this.settings.darkMode);
+        this.persistSettingsSilently();
+      });
+    }
+
+    // Wire bulk controls now; we’ll call again after render
     this.setupBulkSessionControls();
   }
 
-  setupBulkSessionControls() {
-    // Will be called after sessions tab is rendered
-  }
-
-  switchTab(tabName) {
-    console.log('Switching to tab:', tabName);
-
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-      btn.classList.remove('active');
-    });
-    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-
-    document.querySelectorAll('.tab-content').forEach(content => {
-      content.classList.add('hidden');
-    });
-    document.getElementById(`${tabName}-tab`).classList.remove('hidden');
-
-    this.currentTab = tabName;
-    if (tabName === 'sessions') {
-      this.loadSessions().then(() => this.renderSessions());
-    }
-  }
-
-  async loadData() {
+  /* ---------------- Data ---------------- */
+  async autoClearOldSessions() {
     try {
-      await Promise.all([
-        this.loadRecordingStatus(),
-        this.loadSessions(),
-        this.loadSettings()
-      ]);
-    } catch (error) {
-      console.error('Error loading data:', error);
-    }
+      const res = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS' });
+      if (!res || !Array.isArray(res.sessions)) return;
+      const cutoff = Date.now() - (this.settings.autoClearDays * 86400000);
+      const valid = res.sessions.filter(s => s.startTime && s.startTime > cutoff);
+      if (valid.length < res.sessions.length) {
+        await chrome.storage.local.set({ sessions: valid });
+      }
+    } catch (e) { console.log('Auto-clear failed:', e); }
   }
 
   async loadRecordingStatus() {
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATUS' });
-      if (response && typeof response.isRecording === 'boolean') {
-        this.isRecording = response.isRecording;
-        this.isPaused = response.isPaused || false;
-      } else {
-        this.isRecording = false;
-        this.isPaused = false;
-      }
-    } catch (error) {
-      this.isRecording = false;
-      this.isPaused = false;
-    }
+      const res = await chrome.runtime.sendMessage({ type: 'GET_RECORDING_STATUS' });
+      if (res && typeof res.isRecording === 'boolean') {
+        this.isRecording = !!res.isRecording;
+        this.isPaused = !!res.isPaused;
+      } else { this.isRecording = false; this.isPaused = false; }
+    } catch { this.isRecording = false; this.isPaused = false; }
   }
 
   async loadSessions() {
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS' });
-      if (response && Array.isArray(response.sessions)) {
-        this.sessions = response.sessions;
-      } else {
-        this.sessions = [];
-      }
-    } catch (error) {
-      this.sessions = [];
-    }
+      const res = await chrome.runtime.sendMessage({ type: 'GET_SESSIONS' });
+      this.sessions = (res && Array.isArray(res.sessions)) ? res.sessions : [];
+    } catch { this.sessions = []; }
   }
 
   async loadSettings() {
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
-      if (response && response.settings) {
-        this.settings = { ...this.settings, ...response.settings };
+      const res = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+      if (res && res.settings) {
+        this.settings = { ...this.settings, ...res.settings };
+        if (![STYLE_LIGHT, STYLE_MODERN].includes(this.settings.styleMode)) this.settings.styleMode = STYLE_MODERN;
       }
-    } catch (error) { }
+    } catch { /* keep defaults */ }
   }
 
+  async persistSettingsSilently() {
+    try {
+      await chrome.storage.local.set({ settings: this.settings });
+      await chrome.runtime.sendMessage({ type: 'UPDATE_SETTINGS', settings: this.settings });
+    } catch (e) { console.warn('Silent settings save failed', e); }
+  }
+
+  /* ---------------- UI ---------------- */
   updateUI() {
     this.updateRecordingUI();
     this.renderSessions();
@@ -191,1044 +271,457 @@ class TestSnapperPopup {
   }
 
   updateRecordingUI() {
-    const statusIndicator = document.getElementById('status-indicator');
-    const notRecordingDiv = document.getElementById('not-recording');
-    const recordingDiv = document.getElementById('recording');
-    const pausedDiv = document.getElementById('paused');
+    const status = document.getElementById('status-indicator');
+    const v1 = document.getElementById('not-recording');
+    const v2 = document.getElementById('recording');
+    const v3 = document.getElementById('paused');
 
-    statusIndicator.classList.remove('recording', 'paused');
-    notRecordingDiv.classList.add('hidden');
-    recordingDiv.classList.add('hidden');
-    pausedDiv.classList.add('hidden');
+    status && status.classList.remove('recording','paused');
+    v1 && v1.classList.add('hidden');
+    v2 && v2.classList.add('hidden');
+    v3 && v3.classList.add('hidden');
 
     if (this.isRecording) {
-      if (this.isPaused) {
-        statusIndicator.classList.add('paused');
-        pausedDiv.classList.remove('hidden');
-      } else {
-        statusIndicator.classList.add('recording');
-        recordingDiv.classList.remove('hidden');
-      }
-    } else {
-      notRecordingDiv.classList.remove('hidden');
-    }
-  }
+      if (this.isPaused) { status && status.classList.add('paused'); v3 && v3.classList.remove('hidden'); }
+      else { status && status.classList.add('recording'); v2 && v2.classList.remove('hidden'); }
+    } else { v1 && v1.classList.remove('hidden'); }
 
-  renderSessions() {
-    const sessionsList = document.getElementById('sessions-list');
-    const noSessions = document.getElementById('no-sessions');
-    const sessionCount = document.getElementById('session-count');
-    sessionCount.textContent = `(${this.sessions.length})`;
-
-    if (this.sessions.length === 0) {
-      sessionsList.innerHTML = '';
-      noSessions.classList.remove('hidden');
-      this.renderBulkControls(false);
-      return;
-    }
-    noSessions.classList.add('hidden');
-
-    // Render bulk controls first
-    this.renderBulkControls(true);
-
-    sessionsList.innerHTML = this.sessions.map(session => {
-      const activeDuration = session.activeDuration || session.duration || 0;
-      const totalDuration = session.duration || 0;
-      const durationText = activeDuration !== totalDuration ?
-        `${Math.round(activeDuration / 1000)}s active (${Math.round(totalDuration / 1000)}s total)` :
-        `${Math.round(totalDuration / 1000)}s`;
-
-      const isSelected = this.selectedSessions.has(session.id);
-
-      return `
-      <div class="session-item">
-        <div class="session-header">
-          <input type="checkbox" class="session-checkbox" data-session-id="${session.id}" ${isSelected ? 'checked' : ''}>
-          <div class="session-title">${this.escapeHtml(session.name)}</div>
-        </div>
-        <div class="session-meta">
-          ${new Date(session.startTime).toLocaleDateString()} • 
-          ${session.interactions?.length || 0} interactions • 
-          ${session.screenshots?.length || 0} screenshots • 
-          ${durationText}${session.apiFailures?.length ? ` • ${session.apiFailures.length} API failures` : ''}
-        </div>
-        <div class="session-url">${this.escapeHtml(session.url || '')}</div>
-        ${this.renderSessionDetails(session)}
-        <div class="session-actions">
-          <div class="export-controls">
-            <select class="export-format-select" data-session-id="${session.id}">
-              <option value="txt">TXT</option>
-              <option value="csv">CSV</option>
-              <option value="docx">DOCX</option>
-              <option value="pdf">PDF</option>
-            </select>
-            <button class="btn-small btn-export" data-session-id="${session.id}">
-              Export
-            </button>
-          </div>
-          <button class="btn-small btn-delete" data-session-id="${session.id}">
-            Delete
-          </button>
-        </div>
-      </div>
-      `;
-    }).join('');
-
-    // Add event listeners
-    this.addSessionEventListeners();
-  }
-
-  renderBulkControls(hasSessions) {
-    const bulkControlsContainer = document.getElementById('bulk-controls');
-    if (!bulkControlsContainer) {
-      // Create bulk controls container if it doesn't exist
-      const sessionsTab = document.getElementById('sessions-tab');
-      const bulkControls = document.createElement('div');
-      bulkControls.id = 'bulk-controls';
-      bulkControls.className = 'bulk-controls';
-      sessionsTab.insertBefore(bulkControls, document.getElementById('sessions-list'));
-    }
-
-    const bulkControls = document.getElementById('bulk-controls');
-    
-    if (!hasSessions) {
-      bulkControls.style.display = 'none';
-      return;
-    }
-
-    bulkControls.style.display = 'block';
-    bulkControls.innerHTML = `
-      <div class="bulk-controls-row">
-        <div class="bulk-selection">
-          <button id="select-all-btn" class="btn-small">Select All</button>
-          <button id="deselect-all-btn" class="btn-small">Deselect All</button>
-          <span id="selected-count" class="selected-count">0 selected</span>
-        </div>
-        <div class="bulk-actions">
-          <button id="clear-all-btn" class="btn-small btn-danger">Clear All Sessions</button>
-          <button id="delete-selected-btn" class="btn-small btn-danger" disabled>Delete Selected</button>
-        </div>
-      </div>
-    `;
-
-    // Add bulk control event listeners
-    document.getElementById('select-all-btn').addEventListener('click', () => {
-      this.selectAllSessions();
-    });
-
-    document.getElementById('deselect-all-btn').addEventListener('click', () => {
-      this.deselectAllSessions();
-    });
-
-    document.getElementById('clear-all-btn').addEventListener('click', () => {
-      this.clearAllSessions();
-    });
-
-    document.getElementById('delete-selected-btn').addEventListener('click', () => {
-      this.deleteSelectedSessions();
-    });
-
-    this.updateBulkControlsState();
-  }
-
-  selectAllSessions() {
-    this.selectedSessions.clear();
-    this.sessions.forEach(session => {
-      this.selectedSessions.add(session.id);
-    });
-    this.updateSessionCheckboxes();
-    this.updateBulkControlsState();
-  }
-
-  deselectAllSessions() {
-    this.selectedSessions.clear();
-    this.updateSessionCheckboxes();
-    this.updateBulkControlsState();
-  }
-
-  updateSessionCheckboxes() {
-    document.querySelectorAll('.session-checkbox').forEach(checkbox => {
-      const sessionId = checkbox.getAttribute('data-session-id');
-      checkbox.checked = this.selectedSessions.has(sessionId);
-    });
-  }
-
-  updateBulkControlsState() {
-    const selectedCountEl = document.getElementById('selected-count');
-    const deleteSelectedBtn = document.getElementById('delete-selected-btn');
-    
-    if (selectedCountEl) {
-      selectedCountEl.textContent = `${this.selectedSessions.size} selected`;
-    }
-    
-    if (deleteSelectedBtn) {
-      deleteSelectedBtn.disabled = this.selectedSessions.size === 0;
-    }
-  }
-
-  async clearAllSessions() {
-    if (!confirm('Are you sure you want to clear ALL sessions? This action cannot be undone.')) return;
-    
-    try {
-      await chrome.storage.local.set({ sessions: [] });
-      this.sessions = [];
-      this.selectedSessions.clear();
-      this.renderSessions();
-      console.log('All sessions cleared');
-    } catch (error) {
-      alert('Failed to clear sessions: ' + error.message);
-    }
-  }
-
-  async deleteSelectedSessions() {
-    if (this.selectedSessions.size === 0) return;
-    
-    if (!confirm(`Are you sure you want to delete ${this.selectedSessions.size} selected session(s)? This action cannot be undone.`)) return;
-    
-    try {
-      const updatedSessions = this.sessions.filter(s => !this.selectedSessions.has(s.id));
-      await chrome.storage.local.set({ sessions: updatedSessions });
-      this.sessions = updatedSessions;
-      this.selectedSessions.clear();
-      this.renderSessions();
-      console.log('Selected sessions deleted');
-    } catch (error) {
-      alert('Failed to delete selected sessions: ' + error.message);
-    }
-  }
-
-  renderSessionDetails(session) {
-    let details = '';
-
-    // Settings used during recording
-    if (session.metadata && session.metadata.settings) {
-      const settings = session.metadata.settings;
-      details += `<div style="font-size:10px; color:#6b7280; margin-bottom:4px; border-top:1px dashed #e5e7eb; padding-top:4px;">`;
-      details += `⚙️ Time frame: ${(settings.inputTimeFrame || 2000) / 1000}s • `;
-      details += `Screenshots: ${settings.autoScreenshot ? 'Auto' : 'Manual'}`;
-      details += `</div>`;
-    }
-
-    if (session.pauseEvents && session.pauseEvents.length > 0) {
-      const pauseCount = session.pauseEvents.filter(e => e.type === 'pause').length;
-      details += `<div style="font-size:10px; color:#f59e0b; margin-bottom:2px;">⏸️ ${pauseCount} pause(s) during session</div>`;
-    }
-
-    if (session.apiFailures && session.apiFailures.length > 0) {
-      details += `<div style="font-size:10px; color:#ef4444; margin-bottom:2px;">⚠️ ${session.apiFailures.length} API failure(s)</div>`;
-    }
-
-    if (session.screenshots && session.screenshots.length > 0) {
-      details += `<div style="font-size:10px; color:#10b981; margin-bottom:2px;">📸 ${session.screenshots.length} screenshots captured</div>`;
-    }
-
-    // Create combined timeline of interactions and API failures
-    const combinedTimeline = this.createCombinedTimeline(session);
-
-    if (combinedTimeline.length > 0) {
-      details += `
-      <div style="font-size:11px; margin:6px 0 2px 0; color:#374151; border-top:1px dashed #e5e7eb; padding-top:4px;">
-        <div style="font-weight:600; color:#3b82f6; margin-bottom:2px;">Recent Timeline:</div>
-        ${combinedTimeline.slice(-4).map(item => {
-        if (item.type === 'api_failure') {
-          return `<div style="color:#ef4444;">• [${Math.round(item.relativeTime / 1000)}s] ⚠️ API FAILURE: ${item.method} ${item.url} (${item.statusCode || item.error})${item.afterStep ? ` after step ${item.afterStep.step}` : ''}</div>`;
-        } else {
-          let desc = `[${Math.round(item.relativeTime / 1000)}s] ${item.type.toUpperCase()}`;
-          if (item.timeFrame) desc += ` <span style="color:#f59e0b;">(${item.timeFrame})</span>`;
-          if (item.selector) desc += ` <span style="color:#9ca3af">"${item.selector}"</span>`;
-          if (item.value) desc += ` value: <span style="color:#059669">"${item.value}"</span>`;
-          if (item.text && !item.value) desc += ` text: <span style="color:#059669">"${item.text.substring(0, 30)}"</span>`;
-          return `<div>• ${desc}</div>`;
-        }
-      }).join('')}
-        ${combinedTimeline.length > 4 ? `<div style="color:#9ca3af;">... and ${combinedTimeline.length - 4} more events</div>` : ''}
-      </div>
-      `;
-    }
-
-    return details;
-  }
-
-  createCombinedTimeline(session) {
-    const timeline = [];
-
-    // Add interactions
-    if (session.interactions) {
-      session.interactions.forEach(interaction => {
-        timeline.push({
-          ...interaction,
-          itemType: 'interaction'
-        });
-      });
-    }
-
-    // Add API failures
-    if (session.apiFailures) {
-      session.apiFailures.forEach(failure => {
-        timeline.push({
-          ...failure,
-          itemType: 'api_failure'
-        });
-      });
-    }
-
-    // Sort by relative time
-    timeline.sort((a, b) => (a.relativeTime || 0) - (b.relativeTime || 0));
-
-    return timeline;
-  }
-
-  addSessionEventListeners() {
-    const sessionsList = document.getElementById('sessions-list');
-    
-    // Session checkboxes
-    sessionsList.querySelectorAll('.session-checkbox').forEach(checkbox => {
-      checkbox.addEventListener('change', (e) => {
-        const sessionId = e.target.getAttribute('data-session-id');
-        if (e.target.checked) {
-          this.selectedSessions.add(sessionId);
-        } else {
-          this.selectedSessions.delete(sessionId);
-        }
-        this.updateBulkControlsState();
-      });
-    });
-    
-    // Export buttons
-    sessionsList.querySelectorAll('.btn-export').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const sessionId = btn.getAttribute('data-session-id');
-        const formatSelect = sessionsList.querySelector(`select[data-session-id="${sessionId}"]`);
-        const format = formatSelect ? formatSelect.value : this.settings.defaultExportFormat;
-        this.exportSession(sessionId, format);
-      });
-    });
-    
-    // Delete buttons
-    sessionsList.querySelectorAll('.btn-delete').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const sessionId = btn.getAttribute('data-session-id');
-        this.deleteSession(sessionId);
-      });
-    });
-    
-    // Format selectors (for UI sync)
-    sessionsList.querySelectorAll('.export-format-select').forEach(select => {
-      select.value = this.settings.defaultExportFormat;
-    });
+    // Keep Stop/Screenshot usable in pause state
+    document.querySelectorAll('#screenshot-btn, #stop-btn').forEach(b => b && (b.disabled = false));
   }
 
   updateSettingsUI() {
-    document.getElementById('auto-screenshot').checked = this.settings.autoScreenshot;
-    document.getElementById('screenshot-quality').value = this.settings.screenshotQuality;
-    document.getElementById('redaction-patterns').value = this.settings.redactionPatterns;
-    document.getElementById('dark-mode').checked = this.settings.darkMode;
+    const autoShot = document.getElementById('auto-screenshot');
+    const qual = document.getElementById('screenshot-quality');
+    const redact = document.getElementById('redaction-patterns');
+    const dark = document.getElementById('dark-mode');
+    const slider = document.getElementById('input-time-frame');
+    const sliderVal = document.getElementById('time-frame-value');
+    const exportSelect = document.getElementById('export-format-select');
+    const styleModeSelect = document.getElementById('style-mode-select');
 
-    // Input time frame slider
-    const timeFrameSlider = document.getElementById('input-time-frame');
-    const timeFrameValue = document.getElementById('time-frame-value');
-    if (timeFrameSlider && timeFrameValue) {
-      timeFrameSlider.value = this.settings.inputTimeFrame;
-      timeFrameValue.textContent = `${this.settings.inputTimeFrame / 1000}s`;
-    }
+    if (autoShot) autoShot.checked = !!this.settings.autoScreenshot;
+    if (qual) qual.value = this.settings.screenshotQuality || 'medium';
+    if (redact) redact.value = this.settings.redactionPatterns || 'password,secret,token,api_key';
+    if (dark) dark.checked = !!this.settings.darkMode;
+    if (slider) slider.value = this.settings.inputTimeFrame || 2000;
+    if (sliderVal) sliderVal.textContent = `${(this.settings.inputTimeFrame || 2000)/1000}s`;
+    if (exportSelect) exportSelect.value = (this.settings.defaultExportFormat || 'txt').toLowerCase();
+    if (styleModeSelect) styleModeSelect.value = this.settings.styleMode || STYLE_MODERN;
 
-    const exportFormatSelect = document.getElementById('export-format-select');
-    if (exportFormatSelect) exportFormatSelect.value = this.settings.defaultExportFormat;
+    applyStyleMode(this.settings.styleMode, this.settings.darkMode);
   }
 
-  async startRecording() {
-    try {
-      // First save current settings to ensure they are applied
-      await this.saveSettings();
+  /* ---------------- Sessions rendering ---------------- */
+  renderSessions() {
+    const list = this.$.sessionsList;
+    if (!list) return;
+    list.innerHTML = '';
 
-      const startBtn = document.getElementById('start-btn');
-      startBtn.disabled = true;
-      startBtn.textContent = 'Starting...';
-      const response = await chrome.runtime.sendMessage({ type: 'START_RECORDING' });
-      if (response && response.success) {
-        this.isRecording = true;
-        this.isPaused = false;
-        this.updateRecordingUI();
-        setTimeout(() => { window.close(); }, 500);
-      } else {
-        throw new Error(response?.error || 'Failed to start recording');
-      }
-    } catch (error) {
-      alert('Failed to start recording: ' + error.message);
-      const startBtn = document.getElementById('start-btn');
-      startBtn.disabled = false;
-      startBtn.textContent = 'Start Recording';
+    const count = document.getElementById('session-count');
+    const empty = this.$.noSessions;
+
+    if (!this.sessions.length) {
+      empty && empty.classList.remove('hidden');
+      count && (count.textContent = '0');
+      this.setupBulkSessionControls();
+      // make sure labels show even when empty
+      ensureBulkButtonLabels();
+      hideDuplicateSelectAllIfPresent();
+      this.updateBulkControlsState();
+      return;
     }
+    empty && empty.classList.add('hidden');
+    count && (count.textContent = String(this.sessions.length));
+
+    list.innerHTML = this.sessions.map((s, i) => {
+      const active = s.activeDuration || s.duration || 0;
+      const total = s.duration || 0;
+      const dur = active !== total
+        ? `${Math.round(active/1000)}s active (${Math.round(total/1000)}s total)`
+        : `${Math.round(total/1000)}s`;
+
+      return `
+        <div class="session-item" data-session-id="${escapeHTML(s.id)}">
+          <div class="session-header" style="display:flex;gap:10px;align-items:center;justify-content:space-between">
+            <div style="display:flex;gap:10px;align-items:center">
+              <input type="checkbox" class="session-select" data-session-id="${escapeHTML(s.id)}">
+              <div class="session-title">${escapeHTML(s.name || `Session ${i+1}`)}</div>
+            </div>
+            <span class="timeline-toggle" data-session-id="${escapeHTML(s.id)}"></span>
+          </div>
+
+          <div class="session-meta" style="color:#6b7280;font-size:12px;margin-top:4px">
+            ${new Date(s.startTime).toLocaleDateString()} •
+            ${s.interactions?.length || 0} interactions •
+            ${s.screenshots?.length || 0} screenshots •
+            ${dur}${s.apiFailures?.length ? ` • ${s.apiFailures.length} API failures` : ''}
+          </div>
+
+          <div class="session-url" style="color:#374151;font-size:12px;margin:3px 0">${escapeHTML(s.url || '')}</div>
+
+          <div class="session-actions" style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+            <div class="export-controls" style="display:flex;gap:6px;align-items:center">
+              <select class="export-format-select" data-session-id="${escapeHTML(s.id)}">
+                <option value="txt">TXT</option>
+                <option value="csv">CSV</option>
+                <option value="docx">DOCX</option>
+                <option value="pdf">PDF</option>
+              </select>
+              <button class="btn-small btn-export btn-export-one" data-session-id="${escapeHTML(s.id)}"></button>
+            </div>
+            <button class="btn-small btn-danger btn-delete-one" data-session-id="${escapeHTML(s.id)}"></button>
+          </div>
+
+          <div class="session-timeline hidden" id="timeline-${escapeHTML(s.id)}"></div>
+        </div>
+      `;
+    }).join('');
+
+    // Ensure per-session buttons have labels if HTML was empty
+    document.querySelectorAll('.btn-export-one').forEach(b => {
+      if (!b.textContent.trim()) { b.textContent = 'Export'; b.setAttribute('data-label','Export'); }
+    });
+    document.querySelectorAll('.btn-delete-one').forEach(b => {
+      if (!b.textContent.trim()) { b.textContent = 'Delete'; b.setAttribute('data-label','Delete'); }
+    });
+
+    // Wire per-session controls & bulk controls
+    this.addSessionEventListeners();
+    this.setupBulkSessionControls();
+
+    // Make sure bulk buttons are visibly labeled and not duplicated
+    ensureBulkButtonLabels();
+    hideDuplicateSelectAllIfPresent();
+
+    // Reflect selection and state
+    this.updateSessionCheckboxes();
+    this.updateBulkControlsState();
   }
 
-  async pauseRecording() {
-    try {
-      const pauseBtn = document.getElementById('pause-btn');
-      pauseBtn.disabled = true;
-      pauseBtn.textContent = 'Pausing...';
-      const response = await chrome.runtime.sendMessage({ type: 'PAUSE_RECORDING' });
-      if (response && response.success) {
-        this.isPaused = true;
-        this.updateRecordingUI();
-      } else {
-        throw new Error(response?.error || 'Failed to pause recording');
-      }
-    } catch (error) {
-      alert('Failed to pause recording: ' + error.message);
-    } finally {
-      const pauseBtn = document.getElementById('pause-btn');
-      pauseBtn.disabled = false;
-      pauseBtn.textContent = 'Pause';
-    }
+  addSessionEventListeners() {
+    const list = document.getElementById('sessions-list');
+    if (!list) return;
+
+    // Checkboxes → selection set
+    getSessionCheckboxes().forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const id = e.target.getAttribute('data-session-id');
+        if (!id) return;
+        if (e.target.checked) this.selectedSessions.add(id);
+        else this.selectedSessions.delete(id);
+        const card = e.target.closest('.session-item');
+        if (card) card.classList.toggle('selected', e.target.checked);
+        this.updateBulkControlsState();
+      });
+    });
+
+    // Toggle timeline
+    list.querySelectorAll('.timeline-toggle').forEach(t => {
+      t.addEventListener('click', (e) => {
+        const id = e.target.getAttribute('data-session-id');
+        const panel = document.getElementById(`timeline-${id}`);
+        if (!panel) return;
+        const isHidden = panel.classList.contains('hidden');
+        panel.classList.toggle('hidden', !isHidden);
+        e.target.textContent = isHidden ? 'Hide timeline' : 'Show timeline';
+        if (isHidden) this.renderTimeline(id, panel);
+      });
+      // Initialize label text
+      const id = t.getAttribute('data-session-id');
+      t.textContent = this.expandedTimelines.has(id) ? 'Hide timeline' : 'Show timeline';
+      const panel = document.getElementById(`timeline-${id}`);
+      if (panel && this.expandedTimelines.has(id)) { panel.classList.remove('hidden'); this.renderTimeline(id, panel); }
+    });
+
+    // Per-session export
+    list.querySelectorAll('.btn-export-one').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-session-id');
+        const sel = list.querySelector(`select.export-format-select[data-session-id="${id}"]`);
+        const fmt = (sel ? sel.value : (this.settings.defaultExportFormat || 'txt')).toLowerCase();
+        await this.exportSession(id, fmt);
+      });
+    });
+
+    // Per-session delete
+    list.querySelectorAll('.btn-delete-one').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-session-id');
+        this.deleteSession(id);
+      });
+    });
   }
 
-  async resumeRecording() {
-    try {
-      const resumeBtn = document.getElementById('resume-btn');
-      resumeBtn.disabled = true;
-      resumeBtn.textContent = 'Resuming...';
-      const response = await chrome.runtime.sendMessage({ type: 'RESUME_RECORDING' });
-      if (response && response.success) {
-        this.isPaused = false;
-        this.updateRecordingUI();
-      } else {
-        throw new Error(response?.error || 'Failed to resume recording');
-      }
-    } catch (error) {
-      alert('Failed to resume recording: ' + error.message);
-    } finally {
-      const resumeBtn = document.getElementById('resume-btn');
-      resumeBtn.disabled = false;
-      resumeBtn.textContent = 'Resume';
+  renderTimeline(sessionId, container) {
+    const s = this.sessions.find(x => x.id === sessionId);
+    if (!s) { container.textContent = '(Session not found)'; return; }
+    const items = [];
+
+    if (Array.isArray(s.interactions)) {
+      s.interactions.forEach(i => items.push({ ...i, _k: 'interaction' }));
     }
+    if (Array.isArray(s.apiFailures)) {
+      s.apiFailures.forEach(f => items.push({ ...f, _k: 'api_failure' }));
+    }
+    items.sort((a,b) => (a.relativeTime || a.timestamp || 0) - (b.relativeTime || b.timestamp || 0));
+
+    container.innerHTML = (items.length ? items.map((x, idx) => {
+      const label = x._k === 'api_failure'
+        ? `⚠️ API FAILURE: ${x.method || ''} ${x.url || ''} (${x.statusCode || x.error || x.status || ''})`
+        : (x.type ? x.type.toUpperCase() : 'EVENT');
+      const when = x.timestamp ? formatTimestamp(x.timestamp) : `${Math.round((x.relativeTime || 0)/1000)}s`;
+      const extra = [];
+      if (x.selector) extra.push(`element: "${escapeHTML(x.selector)}"`);
+      if (x.value && x.value !== '[REDACTED]') extra.push(`value: "${escapeHTML(x.value)}"`);
+      if (x.value === '[REDACTED]') extra.push('value: [REDACTED]');
+      if (x.text && !x.value) extra.push(`text: "${escapeHTML(x.text.slice(0, 60))}${x.text.length>60?'…':''}"`);
+      return `<div>• ${idx+1}. [${escapeHTML(when)}] ${escapeHTML(label)}${extra.length?' — '+extra.join(' | '):''}</div>`;
+    }).join('') : '(No events recorded)');
   }
 
-  async stopRecording() {
-    try {
-      const stopBtn = document.getElementById('stop-btn');
-      stopBtn.disabled = true;
-      stopBtn.textContent = 'Stopping...';
-      const response = await chrome.runtime.sendMessage({ type: 'STOP_RECORDING' });
-      if (response && response.success) {
-        this.isRecording = false;
-        this.isPaused = false;
-        this.updateRecordingUI();
-        await this.loadSessions();
+  /* ---------------- Bulk controls ---------------- */
+  setupBulkSessionControls() {
+    const selectAllBtn = document.getElementById('select-all-btn');
+    const selectAllCheckbox = document.getElementById('select-all-sessions'); // tolerate old html
+    const deselectAllBtn = document.getElementById('deselect-all-btn');
+    const clearAllBtn = document.getElementById('clear-all-btn') || document.getElementById('clear-all-sessions-btn');
+    const deleteSelectedBtn = document.getElementById('delete-selected-btn');
+    const exportSelectedBtn = document.getElementById('export-selected-btn');
+
+    if (selectAllBtn) {
+      selectAllBtn.onclick = () => {
+        this.selectedSessions.clear();
+        this.sessions.forEach(s => this.selectedSessions.add(s.id));
+        this.updateSessionCheckboxes();
+        selectAllCheckbox && (selectAllCheckbox.checked = true);
+        this.updateBulkControlsState();
+      };
+    }
+    if (selectAllCheckbox) {
+      selectAllCheckbox.onchange = (e) => {
+        if (e.target.checked) { this.selectedSessions.clear(); this.sessions.forEach(s => this.selectedSessions.add(s.id)); }
+        else { this.selectedSessions.clear(); }
+        this.updateSessionCheckboxes();
+        this.updateBulkControlsState();
+      };
+    }
+    if (deselectAllBtn) {
+      deselectAllBtn.onclick = () => {
+        this.selectedSessions.clear();
+        selectAllCheckbox && (selectAllCheckbox.checked = false);
+        this.updateSessionCheckboxes();
+        this.updateBulkControlsState();
+      };
+    }
+    if (clearAllBtn) {
+      clearAllBtn.onclick = async () => {
+        if (!confirm('Clear ALL sessions? This cannot be undone.')) return;
+        await chrome.storage.local.set({ sessions: [] });
+        this.sessions = [];
+        this.selectedSessions.clear();
         this.renderSessions();
-      } else {
-        throw new Error(response?.error || 'Failed to stop recording');
-      }
-    } catch (error) {
-      alert('Failed to stop recording: ' + error.message);
-    } finally {
-      const stopBtn = document.getElementById('stop-btn');
-      stopBtn.disabled = false;
-      stopBtn.textContent = 'Stop Recording';
+      };
     }
-  }
-
-  async captureManualScreenshot() {
-    try {
-      const screenshotBtns = document.querySelectorAll('#screenshot-btn');
-      screenshotBtns.forEach(btn => {
-        btn.disabled = true;
-        btn.textContent = 'Capturing...';
-      });
-
-      // Manual screenshots should always work regardless of auto-screenshot setting or paused state
-      const response = await chrome.runtime.sendMessage({
-        type: 'CAPTURE_SCREENSHOT',
-        data: {
-          type: 'manual_capture',
-          manual: true, // This flag ensures it works even when autoScreenshot is disabled
-          allowWhenPaused: true, // This flag allows screenshots when paused
-          timestamp: Date.now()
+    if (deleteSelectedBtn) {
+      deleteSelectedBtn.onclick = async () => {
+        if (!this.selectedSessions.size) return;
+        if (!confirm(`Delete ${this.selectedSessions.size} selected session(s)?`)) return;
+        const updated = this.sessions.filter(s => !this.selectedSessions.has(s.id));
+        await chrome.storage.local.set({ sessions: updated });
+        this.sessions = updated;
+        this.selectedSessions.clear();
+        this.renderSessions();
+      };
+    }
+    if (exportSelectedBtn) {
+      exportSelectedBtn.onclick = async () => {
+        if (!this.selectedSessions.size) return;
+        const fmt = (this.settings?.defaultExportFormat || 'txt').toLowerCase();
+        for (const id of this.selectedSessions) {
+          await this.exportSession(id, fmt);
         }
-      });
-
-      if (response && response.success) {
-        screenshotBtns.forEach(btn => {
-          btn.textContent = 'Captured!';
-          btn.style.background = '#059669';
-        });
-        setTimeout(() => {
-          screenshotBtns.forEach(btn => {
-            btn.textContent = '📸 Screenshot';
-            btn.style.background = '';
-            btn.disabled = false;
-          });
-        }, 1000);
-      } else {
-        throw new Error('Failed to capture screenshot');
-      }
-    } catch (error) {
-      const screenshotBtns = document.querySelectorAll('#screenshot-btn');
-      screenshotBtns.forEach(btn => {
-        btn.disabled = false;
-        btn.textContent = '📸 Screenshot';
-      });
+      };
     }
+
+    this.updateBulkControlsState();
   }
 
+  updateBulkControlsState() {
+    const n = this.selectedSessions.size;
+    const selectedCountEl = document.getElementById('selected-count');
+    const deleteSelectedBtn = document.getElementById('delete-selected-btn');
+    const exportSelectedBtn = document.getElementById('export-selected-btn');
+    if (selectedCountEl) selectedCountEl.textContent = `${n} selected`;
+    if (deleteSelectedBtn) deleteSelectedBtn.disabled = n === 0;
+    if (exportSelectedBtn) exportSelectedBtn.disabled = n === 0;
+  }
+
+  updateSessionCheckboxes() {
+    getSessionCheckboxes().forEach(cb => {
+      const id = cb.getAttribute('data-session-id');
+      if (!id) return;
+      const checked = this.selectedSessions.has(id);
+      cb.checked = checked;
+      const card = cb.closest('.session-item');
+      if (card) card.classList.toggle('selected', checked);
+    });
+  }
+
+  /* ---------------- Export ---------------- */
   async exportSession(sessionId, format = 'txt') {
     try {
-      const exportBtn = document.querySelector(`button[data-session-id="${sessionId}"]`);
-      const originalText = exportBtn.textContent;
-      exportBtn.disabled = true;
-      exportBtn.textContent = 'Exporting...';
+      const s = this.sessions.find(x => x.id === sessionId);
+      if (!s) throw new Error('Session not found');
 
-      if (format === 'docx') {
-        // DOCX is generated locally using the fixed function
-        const session = this.sessions.find(s => s.id === sessionId);
-        if (session) {
-          await this.downloadDocxFromSession(session);
-          exportBtn.textContent = 'Exported!';
-          exportBtn.classList.add('success');
-          setTimeout(() => {
-            exportBtn.textContent = originalText;
-            exportBtn.classList.remove('success');
-            exportBtn.disabled = false;
-          }, 1500);
-          return;
-        } else {
-          throw new Error('Session not found for DOCX export');
-        }
+      // DOCX client-side if docx lib loaded
+      if (format === 'docx' && window.docx) {
+        await this.downloadDocxFromSession(s);
+        return;
       }
 
-      // For other formats, use background script
-      const response = await chrome.runtime.sendMessage({
+      // Ask background for other formats
+      const res = await chrome.runtime.sendMessage({
         type: 'EXPORT_SESSION',
         sessionId,
         format
       });
 
-      if (response && response.exportData) {
-        await this.downloadExportedFile(response.exportData, format);
-        exportBtn.textContent = 'Exported!';
-        exportBtn.classList.add('success');
-        setTimeout(() => {
-          exportBtn.textContent = originalText;
-          exportBtn.classList.remove('success');
-          exportBtn.disabled = false;
-        }, 1500);
-      } else {
-        throw new Error('No export data received');
-      }
-    } catch (error) {
-      console.error('Export failed:', error);
-      alert('Failed to export session: ' + error.message);
-      const exportBtn = document.querySelector(`button[data-session-id="${sessionId}"]`);
-      exportBtn.disabled = false;
-      exportBtn.textContent = 'Export';
-      exportBtn.classList.add('error');
-      setTimeout(() => {
-        exportBtn.classList.remove('error');
-      }, 2000);
+      if (!res || !res.exportData) throw new Error('No export data');
+      await this.downloadExportedFile(res.exportData, format);
+    } catch (e) {
+      console.error('Export failed:', e);
+      alert('Export failed: ' + (e?.message || 'Unknown error'));
     }
-  }
-
-  // Fixed DOCX export function with proper screenshot handling and time frame support
-  async downloadDocxFromSession(session) {
-    try {
-      if (!window.docx) {
-        throw new Error('DOCX library not loaded');
-      }
-
-      const { Document, Packer, Paragraph, TextRun, ImageRun } = window.docx;
-
-      // Create document content
-      const children = await this.createDocumentContent(session);
-
-      // Create document
-      const doc = new Document({
-        sections: [{
-          children: children
-        }]
-      });
-
-      // Generate and download
-      const blob = await Packer.toBlob(doc);
-      const filename = `${(session.name || 'session').replace(/[^a-z0-9]/gi, '_')}.docx`;
-
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-
-      console.log('DOCX exported successfully:', filename);
-    } catch (error) {
-      console.error('DOCX export failed:', error);
-      throw error;
-    }
-  }
-
-  async createDocumentContent(session) {
-    const { Paragraph, TextRun, ImageRun } = window.docx;
-    const children = [];
-
-    // Title and metadata
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: `TestSnapper Session: ${session.name || 'Untitled Session'}`,
-            bold: true,
-            size: 32,
-            color: "2563EB"
-          })
-        ],
-        spacing: { after: 200 }
-      }),
-
-      new Paragraph({
-        children: [
-          new TextRun({ text: "URL: ", bold: true }),
-          new TextRun({ text: session.url || 'N/A' })
-        ]
-      }),
-
-      new Paragraph({
-        children: [
-          new TextRun({ text: "Date: ", bold: true }),
-          new TextRun({ text: new Date(session.startTime).toLocaleString() })
-        ]
-      }),
-
-      new Paragraph({
-        children: [
-          new TextRun({ text: "Duration: ", bold: true }),
-          new TextRun({
-            text: `${Math.round((session.activeDuration || session.duration || 0) / 1000)}s active` +
-              (session.duration !== session.activeDuration ?
-                ` (${Math.round((session.duration || 0) / 1000)}s total)` : '')
-          })
-        ]
-      }),
-
-      new Paragraph({
-        children: [
-          new TextRun({ text: "Time Frame: ", bold: true }),
-          new TextRun({
-            text: `${(session.metadata?.settings?.inputTimeFrame || 2000) / 1000}s`
-          })
-        ]
-      }),
-
-      new Paragraph({
-        children: [
-          new TextRun({ text: "Interactions: ", bold: true }),
-          new TextRun({ text: `${session.interactions?.length || 0}` })
-        ]
-      }),
-
-      new Paragraph({
-        children: [
-          new TextRun({ text: "Screenshots: ", bold: true }),
-          new TextRun({ text: `${session.screenshots?.length || 0}` })
-        ]
-      }),
-
-      new Paragraph({
-        children: [
-          new TextRun({ text: "API Failures: ", bold: true }),
-          new TextRun({ text: `${session.apiFailures?.length || 0}` })
-        ]
-      }),
-
-      // Empty line
-      new Paragraph({ text: "" })
-    );
-
-    // Create combined timeline
-    const combinedTimeline = this.createCombinedTimeline(session);
-
-    if (combinedTimeline.length > 0) {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({ text: "Timeline (Interactions & API Failures):", bold: true, size: 24 })
-          ],
-          spacing: { before: 200, after: 100 }
-        })
-      );
-
-      for (let i = 0; i < combinedTimeline.length; i++) {
-        const item = combinedTimeline[i];
-        if (item.itemType === 'api_failure') {
-          const failureParagraphs = await this.createApiFailureParagraphs(item, i + 1);
-          children.push(...failureParagraphs);
-        } else {
-          const interactionParagraphs = await this.createInteractionParagraphs(item, i + 1, session.screenshots);
-          children.push(...interactionParagraphs);
-        }
-      }
-    }
-
-    // Add screenshots section if any
-    if (session.screenshots && session.screenshots.length > 0) {
-      children.push(
-        new Paragraph({ text: "" }),
-        new Paragraph({
-          children: [
-            new TextRun({ text: "Screenshots:", bold: true, size: 24 })
-          ],
-          spacing: { before: 200, after: 100 }
-        })
-      );
-
-      for (let i = 0; i < session.screenshots.length; i++) {
-        const screenshot = session.screenshots[i];
-        const screenshotParagraphs = await this.createScreenshotParagraphs(screenshot, i + 1);
-        children.push(...screenshotParagraphs);
-      }
-    }
-
-    return children;
-  }
-
-  async createInteractionParagraphs(interaction, index, screenshots) {
-    const { Paragraph, TextRun } = window.docx;
-    const paragraphs = [];
-
-    // Main interaction description
-    const interactionText = [
-      new TextRun({
-        text: `${index}. [${Math.round((interaction.relativeTime || 0) / 1000)}s] `,
-        bold: true,
-        color: "374151"
-      }),
-      new TextRun({
-        text: interaction.type.toUpperCase(),
-        bold: true,
-        color: this.getInteractionColor(interaction.type)
-      })
-    ];
-
-    // Add time frame if available
-    if (interaction.timeFrame) {
-      interactionText.push(
-        new TextRun({
-          text: ` (${interaction.timeFrame})`,
-          color: "F59E0B",
-          bold: true
-        })
-      );
-    }
-
-    if (interaction.selector) {
-      interactionText.push(
-        new TextRun({ text: ' on ' }),
-        new TextRun({
-          text: `"${interaction.selector}"`,
-          italics: true,
-          color: "6B7280"
-        })
-      );
-    }
-
-    paragraphs.push(new Paragraph({ children: interactionText }));
-
-    // Add details
-    const details = [];
-    if (interaction.value && interaction.value !== '[REDACTED]') {
-      details.push(`Value: "${interaction.value}"`);
-    } else if (interaction.value === '[REDACTED]') {
-      details.push('Value: [REDACTED]');
-    }
-
-    if (interaction.text && !interaction.value) {
-      const text = interaction.text.length > 50 ?
-        interaction.text.substring(0, 50) + '...' :
-        interaction.text;
-      details.push(`Text: "${text}"`);
-    }
-
-    if (details.length > 0) {
-      paragraphs.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: `   ${details.join(' | ')}`,
-              color: "6B7280",
-              size: 20
-            })
-          ]
-        })
-      );
-    }
-
-    // Add related screenshot if exists
-    const relatedScreenshot = screenshots?.find(s =>
-      s.context.interactionId === interaction.id ||
-      s.context.interactionType === interaction.type
-    );
-
-    if (relatedScreenshot) {
-      try {
-        const screenshotParagraph = await this.createInlineScreenshot(relatedScreenshot);
-        if (screenshotParagraph) {
-          paragraphs.push(screenshotParagraph);
-        }
-      } catch (error) {
-        console.warn('Failed to add screenshot to interaction:', error);
-      }
-    }
-
-    paragraphs.push(new Paragraph({ text: "" })); // Empty line
-
-    return paragraphs;
-  }
-
-  async createApiFailureParagraphs(failure, index) {
-    const { Paragraph, TextRun } = window.docx;
-    const paragraphs = [];
-
-    // Main failure description
-    const failureText = [
-      new TextRun({
-        text: `${index}. [${Math.round((failure.relativeTime || 0) / 1000)}s] `,
-        bold: true,
-        color: "374151"
-      }),
-      new TextRun({
-        text: "⚠️ API FAILURE",
-        bold: true,
-        color: "EF4444"
-      }),
-      new TextRun({
-        text: ` ${failure.method} ${failure.url}`,
-        color: "374151"
-      })
-    ];
-
-    paragraphs.push(new Paragraph({ children: failureText }));
-
-    // Add failure details
-    const details = [];
-    details.push(`Status: ${failure.statusCode || failure.error}`);
-    if (failure.afterStep) {
-      details.push(`After Step: ${failure.afterStep.step} - ${failure.afterStep.type.toUpperCase()}`);
-      if (failure.afterStep.selector) {
-        details.push(`Element: "${failure.afterStep.selector}"`);
-      }
-    }
-
-    if (details.length > 0) {
-      paragraphs.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: `   ${details.join(' | ')}`,
-              color: "DC2626",
-              size: 20
-            })
-          ]
-        })
-      );
-    }
-
-    paragraphs.push(new Paragraph({ text: "" })); // Empty line
-
-    return paragraphs;
-  }
-
-  async createScreenshotParagraphs(screenshot, index) {
-    const { Paragraph, TextRun } = window.docx;
-    const paragraphs = [];
-
-    // Screenshot title
-    paragraphs.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: `Screenshot ${index}: `,
-            bold: true
-          }),
-          new TextRun({
-            text: `${screenshot.context.type || 'manual'} `,
-            color: "3B82F6"
-          }),
-          new TextRun({
-            text: `[${Math.round((screenshot.relativeTime || 0) / 1000)}s]`,
-            color: "6B7280"
-          })
-        ]
-      })
-    );
-
-    // Add screenshot image
-    try {
-      const screenshotParagraph = await this.createInlineScreenshot(screenshot, 400);
-      if (screenshotParagraph) {
-        paragraphs.push(screenshotParagraph);
-      }
-    } catch (error) {
-      paragraphs.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: `   [Screenshot could not be embedded: ${error.message}]`,
-              italics: true,
-              color: "EF4444"
-            })
-          ]
-        })
-      );
-    }
-
-    paragraphs.push(new Paragraph({ text: "" })); // Empty line
-
-    return paragraphs;
-  }
-
-  async createInlineScreenshot(screenshot, maxWidth = 300) {
-    const { Paragraph, ImageRun } = window.docx;
-
-    if (!screenshot.dataUrl || !screenshot.dataUrl.startsWith('data:image')) {
-      return null;
-    }
-
-    try {
-      // Convert data URL to buffer
-      const response = await fetch(screenshot.dataUrl);
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = new Uint8Array(arrayBuffer);
-
-      // Create image run
-      const imageRun = new ImageRun({
-        data: buffer,
-        transformation: {
-          width: maxWidth,
-          height: Math.round(maxWidth * 0.6) // Maintain aspect ratio approximately
-        }
-      });
-
-      return new Paragraph({
-        children: [imageRun],
-        spacing: { before: 100, after: 100 }
-      });
-
-    } catch (error) {
-      console.error('Failed to create inline screenshot:', error);
-      return null;
-    }
-  }
-
-  getInteractionColor(type) {
-    const colors = {
-      'click': '3B82F6',      // Blue
-      'input': '10B981',      // Green
-      'change': '10B981',     // Green
-      'navigation': '8B5CF6', // Purple
-      'url_change': '8B5CF6', // Purple
-      'scroll': '6B7280',     // Gray
-      'hover': 'F59E0B',      // Orange
-      'keypress': 'EF4444',   // Red
-      'session_start': '059669', // Dark green
-      'session_end': 'DC2626',   // Dark red
-      'session_pause': 'D97706', // Dark orange
-      'session_resume': '047857' // Dark green
-    };
-    return colors[type] || '374151'; // Default gray
   }
 
   async downloadExportedFile(exportData, format) {
     let blob, filename, content;
-    switch (format.toLowerCase()) {
+    switch ((format || 'txt').toLowerCase()) {
       case 'txt':
         blob = new Blob([exportData.txtContent], { type: 'text/plain' });
-        filename = exportData.filename;
+        filename = exportData.filename || 'session.txt';
         break;
       case 'csv':
         blob = new Blob([exportData.csvContent], { type: 'text/csv' });
-        filename = exportData.filename;
+        filename = exportData.filename || 'session.csv';
         break;
       case 'pdf':
-        content = JSON.stringify(exportData.pdfData, null, 2);
-        content = `// PDF Export Data for ${exportData.session.name}\n// This file contains structured data that can be processed into a PDF document\n// Screenshots are included as base64 data URLs\n\n${content}`;
+        content = JSON.stringify(exportData.pdfData || exportData, null, 2);
         blob = new Blob([content], { type: 'application/json' });
-        filename = exportData.filename.replace('.pdf', '_data.json');
+        filename = (exportData.filename || 'session').replace(/\.pdf$/,'') + '_data.json';
         break;
       default:
-        throw new Error('Unsupported export format: ' + format);
+        blob = new Blob([exportData.txtContent], { type: 'text/plain' });
+        filename = (exportData.filename || 'session') + '.txt';
     }
 
-    // Download the file
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
   }
 
+  async downloadDocxFromSession(session) {
+    const { Document, Packer, Paragraph, TextRun } = window.docx;
+    const children = [];
+
+    children.push(
+      new Paragraph({ children: [ new TextRun({ text: `TestSnapper Session: ${session.name || 'Untitled'}`, bold: true }) ] }),
+      new Paragraph({ children: [ new TextRun({ text: `URL: ${session.url || 'N/A'}` }) ] }),
+      new Paragraph({ children: [ new TextRun({ text: `Date: ${formatTimestamp(session.startTime)}` }) ] }),
+      new Paragraph({ children: [ new TextRun({ text: `Duration: ${Math.round((session.activeDuration||session.duration||0)/1000)}s` }) ] }),
+      new Paragraph({ text: "" })
+    );
+
+    const items = [];
+    if (Array.isArray(session.interactions)) items.push(...session.interactions.map(i => ({...i,_k:'interaction'})));
+    if (Array.isArray(session.apiFailures)) items.push(...session.apiFailures.map(f => ({...f,_k:'api_failure'})));
+    items.sort((a,b) => (a.relativeTime||a.timestamp||0)-(b.relativeTime||b.timestamp||0));
+
+    items.forEach((x, i) => {
+      const label = x._k === 'api_failure'
+        ? `⚠️ API FAILURE: ${x.method||''} ${x.url||''} (${x.statusCode||x.error||x.status||''})`
+        : (x.type? x.type.toUpperCase() : 'EVENT');
+      const when = x.timestamp ? formatTimestamp(x.timestamp) : `${Math.round((x.relativeTime||0)/1000)}s`;
+      const parts = [`${i+1}. [${when}] ${label}`];
+      if (x.selector) parts.push(`element: "${x.selector}"`);
+      if (x.value && x.value !== '[REDACTED]') parts.push(`value: "${x.value}"`);
+      if (x.value === '[REDACTED]') parts.push('value: [REDACTED]');
+      if (x.text && !x.value) parts.push(`text: "${x.text.slice(0,60)}${x.text.length>60?'…':''}"`);
+      children.push(new Paragraph({ children: [ new TextRun(parts.join(' — ')) ] }));
+    });
+
+    const doc = new Document({ sections: [{ children }] });
+    const blob = await Packer.toBlob(doc);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(session.name||'session').replace(/[^a-z0-9]/gi,'_')}.docx`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  /* ---------------- Recording controls ---------------- */
+  async startRecording() {
+    await chrome.runtime.sendMessage({ type: 'START_RECORDING' });
+    this.isRecording = true; this.isPaused = false; this.updateUI();
+  }
+  async pauseRecording() {
+    await chrome.runtime.sendMessage({ type: 'PAUSE_RECORDING' });
+    this.isPaused = true; this.updateUI();
+  }
+  async resumeRecording() {
+    await chrome.runtime.sendMessage({ type: 'RESUME_RECORDING' });
+    this.isPaused = false; this.updateUI();
+  }
+  async stopRecording() {
+    await chrome.runtime.sendMessage({ type: 'STOP_RECORDING' });
+    this.isRecording = false; this.isPaused = false;
+    await this.loadSessions(); this.updateUI();
+  }
+  async captureManualScreenshot() {
+    try {
+      await chrome.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', data: { type: 'manual_capture', manual: true, allowWhenPaused: true, timestamp: Date.now() } });
+      console.log('Manual screenshot captured');
+    } catch (e) { console.error('Screenshot failed:', e); }
+  }
+
+  /* ---------------- Delete ---------------- */
   async deleteSession(sessionId) {
-    if (!confirm('Are you sure you want to delete this session? This action cannot be undone.')) return;
+    if (!sessionId) return;
+    if (!confirm('Delete this session? This action cannot be undone.')) return;
     try {
-      const updatedSessions = this.sessions.filter(s => s.id !== sessionId);
-      await chrome.storage.local.set({ sessions: updatedSessions });
-      this.sessions = updatedSessions;
-      this.selectedSessions.delete(sessionId); // Remove from selection if selected
-      this.renderSessions();
-    } catch (error) {
-      alert('Failed to delete session: ' + error.message);
-    }
-  }
-
-  async saveSettings() {
-    try {
-      // Update settings from UI
-      this.settings.autoScreenshot = document.getElementById('auto-screenshot').checked;
-      this.settings.screenshotQuality = document.getElementById('screenshot-quality').value;
-      this.settings.redactionPatterns = document.getElementById('redaction-patterns').value;
-      this.settings.darkMode = document.getElementById('dark-mode').checked;
-
-      // Input time frame from slider
-      const timeFrameSlider = document.getElementById('input-time-frame');
-      if (timeFrameSlider) {
-        this.settings.inputTimeFrame = parseInt(timeFrameSlider.value);
+      const res = await chrome.runtime.sendMessage({ type: 'DELETE_SESSIONS', ids: [sessionId] });
+      if (!res || res.success === false) {
+        const updated = this.sessions.filter(s => s.id !== sessionId);
+        await chrome.storage.local.set({ sessions: updated });
       }
-
-      const exportFormatSelect = document.getElementById('export-format-select');
-      if (exportFormatSelect) this.settings.defaultExportFormat = exportFormatSelect.value;
-
-      // Save to both local storage and send to background script
-      await chrome.storage.local.set({ settings: this.settings });
-
-      // Update background script settings
-      await chrome.runtime.sendMessage({
-        type: 'UPDATE_SETTINGS',
-        settings: this.settings
-      });
-
-      const btn = document.getElementById('save-settings');
-      const originalText = btn.textContent;
-      btn.textContent = 'Saved!';
-      btn.style.background = '#059669';
-      setTimeout(() => {
-        btn.textContent = originalText;
-        btn.style.background = '';
-      }, 1500);
-
-      console.log('Settings saved successfully:', this.settings);
-    } catch (error) {
-      console.error('Failed to save settings:', error);
-      alert('Failed to save settings: ' + error.message);
+      await this.loadSessions();
+      this.selectedSessions.delete(sessionId);
+      this.renderSessions();
+    } catch (e) {
+      console.error('Failed to delete session:', e);
+      alert('Failed to delete session: ' + (e?.message || 'Unknown error'));
     }
   }
 
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+  /* ---------------- Tabs ---------------- */
+  switchTab(tabName) {
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    const tabBtn = document.querySelector(`.nav-btn[data-tab="${tabName}"]`); tabBtn && tabBtn.classList.add('active');
+
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+    const active = document.getElementById(`${tabName}-tab`); active && active.classList.remove('hidden');
+
+    this.currentTab = tabName;
+    if (tabName === 'sessions') this.loadSessions().then(() => this.renderSessions());
   }
 }
 
-// Initialize popup
-console.log('Initializing TestSnapper popup...');
-const popup = new TestSnapperPopup();
+/* ==============================================
+   Boot
+================================================= */
+document.addEventListener('DOMContentLoaded', () => {
+  const popup = new TestSnapperPopup();
+  popup.init().catch(err => console.error('Popup init failed:', err));
+});
