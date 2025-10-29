@@ -1,70 +1,64 @@
 {
   "manifest_version": 3,
   "name": "TestSnapper",
-  "description": "Automated test recording with local AI enrichment",
+  "description": "Automated test recording with field name and locator extraction",
   "version": "1.1.0",
   "author": "TestSnapper Team",
-
+  "minimum_chrome_version": "88",
   "permissions": [
     "storage",
-    "downloads", 
+    "downloads",
     "scripting",
     "activeTab",
-    "tabs",
-    "offscreen"
+    "tabs"
   ],
-
   "host_permissions": [
     "http://*/*",
     "https://*/*",
+    "<all_urls>",
     "file:///*"
   ],
-
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
   },
-
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*", "file:///*"],
-      "js": ["src/content.js"],
-      "run_at": "document_start",
+      "matches": [
+        "<all_urls>",
+        "file:///*"
+      ],
+      "js": [
+        "src/selector.js",
+        "src/redactor.js",
+        "src/content.js"
+      ],
+      "run_at": "document_end",
       "all_frames": false
     }
   ],
-
   "action": {
     "default_popup": "src/assets/html/popup.html",
     "default_title": "TestSnapper - Record UI Tests",
     "default_icon": {
       "16": "src/assets/icons/icon16.png",
-      "48": "src/assets/icons/icon48.png", 
+      "48": "src/assets/icons/icon48.png",
       "128": "src/assets/icons/icon128.png"
     }
   },
-
   "icons": {
     "16": "src/assets/icons/icon16.png",
     "48": "src/assets/icons/icon48.png",
     "128": "src/assets/icons/icon128.png"
   },
-
   "web_accessible_resources": [
     {
       "resources": [
-        "src/injected.js",
-        "src/assets/webllm/models/*/*",
-        "src/assets/webllm/webllm.min.mjs",
-        "src/assets/html/webllm-host.html"
+        "src/injected.js"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
-  ],
-
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline';"
-  },
-
-  "minimum_chrome_version": "88"
+  ]
 }

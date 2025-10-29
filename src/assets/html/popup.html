@@ -1,73 +1,104 @@
-<!-- FILE: src/popup.html -->
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>TestSnapper</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- No inline styles/scripts per MV3 CSP -->
-    <link rel="stylesheet" href="../css/popup.css" />
-  </head>
-  <body>
-    <header class="ts-pop-header">
-      <h1 class="ts-title">TestSnapper</h1>
-      <div class="ts-llm">
-        <label class="ts-toggle">
-          <input id="llmToggle" type="checkbox" />
-          <span>Enable WebLLM</span>
-        </label>
-        <span id="llmStatus" class="ts-chip ts-chip--idle" aria-live="polite">Idle</span>
-      </div>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TestSnapper</title>
+  <link rel="stylesheet" href="../css/popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎬 TestSnapper</h1>
+      <p class="subtitle">Record UI Test Steps</p>
     </header>
 
-    <section class="ts-progress" aria-hidden="true">
-      <div class="ts-progress__label">Model loading… <span id="llmProgressPct">0%</span></div>
-      <div class="ts-progress__bar"><div id="llmProgressBar" class="ts-progress__fill" style="width:0%"></div></div>
-    </section>
+    <div class="state-indicator" id="stateIndicator">
+      <div class="state-dot" id="stateDot"></div>
+      <span id="stateText">Idle</span>
+    </div>
 
-    <section class="ts-controls" aria-label="Recording controls">
-      <div class="ts-controls__row">
-        <button id="btnStart" class="ts-btn ts-btn--primary">Start</button>
-        <button id="btnPause" class="ts-btn" disabled>Pause</button>
-        <button id="btnResume" class="ts-btn" disabled>Resume</button>
-        <button id="btnStop" class="ts-btn ts-btn--danger" disabled>Stop</button>
+    <div class="stats">
+      <div class="stat-item">
+        <span class="stat-label">Steps Recorded</span>
+        <span class="stat-value" id="stepCount">0</span>
       </div>
-      <div class="ts-controls__row">
-        <button id="btnScreenshot" class="ts-btn" disabled>Screenshot</button>
-        <button id="btnExportCurrent" class="ts-btn" disabled>Export Current</button>
-      </div>
-      <div class="ts-meta" id="runMeta" aria-live="polite"></div>
-    </section>
+    </div>
 
-    <section class="ts-sessions" aria-label="Recent sessions">
-      <div class="ts-sessions__head">
-        <h2>Sessions</h2>
-        <button id="btnRefresh" class="ts-link">Refresh</button>
-      </div>
-      <ul id="sessionsList" class="ts-sessions__list" role="list">
-        <!-- populated by popup.js -->
-      </ul>
-      <template id="tplSessionItem">
-        <li class="ts-session" data-id="">
-          <div class="ts-session__main">
-            <div class="ts-session__name"></div>
-            <div class="ts-session__meta"></div>
-          </div>
-          <div class="ts-session__actions">
-            <button class="ts-btn ts-btn--small" data-action="open">Open</button>
-            <button class="ts-btn ts-btn--small" data-action="export">Export</button>
-            <button class="ts-link ts-link--danger" data-action="delete">Delete</button>
-          </div>
-        </li>
-      </template>
-    </section>
+    <div class="controls">
+      <button id="startBtn" class="btn btn-primary" data-testid="start-recording-btn">
+        <span class="btn-icon">▶️</span>
+        <span>Start Recording</span>
+      </button>
 
-    <footer class="ts-footer">
-      <div id="stats" class="ts-stats" aria-live="polite">
-        Steps: 0 • Enriched: 0 • Queue: 0 • Mode: —
+      <button id="pauseBtn" class="btn btn-warning" disabled data-testid="pause-recording-btn">
+        <span class="btn-icon">⏸️</span>
+        <span>Pause</span>
+      </button>
+
+      <button id="resumeBtn" class="btn btn-success" disabled data-testid="resume-recording-btn">
+        <span class="btn-icon">▶️</span>
+        <span>Resume</span>
+      </button>
+
+      <button id="stopBtn" class="btn btn-danger" disabled data-testid="stop-recording-btn">
+        <span class="btn-icon">⏹️</span>
+        <span>Stop</span>
+      </button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="export-section">
+      <h3>Export Recording</h3>
+      <div class="session-select" id="sessionSelect">
+        <select id="sessionDropdown" class="select" data-testid="session-dropdown">
+          <option value="">Select a session...</option>
+        </select>
       </div>
+
+      <div class="export-format">
+        <label>Export Format:</label>
+        <div class="format-options">
+          <label class="radio-label">
+            <input type="radio" name="format" value="json" checked data-testid="format-json">
+            <span>JSON</span>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="format" value="csv" data-testid="format-csv">
+            <span>CSV</span>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="format" value="markdown" data-testid="format-markdown">
+            <span>Markdown</span>
+          </label>
+        </div>
+      </div>
+
+      <button id="exportBtn" class="btn btn-export" disabled data-testid="export-btn">
+        <span class="btn-icon">📥</span>
+        <span>Export Session</span>
+      </button>
+
+      <button id="viewStepsBtn" class="btn btn-secondary" disabled data-testid="view-steps-btn">
+        <span class="btn-icon">👁️</span>
+        <span>View Steps</span>
+      </button>
+    </div>
+
+    <div class="steps-viewer" id="stepsViewer" style="display: none;">
+      <h3>Recorded Steps</h3>
+      <div id="stepsList" class="steps-list"></div>
+      <button id="closeStepsBtn" class="btn btn-secondary">Close</button>
+    </div>
+
+    <div class="message" id="message"></div>
+
+    <footer>
+      <p>TestSnapper v1.1.0</p>
     </footer>
+  </div>
 
-    <script type="module" src="../../src/popup.js"></script>
-  </body>
+  <script src="../../popup.js"></script>
+</body>
 </html>
