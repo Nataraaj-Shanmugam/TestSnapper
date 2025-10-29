@@ -2,14 +2,39 @@
  * Popup Script - Controls the extension popup UI
  */
 
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const targetTab = tab.dataset.tab;
+    
+    // Update active tab
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    
+    // Update active content
+    document.querySelectorAll('.tab-content').forEach(content => {
+      content.classList.remove('active');
+    });
+    document.getElementById(targetTab + '-tab').classList.add('active');
+    
+    // Load sessions when switching to export tab
+    if (targetTab === 'export') {
+      loadSessions();
+    }
+  });
+});
+
 // UI Elements
 const startBtn = document.getElementById('startBtn');
 const pauseBtn = document.getElementById('pauseBtn');
 const resumeBtn = document.getElementById('resumeBtn');
 const stopBtn = document.getElementById('stopBtn');
+const screenshotBtn = document.getElementById('screenshotBtn');
 const exportBtn = document.getElementById('exportBtn');
 const viewStepsBtn = document.getElementById('viewStepsBtn');
 const closeStepsBtn = document.getElementById('closeStepsBtn');
+const deleteSessionBtn = document.getElementById('deleteSessionBtn');
+const clearAllBtn = document.getElementById('clearAllBtn');
 const stateIndicator = document.getElementById('stateIndicator');
 const stateDot = document.getElementById('stateDot');
 const stateText = document.getElementById('stateText');
@@ -18,6 +43,8 @@ const messageDiv = document.getElementById('message');
 const sessionDropdown = document.getElementById('sessionDropdown');
 const stepsViewer = document.getElementById('stepsViewer');
 const stepsList = document.getElementById('stepsList');
+const liveStepsViewer = document.getElementById('liveStepsViewer');
+const liveStepsList = document.getElementById('liveStepsList');
 
 let currentState = 'idle';
 let currentSessionId = null;
@@ -39,11 +66,14 @@ function setupEventListeners() {
   pauseBtn.addEventListener('click', handlePause);
   resumeBtn.addEventListener('click', handleResume);
   stopBtn.addEventListener('click', handleStop);
+  screenshotBtn.addEventListener('click', handleScreenshot);
   exportBtn.addEventListener('click', handleExport);
   viewStepsBtn.addEventListener('click', handleViewSteps);
   closeStepsBtn.addEventListener('click', () => {
     stepsViewer.style.display = 'none';
   });
+  deleteSessionBtn.addEventListener('click', handleDeleteSession);
+  clearAllBtn.addEventListener('click', handleClearAll);
   sessionDropdown.addEventListener('change', handleSessionSelect);
 }
 
@@ -76,6 +106,7 @@ async function handleStart() {
       currentSessionId = response.sessionId;
       showMessage('Recording started!', 'success');
       await updateState();
+      liveStepsViewer.style.display = 'block';
     } else {
       showMessage('Failed to start: ' + response.error, 'error');
     }
@@ -138,14 +169,45 @@ async function handleStop() {
 
     if (response.success) {
       showMessage('Recording stopped!', 'success');
+      liveStepsViewer.style.display = 'none';
       await updateState();
       await loadSessions();
+      
+      // Switch to export tab
+      document.querySelector('[data-tab="export"]').click();
+      
+      // Auto-select the latest session
+      if (currentSessionId) {
+        sessionDropdown.value = currentSessionId;
+        handleSessionSelect();
+      }
     } else {
       showMessage('Failed to stop: ' + response.error, 'error');
     }
   } catch (error) {
     console.error('Stop failed:', error);
     showMessage('Error stopping recording', 'error');
+  }
+}
+
+/**
+ * Handle screenshot
+ */
+async function handleScreenshot() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'captureScreenshot'
+    });
+
+    if (response.success) {
+      showMessage('Screenshot captured!', 'success');
+      await updateState();
+    } else {
+      showMessage('Failed to capture: ' + response.error, 'error');
+    }
+  } catch (error) {
+    console.error('Screenshot failed:', error);
+    showMessage('Error capturing screenshot', 'error');
   }
 }
 
@@ -198,7 +260,7 @@ async function handleViewSteps() {
     });
 
     if (response.success) {
-      displaySteps(response.steps);
+      displaySteps(response.steps, stepsList);
       stepsViewer.style.display = 'block';
     } else {
       showMessage('Failed to load steps: ' + response.error, 'error');
@@ -210,15 +272,76 @@ async function handleViewSteps() {
 }
 
 /**
- * Display steps in viewer
+ * Handle delete session
  */
-function displaySteps(steps) {
-  if (!steps || steps.length === 0) {
-    stepsList.innerHTML = '<p style="text-align: center; color: #999;">No steps recorded</p>';
+async function handleDeleteSession() {
+  const selectedSessionId = sessionDropdown.value;
+  if (!selectedSessionId) {
+    showMessage('Please select a session', 'error');
     return;
   }
 
-  stepsList.innerHTML = steps.map((step, index) => `
+  if (!confirm('Delete this session? This cannot be undone.')) {
+    return;
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'deleteSession',
+      sessionId: selectedSessionId
+    });
+
+    if (response.success) {
+      showMessage('Session deleted', 'success');
+      await loadSessions();
+      sessionDropdown.value = '';
+      handleSessionSelect();
+    } else {
+      showMessage('Failed to delete: ' + response.error, 'error');
+    }
+  } catch (error) {
+    console.error('Delete failed:', error);
+    showMessage('Error deleting session', 'error');
+  }
+}
+
+/**
+ * Handle clear all
+ */
+async function handleClearAll() {
+  if (!confirm('Delete ALL sessions? This cannot be undone.')) {
+    return;
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'clearAllSessions'
+    });
+
+    if (response.success) {
+      showMessage('All sessions cleared', 'success');
+      await loadSessions();
+    } else {
+      showMessage('Failed to clear: ' + response.error, 'error');
+    }
+  } catch (error) {
+    console.error('Clear all failed:', error);
+    showMessage('Error clearing sessions', 'error');
+  }
+}
+
+/**
+ * Display steps in viewer
+ */
+function displaySteps(steps, targetElement) {
+  if (!targetElement) targetElement = stepsList;
+  
+  if (!steps || steps.length === 0) {
+    targetElement.innerHTML = '<p style="text-align: center; color: #999; font-size: 11px;">No steps recorded</p>';
+    return;
+  }
+
+  targetElement.innerHTML = steps.map((step, index) => `
     <div class="step-item">
       <div class="step-header">
         <span class="step-number">Step ${index + 1}</span>
@@ -226,7 +349,7 @@ function displaySteps(steps) {
       </div>
       <div class="step-details">
         <div class="step-detail">
-          <strong>Field Name:</strong>
+          <strong>Field:</strong>
           <span>${step.fieldName || 'N/A'}</span>
         </div>
         <div class="step-detail">
@@ -239,16 +362,6 @@ function displaySteps(steps) {
             <span>${step.value}</span>
           </div>
         ` : ''}
-        ${step.selector?.text ? `
-          <div class="step-detail">
-            <strong>Text:</strong>
-            <span>${step.selector.text}</span>
-          </div>
-        ` : ''}
-        <div class="step-detail">
-          <strong>URL:</strong>
-          <span style="font-size: 10px; word-break: break-all;">${step.url}</span>
-        </div>
       </div>
     </div>
   `).join('');
@@ -261,6 +374,7 @@ function handleSessionSelect() {
   const hasSelection = sessionDropdown.value !== '';
   exportBtn.disabled = !hasSelection;
   viewStepsBtn.disabled = !hasSelection;
+  deleteSessionBtn.disabled = !hasSelection;
 }
 
 /**
@@ -285,9 +399,34 @@ async function updateState() {
       
       // Update button states
       updateButtonStates();
+      
+      // Update live steps if recording
+      if (currentState === 'recording' && currentSessionId) {
+        updateLiveSteps();
+      }
     }
   } catch (error) {
     console.error('Failed to get state:', error);
+  }
+}
+
+/**
+ * Update live steps
+ */
+async function updateLiveSteps() {
+  if (!currentSessionId) return;
+  
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'getSessionSteps',
+      sessionId: currentSessionId
+    });
+
+    if (response.success) {
+      displaySteps(response.steps, liveStepsList);
+    }
+  } catch (error) {
+    console.error('Failed to update live steps:', error);
   }
 }
 
@@ -299,6 +438,7 @@ function updateButtonStates() {
   pauseBtn.disabled = currentState !== 'recording';
   resumeBtn.disabled = currentState !== 'paused';
   stopBtn.disabled = currentState === 'idle';
+  screenshotBtn.disabled = currentState !== 'recording';
 }
 
 /**

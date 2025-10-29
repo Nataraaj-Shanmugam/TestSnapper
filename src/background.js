@@ -57,6 +57,168 @@ async function createSession(tabInfo) {
 }
 
 /**
+ * Generate Markdown format
+ */
+function generateMarkdown(exportData) {
+  const { session, steps } = exportData;
+
+  let content = `# Test Recording Session\n\n`;
+  content += `**Session ID:** ${session.id}\n`;
+  content += `**Created:** ${new Date(session.createdAt).toLocaleString()}\n`;
+  content += `**URL:** ${session.environment.url}\n`;
+  content += `**Page Title:** ${session.environment.title || 'N/A'}\n`;
+  content += `**Total Steps:** ${session.stepCount}\n\n`;
+  content += `---\n\n`;
+  content += `## Steps\n\n`;
+
+  steps.forEach((step, index) => {
+    content += `### Step ${index + 1}: ${step.action}\n\n`;
+    content += `- **Field Name:** ${step.fieldName || 'N/A'}\n`;
+    content += `- **Selector (CSS):** \`${step.selector?.css || 'N/A'}\`\n`;
+    if (step.selector?.xpath) {
+      content += `- **Selector (XPath):** \`${step.selector.xpath}\`\n`;
+    }
+    if (step.selector?.text) {
+      content += `- **Text Content:** "${step.selector.text}"\n`;
+    }
+    if (step.value) {
+      content += `- **Value:** ${step.value}\n`;
+    }
+    content += `- **URL:** ${step.url}\n`;
+    content += `- **Timestamp:** ${new Date(step.timestamp).toLocaleString()}\n`;
+    if (step.notes) {
+      content += `- **Notes:** ${step.notes}\n`;
+    }
+    content += `\n`;
+  });
+
+  return content;
+}
+
+/**
+ * Generate DOCX file (simplified HTML-based approach)
+ * Creates an HTML document that Word can open as DOCX
+ */
+function generateSimpleDocx(exportData) {
+  const { session, steps } = exportData;
+
+  // Generate HTML that Microsoft Word can open
+  let html = `
+<!DOCTYPE html>
+<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+  <meta charset='utf-8'>
+  <title>Test Recording Session</title>
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; margin: 40px; }
+    h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+    h2 { color: #34495e; margin-top: 30px; background: #ecf0f1; padding: 10px; }
+    .info { background: #f8f9fa; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0; }
+    .info p { margin: 5px 0; }
+    .step { border: 1px solid #ddd; padding: 15px; margin: 15px 0; border-radius: 5px; }
+    .step-header { font-weight: bold; font-size: 16px; color: #2980b9; margin-bottom: 10px; }
+    .step-detail { margin: 8px 0; padding-left: 15px; }
+    .label { font-weight: bold; color: #555; display: inline-block; width: 120px; }
+    .value { color: #333; }
+    code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
+  </style>
+</head>
+<body>
+  <h1>🎬 Test Recording Session</h1>
+  
+  <div class='info'>
+    <p><span class='label'>Session ID:</span> <span class='value'>${session.id}</span></p>
+    <p><span class='label'>Created:</span> <span class='value'>${new Date(session.createdAt).toLocaleString()}</span></p>
+    <p><span class='label'>URL:</span> <span class='value'>${session.environment.url}</span></p>
+    <p><span class='label'>Page Title:</span> <span class='value'>${session.environment.title || 'N/A'}</span></p>
+    <p><span class='label'>Total Steps:</span> <span class='value'>${session.stepCount}</span></p>
+  </div>
+  
+  <h2>📋 Recorded Steps</h2>
+`;
+
+  steps.forEach((step, index) => {
+    html += `
+  <div class='step'>
+    <div class='step-header'>Step ${index + 1}: ${escapeHtml(step.action).toUpperCase()}</div>
+    <div class='step-detail'>
+      <span class='label'>Field Name:</span> 
+      <span class='value'>${escapeHtml(step.fieldName || 'N/A')}</span>
+    </div>
+    <div class='step-detail'>
+      <span class='label'>Selector (CSS):</span> 
+      <code>${escapeHtml(step.selector?.css || 'N/A')}</code>
+    </div>`;
+
+    if (step.selector?.xpath) {
+      html += `
+    <div class='step-detail'>
+      <span class='label'>Selector (XPath):</span> 
+      <code>${escapeHtml(step.selector.xpath)}</code>
+    </div>`;
+    }
+
+    if (step.selector?.text) {
+      html += `
+    <div class='step-detail'>
+      <span class='label'>Text Content:</span> 
+      <span class='value'>"${escapeHtml(step.selector.text)}"</span>
+    </div>`;
+    }
+
+    if (step.value) {
+      html += `
+    <div class='step-detail'>
+      <span class='label'>Value:</span> 
+      <span class='value'>${escapeHtml(step.value)}</span>
+    </div>`;
+    }
+
+    html += `
+    <div class='step-detail'>
+      <span class='label'>URL:</span> 
+      <span class='value' style='font-size: 11px; word-break: break-all;'>${escapeHtml(step.url)}</span>
+    </div>
+    <div class='step-detail'>
+      <span class='label'>Timestamp:</span> 
+      <span class='value'>${new Date(step.timestamp).toLocaleString()}</span>
+    </div>`;
+
+    if (step.notes) {
+      html += `
+    <div class='step-detail'>
+      <span class='label'>Notes:</span> 
+      <span class='value'>${escapeHtml(step.notes)}</span>
+    </div>`;
+    }
+
+    html += `
+  </div>`;
+  });
+
+  html += `
+</body>
+</html>`;
+
+  return html;
+}
+
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(text) {
+  if (!text) return '';
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  };
+  return String(text).replace(/[&<>"']/g, m => map[m]);
+}
+
+/**
  * Start recording
  */
 async function startRecording(tabId, tabInfo) {
@@ -191,6 +353,38 @@ async function stopRecording(tabId) {
 }
 
 /**
+ * Capture screenshot
+ */
+async function captureScreenshot(tabId) {
+  if (currentState !== States.RECORDING) {
+    return { success: false, error: 'Not recording' };
+  }
+
+  try {
+    const screenshot = await chrome.tabs.captureVisibleTab(null, {
+      format: 'png'
+    });
+
+    // Create a screenshot step
+    const stepData = {
+      action: 'screenshot',
+      selector: null,
+      fieldName: 'Screenshot',
+      targetLabel: 'Manual Screenshot',
+      url: (await chrome.tabs.get(tabId)).url,
+      value: screenshot, // Base64 image data
+      isSensitive: false
+    };
+
+    const result = await addStep(stepData);
+    return { success: true, stepId: result.step.id };
+  } catch (error) {
+    console.error('Failed to capture screenshot:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Add step to current session
  */
 async function addStep(stepData) {
@@ -289,6 +483,16 @@ async function exportSession(sessionId, format = 'json') {
 
       filename = `testsnapper_${sessionId.substring(0, 8)}_${Date.now()}.csv`;
       mimeType = 'text/csv';
+    } else if (format === 'docx') {
+      // DOCX format (HTML-based that Word can open)
+      content = generateSimpleDocx(exportData);
+      filename = `testsnapper_${sessionId.substring(0, 8)}_${Date.now()}.doc`;
+      mimeType = 'application/msword';
+    } else if (format === 'markdown') {
+      // Markdown format
+      content = generateMarkdown(exportData);
+      filename = `testsnapper_${sessionId.substring(0, 8)}_${Date.now()}.md`;
+      mimeType = 'text/markdown';
     }
 
     // Create blob and download
@@ -383,6 +587,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'getSessionSteps': {
           const steps = await storage.getSteps(message.sessionId);
           response = { success: true, steps };
+          break;
+        }
+
+        case 'deleteSession': {
+          const result = await storage.clearSession(message.sessionId);
+          response = { success: true };
+          break;
+        }
+
+        case 'clearAllSessions': {
+          const sessions = await storage.getAllSessions();
+          for (const session of sessions) {
+            await storage.clearSession(session.sessionId);
+          }
+          response = { success: true };
+          break;
+        }
+
+        case 'captureScreenshot': {
+          if (!tabId) throw new Error('No tab context for screenshot');
+          response = await captureScreenshot(tabId);
           break;
         }
 
