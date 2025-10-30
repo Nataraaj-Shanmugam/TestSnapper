@@ -6,17 +6,14 @@
   "author": "TestSnapper Team",
   "minimum_chrome_version": "88",
   "permissions": [
+    "tabs",
+    "activeTab",
     "storage",
     "downloads",
-    "scripting",
-    "activeTab",
-    "tabs"
+    "scripting"
   ],
   "host_permissions": [
-    "http://*/*",
-    "https://*/*",
-    "<all_urls>",
-    "file:///*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "src/background.js",

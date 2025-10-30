@@ -1,7 +1,7 @@
 /**
- * Content Script - Records user interactions and captures element information
+ * Content Script - Records user interactions with smart deduplication
+ * FIXED: Eliminates redundant steps and incorrect ordering
  */
-
 
 let selectorEngine;
 let redactor;
@@ -9,7 +9,18 @@ let isRecording = false;
 let currentSessionId = null;
 let highlightOverlay = null;
 
-// Initialize modules - wait for window to have the classes
+// ✅ NEW: Track last interactions to prevent duplicates
+let lastInteraction = {
+  element: null,
+  action: null,
+  timestamp: 0,
+  value: null
+};
+
+// ✅ NEW: Pending input timeouts per element
+const pendingInputs = new Map();
+
+// Initialize modules
 function initModules() {
   if (window.SelectorEngine && window.Redactor) {
     selectorEngine = new window.SelectorEngine();
@@ -20,17 +31,11 @@ function initModules() {
   return false;
 }
 
-// Try to initialize, with retry logic
 if (!initModules()) {
   console.log('TestSnapper: Waiting for modules to load...');
-  console.log('Available:', {
-    hasSelectorEngine: !!window.SelectorEngine,
-    hasRedactor: !!window.Redactor
-  });
   setTimeout(() => {
     if (!initModules()) {
       console.error('TestSnapper: Failed to initialize - modules not available');
-      console.error('Window keys:', Object.keys(window).filter(k => k.includes('Selector') || k.includes('Redactor')));
     }
   }, 100);
 }
@@ -58,8 +63,6 @@ function createHighlight(element) {
   `;
 
   document.body.appendChild(highlightOverlay);
-
-  // Auto-remove after 1 second
   setTimeout(removeHighlight, 1000);
 }
 
@@ -74,97 +77,84 @@ function removeHighlight() {
 }
 
 /**
- * Capture click event
+ * ✅ NEW: Check if this interaction is a duplicate
+ */
+function isDuplicateInteraction(element, action, value = null) {
+  const now = Date.now();
+  const timeSinceLastAction = now - lastInteraction.timestamp;
+  
+  // If same element and action within 500ms, it's a duplicate
+  if (lastInteraction.element === element && 
+      lastInteraction.action === action && 
+      timeSinceLastAction < 500) {
+    
+    // For input fields, only consider duplicate if value is same
+    if (action === 'type' && value !== lastInteraction.value) {
+      return false;
+    }
+    
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * ✅ NEW: Update last interaction tracking
+ */
+function updateLastInteraction(element, action, value = null) {
+  lastInteraction = {
+    element: element,
+    action: action,
+    timestamp: Date.now(),
+    value: value
+  };
+}
+
+/**
+ * ✅ NEW: Check if element is an input field
+ */
+function isInputElement(element) {
+  const tag = element.tagName.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
+/**
+ * ✅ FIXED: Capture click event - skip redundant clicks on input fields
  */
 function handleClick(event) {
   if (!isRecording || !selectorEngine || !redactor) return;
 
   const element = event.target;
 
-  // Skip if clicking on TestSnapper UI
+  // Skip TestSnapper UI
   if (element.id?.startsWith('testsnapper-')) return;
 
-  const selector = selectorEngine.generateSelector(element);
-  const fieldName = selectorEngine.extractFieldName(element);
-
-  const stepData = {
-    action: 'click',
-    selector: selector,
-    fieldName: fieldName,
-    targetLabel: selectorEngine.getElementText(element),
-    url: window.location.href,
-    value: null,
-    isSensitive: false
-  };
-
-  // Highlight the element
-  createHighlight(element);
-
-  // Send to background
-  sendStepToBackground(stepData);
-
-  console.log('Click captured:', fieldName, selector);
-}
-
-/**
- * Capture input event
- */
-function handleInput(event) {
-  if (!isRecording || !selectorEngine || !redactor) return;
-
-  const element = event.target;
-  const selector = selectorEngine.generateSelector(element);
-  const fieldName = selectorEngine.extractFieldName(element);
-  const isSensitive = redactor.shouldIgnoreField(element);
-  const value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
-
-  const stepData = {
-    action: 'type',
-    selector: selector,
-    fieldName: fieldName,
-    targetLabel: selectorEngine.getElementText(element),
-    url: window.location.href,
-    value: value,
-    isSensitive: isSensitive
-  };
-
-  // Debounce input events - use simpler approach
-  if (!element._testSnapperTimeout) {
-    element._testSnapperTimeout = null;
+  // ✅ Skip click on input fields (will be captured as type/change)
+  if (isInputElement(element) && element.type !== 'radio' && element.type !== 'checkbox' && element.type !== 'submit' && element.type !== 'button') {
+    console.log('Skipping click on input field - will capture as type/change');
+    return;
   }
 
-  clearTimeout(element._testSnapperTimeout);
-  element._testSnapperTimeout = setTimeout(() => {
-    sendStepToBackground(stepData);
-    console.log('Input captured:', fieldName, value);
-  }, 500);
-}
+  // ✅ Check for duplicate
+  if (isDuplicateInteraction(element, 'click')) {
+    console.log('Skipping duplicate click');
+    return;
+  }
 
-/**
- * Capture change event (select, checkbox, radio)
- */
-function handleChange(event) {
-  if (!isRecording || !selectorEngine || !redactor) return;
-
-  const element = event.target;
   const selector = selectorEngine.generateSelector(element);
   const fieldName = selectorEngine.extractFieldName(element);
 
-  let value;
-  let action;
+  // ✅ Determine correct action based on element type
+  let action = 'click';
+  let value = null;
 
-  if (element.type === 'checkbox') {
-    action = 'check';
-    value = element.checked ? 'checked' : 'unchecked';
-  } else if (element.type === 'radio') {
+  if (element.type === 'radio') {
     action = 'select_radio';
     value = element.value;
-  } else if (element.tagName.toLowerCase() === 'select') {
-    action = 'select';
-    value = element.options[element.selectedIndex]?.text || element.value;
-  } else {
-    action = 'change';
-    value = element.value;
+  } else if (element.type === 'checkbox') {
+    action = 'check';
+    value = element.checked ? 'checked' : 'unchecked';
   }
 
   const stepData = {
@@ -177,17 +167,132 @@ function handleChange(event) {
     isSensitive: false
   };
 
+  createHighlight(element);
+  updateLastInteraction(element, action, value);
+  sendStepToBackground(stepData);
+
+  console.log('Interaction captured:', action, fieldName);
+}
+
+/**
+ * ✅ FIXED: Capture input event with proper debouncing
+ */
+function handleInput(event) {
+  if (!isRecording || !selectorEngine || !redactor) return;
+
+  const element = event.target;
+  const elementKey = selectorEngine.generateSelector(element)?.css || element;
+  
+  // ✅ Cancel any pending input for this element
+  if (pendingInputs.has(elementKey)) {
+    clearTimeout(pendingInputs.get(elementKey));
+  }
+
+  // ✅ Debounce input - wait for user to stop typing
+  const timeoutId = setTimeout(() => {
+    const selector = selectorEngine.generateSelector(element);
+    const fieldName = selectorEngine.extractFieldName(element);
+    const isSensitive = redactor.shouldIgnoreField(element);
+    const value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
+
+    // ✅ Skip if this is a duplicate
+    if (isDuplicateInteraction(element, 'type', value)) {
+      console.log('Skipping duplicate input');
+      return;
+    }
+
+    const stepData = {
+      action: 'type',
+      selector: selector,
+      fieldName: fieldName,
+      targetLabel: selectorEngine.getElementText(element),
+      url: window.location.href,
+      value: value,
+      isSensitive: isSensitive
+    };
+
+    updateLastInteraction(element, 'type', value);
+    sendStepToBackground(stepData);
+    pendingInputs.delete(elementKey);
+    
+    console.log('Input captured:', fieldName, value);
+  }, 800); // Increased debounce time for better UX
+
+  pendingInputs.set(elementKey, timeoutId);
+}
+
+/**
+ * ✅ FIXED: Capture change event - avoid duplicates with input
+ */
+function handleChange(event) {
+  if (!isRecording || !selectorEngine || !redactor) return;
+
+  const element = event.target;
+  
+  // ✅ Cancel any pending input for this element to avoid duplicate
+  const elementKey = selectorEngine.generateSelector(element)?.css || element;
+  if (pendingInputs.has(elementKey)) {
+    clearTimeout(pendingInputs.get(elementKey));
+    pendingInputs.delete(elementKey);
+  }
+
+  const selector = selectorEngine.generateSelector(element);
+  const fieldName = selectorEngine.extractFieldName(element);
+
+  let value;
+  let action;
+
+  if (element.type === 'checkbox') {
+    // ✅ Skip - already handled by click
+    return;
+  } else if (element.type === 'radio') {
+    // ✅ Skip - already handled by click
+    return;
+  } else if (element.tagName.toLowerCase() === 'select') {
+    action = 'select';
+    value = element.options[element.selectedIndex]?.text || element.value;
+  } else {
+    // ✅ For text inputs, use 'type' action
+    action = 'type';
+    const isSensitive = redactor.shouldIgnoreField(element);
+    value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
+  }
+
+  // ✅ Check for duplicate
+  if (isDuplicateInteraction(element, action, value)) {
+    console.log('Skipping duplicate change');
+    return;
+  }
+
+  const stepData = {
+    action: action,
+    selector: selector,
+    fieldName: fieldName,
+    targetLabel: selectorEngine.getElementText(element),
+    url: window.location.href,
+    value: value,
+    isSensitive: false
+  };
+
+  updateLastInteraction(element, action, value);
   sendStepToBackground(stepData);
   console.log('Change captured:', fieldName, value);
 }
 
 /**
- * Capture form submit
+ * ✅ FIXED: Capture form submit - prevent duplicate with button click
  */
 function handleSubmit(event) {
   if (!isRecording || !selectorEngine) return;
 
   const form = event.target;
+  
+  // ✅ Check for duplicate submit
+  if (isDuplicateInteraction(form, 'submit')) {
+    console.log('Skipping duplicate submit');
+    return;
+  }
+
   const selector = selectorEngine.generateSelector(form);
   const fieldName = selectorEngine.extractFieldName(form) || 'Form';
 
@@ -201,28 +306,49 @@ function handleSubmit(event) {
     isSensitive: false
   };
 
+  updateLastInteraction(form, 'submit');
   sendStepToBackground(stepData);
   console.log('Submit captured:', fieldName);
 }
 
 /**
- * Capture navigation
+ * ✅ FIXED: Capture navigation - only once per URL change
  */
+let lastNavigationUrl = '';
+let isInitialNavigation = true;
+
 function captureNavigation() {
   if (!isRecording) return;
+
+  const currentUrl = window.location.href;
+  
+  // ✅ Skip initial navigation when recording starts
+  if (isInitialNavigation) {
+    isInitialNavigation = false;
+    lastNavigationUrl = currentUrl;
+    console.log('Skipping initial navigation');
+    return;
+  }
+
+  // ✅ Skip if URL hasn't changed
+  if (currentUrl === lastNavigationUrl) {
+    return;
+  }
+
+  lastNavigationUrl = currentUrl;
 
   const stepData = {
     action: 'navigate',
     selector: null,
     fieldName: 'Page Navigation',
     targetLabel: document.title,
-    url: window.location.href,
-    value: window.location.href,
+    url: currentUrl,
+    value: currentUrl,
     isSensitive: false
   };
 
   sendStepToBackground(stepData);
-  console.log('Navigation captured:', window.location.href);
+  console.log('Navigation captured:', currentUrl);
 }
 
 /**
@@ -249,16 +375,14 @@ function startRecording(sessionId) {
 
   isRecording = true;
   currentSessionId = sessionId;
+  isInitialNavigation = true; // ✅ Reset initial navigation flag
+  lastNavigationUrl = window.location.href;
 
   document.addEventListener('click', handleClick, true);
   document.addEventListener('input', handleInput, true);
   document.addEventListener('change', handleChange, true);
   document.addEventListener('submit', handleSubmit, true);
 
-  // Capture initial navigation
-  captureNavigation();
-
-  // Add recording indicator
   addRecordingIndicator();
 
   console.log('Content script: Recording started');
@@ -293,13 +417,18 @@ function stopRecording() {
   isRecording = false;
   currentSessionId = null;
 
-  // Remove event listeners
+  // ✅ Clear all pending inputs
+  pendingInputs.forEach(timeoutId => clearTimeout(timeoutId));
+  pendingInputs.clear();
+
+  // ✅ Reset tracking
+  lastInteraction = { element: null, action: null, timestamp: 0, value: null };
+
   document.removeEventListener('click', handleClick, true);
   document.removeEventListener('input', handleInput, true);
   document.removeEventListener('change', handleChange, true);
   document.removeEventListener('submit', handleSubmit, true);
 
-  // Remove recording indicator
   removeRecordingIndicator();
   removeHighlight();
 
@@ -418,7 +547,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Listen for navigation changes
+// ✅ FIXED: Monitor URL changes without capturing initial load
 let lastUrl = window.location.href;
 setInterval(() => {
   if (isRecording && window.location.href !== lastUrl) {

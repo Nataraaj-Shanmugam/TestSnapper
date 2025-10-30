@@ -6,19 +6,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TestSnapper</title>
   <link rel="stylesheet" href="../css/popup.css">
+
 </head>
 
 <body>
   <div class="container">
     <header>
       <h1>🎬 TestSnapper</h1>
-      <p class="subtitle">Professional Test Recording</p>
     </header>
 
     <!-- Tabs -->
     <div class="tabs">
       <button class="tab active" data-tab="recording">Recording</button>
       <button class="tab" data-tab="export">Export</button>
+      <button class="tab" data-tab="settings">Settings</button>
     </div>
 
     <div class="message" id="message"></div>
@@ -133,6 +134,80 @@
         <div id="stepsList" class="steps-list"></div>
         <button id="closeStepsBtn" class="btn btn-secondary btn-small">Close</button>
       </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div class="tab-content" id="settings-tab">
+      <div class="export-section">
+        <h3>⚙️ Recording Settings</h3>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="captureApiCalls">
+            <span>Capture API Calls</span>
+          </label>
+
+          <div class="sub-settings" id="apiCallsOptions" style="display: none;">
+            <label class="checkbox-label sub-option">
+              <input type="checkbox" id="captureFailedCalls">
+              <span>Failed Requests Only</span>
+            </label>
+
+            <label class="checkbox-label sub-option">
+              <input type="checkbox" id="captureAllCalls">
+              <span>All Requests</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="includeTimestamp" checked>
+            <span>Include Timestamp for Each Step</span>
+          </label>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoScreenshot">
+            <span>Capture Screenshots Automatically</span>
+          </label>
+
+          <div class="sub-settings" id="screenshotInterval" style="display: none;">
+            <div class="input-group">
+              <label>Every</label>
+              <input type="number" id="screenshotSeconds" min="1" max="60" value="5" class="small-input">
+              <label>seconds</label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="storage-section">
+        <h3>💾 Storage Settings</h3>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoSave" checked>
+            <span>Auto-save Sessions</span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>Max Sessions to Keep:</label>
+          <select id="maxSessions" class="select">
+            <option value="10">10 sessions</option>
+            <option value="25" selected>25 sessions</option>
+            <option value="50">50 sessions</option>
+            <option value="100">100 sessions</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="saveSettingsBtn" class="btn btn-info">
+        <span class="btn-icon">💾</span>
+        <span>Save Settings</span>
+      </button>
     </div>
 
     <footer>

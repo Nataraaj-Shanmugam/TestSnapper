@@ -1,23 +1,20 @@
 /**
- * Popup Script - Controls the extension popup UI
+ * Popup Script - FIXED: Session ordering, step display
  */
 
 // Tab switching
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
     const targetTab = tab.dataset.tab;
-    
-    // Update active tab
+
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    
-    // Update active content
+
     document.querySelectorAll('.tab-content').forEach(content => {
       content.classList.remove('active');
     });
     document.getElementById(targetTab + '-tab').classList.add('active');
-    
-    // Load sessions when switching to export tab
+
     if (targetTab === 'export') {
       loadSessions();
     }
@@ -45,22 +42,28 @@ const stepsViewer = document.getElementById('stepsViewer');
 const stepsList = document.getElementById('stepsList');
 const liveStepsViewer = document.getElementById('liveStepsViewer');
 const liveStepsList = document.getElementById('liveStepsList');
+const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+const captureApiCalls = document.getElementById('captureApiCalls');
+const apiCallsOptions = document.getElementById('apiCallsOptions');
+const captureFailedCalls = document.getElementById('captureFailedCalls');
+const captureAllCalls = document.getElementById('captureAllCalls');
+const includeTimestamp = document.getElementById('includeTimestamp');
+const autoScreenshot = document.getElementById('autoScreenshot');
+const screenshotInterval = document.getElementById('screenshotInterval');
+const screenshotSeconds = document.getElementById('screenshotSeconds');
+const autoSave = document.getElementById('autoSave');
+const maxSessions = document.getElementById('maxSessions');
 
 let currentState = 'idle';
 let currentSessionId = null;
 
-/**
- * Initialize popup
- */
 async function init() {
   await updateState();
   await loadSessions();
+  await loadSettings();
   setupEventListeners();
 }
 
-/**
- * Setup event listeners
- */
 function setupEventListeners() {
   startBtn.addEventListener('click', handleStart);
   pauseBtn.addEventListener('click', handlePause);
@@ -75,23 +78,98 @@ function setupEventListeners() {
   deleteSessionBtn.addEventListener('click', handleDeleteSession);
   clearAllBtn.addEventListener('click', handleClearAll);
   sessionDropdown.addEventListener('change', handleSessionSelect);
+
+  saveSettingsBtn.addEventListener('click', handleSaveSettings);
+
+  captureApiCalls.addEventListener('change', (e) => {
+    apiCallsOptions.style.display = e.target.checked ? 'block' : 'none';
+    if (!e.target.checked) {
+      captureFailedCalls.checked = false;
+      captureAllCalls.checked = false;
+    }
+  });
+
+  autoScreenshot.addEventListener('change', (e) => {
+    screenshotInterval.style.display = e.target.checked ? 'block' : 'none';
+  });
+
+  captureFailedCalls.addEventListener('change', (e) => {
+    if (e.target.checked) {
+      captureAllCalls.checked = false;
+    }
+  });
+
+  captureAllCalls.addEventListener('change', (e) => {
+    if (e.target.checked) {
+      captureFailedCalls.checked = false;
+    }
+  });
 }
 
-/**
- * Get current tab info
- */
+async function loadSettings() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'getSettings'
+    });
+
+    if (response.success) {
+      const settings = response.settings;
+
+      captureApiCalls.checked = settings.captureApiCalls || false;
+      captureFailedCalls.checked = settings.captureFailedCalls || false;
+      captureAllCalls.checked = settings.captureAllCalls || false;
+      includeTimestamp.checked = settings.includeTimestamp !== false;
+      autoScreenshot.checked = settings.autoScreenshot || false;
+      screenshotSeconds.value = settings.screenshotSeconds || 5;
+      autoSave.checked = settings.autoSave !== false;
+      maxSessions.value = settings.maxSessions || 25;
+
+      apiCallsOptions.style.display = captureApiCalls.checked ? 'block' : 'none';
+      screenshotInterval.style.display = autoScreenshot.checked ? 'block' : 'none';
+    }
+  } catch (error) {
+    console.error('Failed to load settings:', error);
+  }
+}
+
+async function handleSaveSettings() {
+  const settings = {
+    captureApiCalls: captureApiCalls.checked,
+    captureFailedCalls: captureFailedCalls.checked,
+    captureAllCalls: captureAllCalls.checked,
+    includeTimestamp: includeTimestamp.checked,
+    autoScreenshot: autoScreenshot.checked,
+    screenshotSeconds: parseInt(screenshotSeconds.value) || 5,
+    autoSave: autoSave.checked,
+    maxSessions: parseInt(maxSessions.value) || 25
+  };
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'saveSettings',
+      settings: settings
+    });
+
+    if (response.success) {
+      showMessage('Settings saved successfully!', 'success');
+    } else {
+      showMessage('Failed to save settings', 'error');
+    }
+  } catch (error) {
+    console.error('Save settings failed:', error);
+    showMessage('Error saving settings', 'error');
+  }
+}
+
 async function getCurrentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
 
-/**
- * Handle start recording
- */
 async function handleStart() {
   try {
     const tab = await getCurrentTab();
-    
+
     const response = await chrome.runtime.sendMessage({
       action: 'startRecording',
       tabInfo: {
@@ -116,9 +194,6 @@ async function handleStart() {
   }
 }
 
-/**
- * Handle pause recording
- */
 async function handlePause() {
   try {
     const response = await chrome.runtime.sendMessage({
@@ -137,9 +212,6 @@ async function handlePause() {
   }
 }
 
-/**
- * Handle resume recording
- */
 async function handleResume() {
   try {
     const response = await chrome.runtime.sendMessage({
@@ -158,9 +230,6 @@ async function handleResume() {
   }
 }
 
-/**
- * Handle stop recording
- */
 async function handleStop() {
   try {
     const response = await chrome.runtime.sendMessage({
@@ -172,11 +241,9 @@ async function handleStop() {
       liveStepsViewer.style.display = 'none';
       await updateState();
       await loadSessions();
-      
-      // Switch to export tab
+
       document.querySelector('[data-tab="export"]').click();
-      
-      // Auto-select the latest session
+
       if (currentSessionId) {
         sessionDropdown.value = currentSessionId;
         handleSessionSelect();
@@ -190,9 +257,6 @@ async function handleStop() {
   }
 }
 
-/**
- * Handle screenshot
- */
 async function handleScreenshot() {
   try {
     const response = await chrome.runtime.sendMessage({
@@ -211,9 +275,6 @@ async function handleScreenshot() {
   }
 }
 
-/**
- * Handle export session
- */
 async function handleExport() {
   try {
     const selectedSessionId = sessionDropdown.value;
@@ -243,9 +304,6 @@ async function handleExport() {
   }
 }
 
-/**
- * Handle view steps
- */
 async function handleViewSteps() {
   try {
     const selectedSessionId = sessionDropdown.value;
@@ -271,9 +329,6 @@ async function handleViewSteps() {
   }
 }
 
-/**
- * Handle delete session
- */
 async function handleDeleteSession() {
   const selectedSessionId = sessionDropdown.value;
   if (!selectedSessionId) {
@@ -305,9 +360,6 @@ async function handleDeleteSession() {
   }
 }
 
-/**
- * Handle clear all
- */
 async function handleClearAll() {
   if (!confirm('Delete ALL sessions? This cannot be undone.')) {
     return;
@@ -331,45 +383,87 @@ async function handleClearAll() {
 }
 
 /**
- * Display steps in viewer
+ * ✅ SOLID: Display steps with async screenshot loading
  */
-function displaySteps(steps, targetElement) {
+async function displaySteps(steps, targetElement) {
   if (!targetElement) targetElement = stepsList;
-  
+
   if (!steps || steps.length === 0) {
     targetElement.innerHTML = '<p style="text-align: center; color: #999; font-size: 11px;">No steps recorded</p>';
     return;
   }
 
-  targetElement.innerHTML = steps.map((step, index) => `
+  // Build HTML first
+  const htmlParts = await Promise.all(steps.map(async (step, index) => {
+    let oneliner = '';
+    
+    if (step.action === 'screenshot') {
+      oneliner = step.isManual ? '📸 Manual screenshot captured' : '📸 Automated screenshot captured';
+      
+      // ✅ Fetch screenshot from background
+      const screenshotResponse = await chrome.runtime.sendMessage({
+        action: 'getScreenshot',
+        stepId: step.id
+      });
+      
+      if (screenshotResponse.success && screenshotResponse.dataUrl) {
+        return `
+        <div class="step-item">
+          <div class="step-header">
+            <span class="step-number">Step ${index + 1}</span>
+            <span class="step-action">${step.action}</span>
+          </div>
+          <div class="step-details">
+            <div class="step-detail">${oneliner}</div>
+            <div style="margin-top: 8px;">
+              <img src="${screenshotResponse.dataUrl}" alt="Screenshot" style="max-width: 100%; height: auto; border: 1px solid var(--border-color); border-radius: 4px;"/>
+            </div>
+          </div>
+        </div>`;
+      } else {
+        return `
+        <div class="step-item">
+          <div class="step-header">
+            <span class="step-number">Step ${index + 1}</span>
+            <span class="step-action">${step.action}</span>
+          </div>
+          <div class="step-details">
+            <div class="step-detail">${oneliner}</div>
+            <div style="margin-top: 8px; color: var(--text-tertiary); font-size: 11px;">
+              Loading screenshot...
+            </div>
+          </div>
+        </div>`;
+      }
+    }
+    
+    // ✅ Build one-liner description
+    oneliner = `${step.action.toUpperCase()}`;
+    if (step.fieldName && step.fieldName !== 'N/A') {
+      oneliner += ` on "${step.fieldName}"`;
+    }
+    if (step.value && step.action !== 'navigate' && step.action !== 'screenshot') {
+      oneliner += ` with value "${step.value}"`;
+    }
+    if (step.action === 'navigate') {
+      oneliner += ` to ${step.value || step.url}`;
+    }
+    
+    return `
     <div class="step-item">
       <div class="step-header">
         <span class="step-number">Step ${index + 1}</span>
         <span class="step-action">${step.action}</span>
       </div>
       <div class="step-details">
-        <div class="step-detail">
-          <strong>Field:</strong>
-          <span>${step.fieldName || 'N/A'}</span>
-        </div>
-        <div class="step-detail">
-          <strong>Selector:</strong>
-          <code>${step.selector?.css || 'N/A'}</code>
-        </div>
-        ${step.value ? `
-          <div class="step-detail">
-            <strong>Value:</strong>
-            <span>${step.value}</span>
-          </div>
-        ` : ''}
+        <div class="step-detail">${oneliner}</div>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }));
+
+  targetElement.innerHTML = htmlParts.join('');
 }
 
-/**
- * Handle session select
- */
 function handleSessionSelect() {
   const hasSelection = sessionDropdown.value !== '';
   exportBtn.disabled = !hasSelection;
@@ -377,9 +471,6 @@ function handleSessionSelect() {
   deleteSessionBtn.disabled = !hasSelection;
 }
 
-/**
- * Update UI state
- */
 async function updateState() {
   try {
     const response = await chrome.runtime.sendMessage({
@@ -389,18 +480,14 @@ async function updateState() {
     if (response) {
       currentState = response.state;
       currentSessionId = response.session?.sessionId || null;
-      
-      // Update state indicator
+
       stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
       stateDot.className = 'state-dot ' + (currentState === 'recording' ? 'recording' : currentState === 'paused' ? 'paused' : '');
-      
-      // Update step count
+
       stepCount.textContent = response.stepCount || 0;
-      
-      // Update button states
+
       updateButtonStates();
-      
-      // Update live steps if recording
+
       if (currentState === 'recording' && currentSessionId) {
         updateLiveSteps();
       }
@@ -410,12 +497,9 @@ async function updateState() {
   }
 }
 
-/**
- * Update live steps
- */
 async function updateLiveSteps() {
   if (!currentSessionId) return;
-  
+
   try {
     const response = await chrome.runtime.sendMessage({
       action: 'getSessionSteps',
@@ -430,9 +514,6 @@ async function updateLiveSteps() {
   }
 }
 
-/**
- * Update button states based on current state
- */
 function updateButtonStates() {
   startBtn.disabled = currentState !== 'idle';
   pauseBtn.disabled = currentState !== 'recording';
@@ -442,7 +523,7 @@ function updateButtonStates() {
 }
 
 /**
- * Load sessions into dropdown
+ * ✅ FIXED: Load sessions in DESCENDING order (newest first)
  */
 async function loadSessions() {
   try {
@@ -452,10 +533,11 @@ async function loadSessions() {
 
     if (response.success) {
       const sessions = response.sessions || [];
-      
+      // ✅ Sessions already sorted descending from background.js
+
       sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
-      
-      sessions.reverse().forEach(session => {
+
+      sessions.forEach(session => {
         const option = document.createElement('option');
         option.value = session.sessionId;
         const date = new Date(session.createdAt).toLocaleString();
@@ -463,7 +545,6 @@ async function loadSessions() {
         sessionDropdown.appendChild(option);
       });
 
-      // Select current session if recording
       if (currentSessionId) {
         sessionDropdown.value = currentSessionId;
         handleSessionSelect();
@@ -474,9 +555,6 @@ async function loadSessions() {
   }
 }
 
-/**
- * Show message to user
- */
 function showMessage(text, type = 'info') {
   messageDiv.textContent = text;
   messageDiv.className = 'message ' + type;
@@ -487,10 +565,8 @@ function showMessage(text, type = 'info') {
   }, 3000);
 }
 
-// Initialize on load
 document.addEventListener('DOMContentLoaded', init);
 
-// Update state periodically when recording
 setInterval(() => {
   if (currentState === 'recording' || currentState === 'paused') {
     updateState();
