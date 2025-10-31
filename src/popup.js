@@ -1,5 +1,5 @@
 /**
- * Popup Script - FIXED: Session ordering, step display
+ * Popup Script - FIXED: Simplified, review page opens standalone
  */
 
 // Tab switching
@@ -230,30 +230,32 @@ async function handleResume() {
   }
 }
 
+// ✅ FIXED: Stop now just stops recording, background.js opens review page
 async function handleStop() {
   try {
-    const response = await chrome.runtime.sendMessage({
-      action: 'stopRecording'
+    stopBtn.disabled = true;
+    showMessage('Stopping recording...', 'info');
+
+    const response = await chrome.runtime.sendMessage({ 
+      action: 'stopRecording' 
     });
 
-    if (response.success) {
-      showMessage('Recording stopped!', 'success');
+    if (response && response.success) {
+      showMessage('Recording stopped! Opening review page...', 'success');
       liveStepsViewer.style.display = 'none';
-      await updateState();
-      await loadSessions();
-
-      document.querySelector('[data-tab="export"]').click();
-
-      if (currentSessionId) {
-        sessionDropdown.value = currentSessionId;
-        handleSessionSelect();
-      }
+      
+      // Close popup after a short delay
+      setTimeout(() => {
+        window.close();
+      }, 1000);
     } else {
-      showMessage('Failed to stop: ' + response.error, 'error');
+      showMessage('Failed to stop: ' + (response?.error || 'Unknown error'), 'error');
+      stopBtn.disabled = false;
     }
   } catch (error) {
     console.error('Stop failed:', error);
     showMessage('Error stopping recording', 'error');
+    stopBtn.disabled = false;
   }
 }
 
@@ -304,6 +306,7 @@ async function handleExport() {
   }
 }
 
+// ✅ NEW: Open session in standalone review page
 async function handleViewSteps() {
   try {
     const selectedSessionId = sessionDropdown.value;
@@ -312,20 +315,19 @@ async function handleViewSteps() {
       return;
     }
 
-    const response = await chrome.runtime.sendMessage({
-      action: 'getSessionSteps',
-      sessionId: selectedSessionId
-    });
-
-    if (response.success) {
-      displaySteps(response.steps, stepsList);
-      stepsViewer.style.display = 'block';
-    } else {
-      showMessage('Failed to load steps: ' + response.error, 'error');
-    }
+    // Open review page in new tab
+    const reviewUrl = chrome.runtime.getURL(`src/assets/html/review-standalone.html?sessionId=${selectedSessionId}`);
+    await chrome.tabs.create({ url: reviewUrl });
+    
+    showMessage('Opening review page...', 'success');
+    
+    // Close popup
+    setTimeout(() => {
+      window.close();
+    }, 500);
   } catch (error) {
     console.error('View steps failed:', error);
-    showMessage('Error loading steps', 'error');
+    showMessage('Error opening review page', 'error');
   }
 }
 
@@ -382,9 +384,6 @@ async function handleClearAll() {
   }
 }
 
-/**
- * ✅ SOLID: Display steps with async screenshot loading
- */
 async function displaySteps(steps, targetElement) {
   if (!targetElement) targetElement = stepsList;
 
@@ -393,51 +392,23 @@ async function displaySteps(steps, targetElement) {
     return;
   }
 
-  // Build HTML first
   const htmlParts = await Promise.all(steps.map(async (step, index) => {
     let oneliner = '';
     
     if (step.action === 'screenshot') {
-      oneliner = step.isManual ? '📸 Manual screenshot captured' : '📸 Automated screenshot captured';
-      
-      // ✅ Fetch screenshot from background
-      const screenshotResponse = await chrome.runtime.sendMessage({
-        action: 'getScreenshot',
-        stepId: step.id
-      });
-      
-      if (screenshotResponse.success && screenshotResponse.dataUrl) {
-        return `
-        <div class="step-item">
-          <div class="step-header">
-            <span class="step-number">Step ${index + 1}</span>
-            <span class="step-action">${step.action}</span>
-          </div>
-          <div class="step-details">
-            <div class="step-detail">${oneliner}</div>
-            <div style="margin-top: 8px;">
-              <img src="${screenshotResponse.dataUrl}" alt="Screenshot" style="max-width: 100%; height: auto; border: 1px solid var(--border-color); border-radius: 4px;"/>
-            </div>
-          </div>
-        </div>`;
-      } else {
-        return `
-        <div class="step-item">
-          <div class="step-header">
-            <span class="step-number">Step ${index + 1}</span>
-            <span class="step-action">${step.action}</span>
-          </div>
-          <div class="step-details">
-            <div class="step-detail">${oneliner}</div>
-            <div style="margin-top: 8px; color: var(--text-tertiary); font-size: 11px;">
-              Loading screenshot...
-            </div>
-          </div>
-        </div>`;
-      }
+      oneliner = step.isManual ? '📸 Manual screenshot' : '📸 Auto screenshot';
+      return `
+      <div class="step-item">
+        <div class="step-header">
+          <span class="step-number">Step ${index + 1}</span>
+          <span class="step-action">${step.action}</span>
+        </div>
+        <div class="step-details">
+          <div class="step-detail">${oneliner}</div>
+        </div>
+      </div>`;
     }
     
-    // ✅ Build one-liner description
     oneliner = `${step.action.toUpperCase()}`;
     if (step.fieldName && step.fieldName !== 'N/A') {
       oneliner += ` on "${step.fieldName}"`;
@@ -522,9 +493,6 @@ function updateButtonStates() {
   screenshotBtn.disabled = currentState !== 'recording';
 }
 
-/**
- * ✅ FIXED: Load sessions in DESCENDING order (newest first)
- */
 async function loadSessions() {
   try {
     const response = await chrome.runtime.sendMessage({
@@ -533,7 +501,6 @@ async function loadSessions() {
 
     if (response.success) {
       const sessions = response.sessions || [];
-      // ✅ Sessions already sorted descending from background.js
 
       sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
 
@@ -541,7 +508,8 @@ async function loadSessions() {
         const option = document.createElement('option');
         option.value = session.sessionId;
         const date = new Date(session.createdAt).toLocaleString();
-        option.textContent = `${date} - ${session.stepCount || 0} steps`;
+        const name = session.sessionName || date;
+        option.textContent = `${name} (${session.stepCount || 0} steps)`;
         sessionDropdown.appendChild(option);
       });
 

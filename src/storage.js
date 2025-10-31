@@ -239,6 +239,51 @@ class StorageManager {
       request.onerror = () => reject(request.error);
     });
   }
+
+  async updateSessionName(sessionId, sessionName) {
+    const tx = this.db.transaction(['sessions'], 'readwrite');
+    const store = tx.objectStore('sessions');
+    const session = await store.get(sessionId);
+
+    if (session) {
+      session.sessionName = sessionName;
+      await store.put(session);
+    }
+
+    await tx.done;
+  }
+
+  async updateAllSteps(sessionId, steps) {
+    const tx = this.db.transaction(['steps'], 'readwrite');
+    const store = tx.objectStore('steps');
+
+    // Delete all existing steps for this session
+    const index = store.index('sessionId');
+    const existingSteps = await index.getAll(sessionId);
+
+    for (const step of existingSteps) {
+      await store.delete(step.id);
+    }
+
+    // Add updated steps
+    for (const step of steps) {
+      await store.put(step);
+    }
+
+    await tx.done;
+
+    // Update session step count
+    const sessionTx = this.db.transaction(['sessions'], 'readwrite');
+    const sessionStore = sessionTx.objectStore('sessions');
+    const session = await sessionStore.get(sessionId);
+
+    if (session) {
+      session.stepCount = steps.length;
+      await sessionStore.put(session);
+    }
+
+    await sessionTx.done;
+  }
 }
 
 export { StorageManager };

@@ -1,5 +1,5 @@
 /**
- * Background Service Worker - With DOCX Export including Screenshots
+ * Background Service Worker - FIXED: Opens standalone review page
  */
 
 import { StorageManager } from './storage.js';
@@ -73,9 +73,6 @@ async function createSession(tabInfo) {
   return session;
 }
 
-/**
- * ✅ Convert data URL to blob
- */
 function dataURLtoBlob(dataURL) {
   const parts = dataURL.split(',');
   const mime = parts[0].match(/:(.*?);/)[1];
@@ -88,9 +85,6 @@ function dataURLtoBlob(dataURL) {
   return new Blob([u8arr], { type: mime });
 }
 
-/**
- * ✅ Convert blob to data URL
- */
 function blobToDataURL(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -100,9 +94,6 @@ function blobToDataURL(blob) {
   });
 }
 
-/**
- * ✅ Escape HTML entities
- */
 function escapeHtml(text) {
   if (!text) return '';
   const map = {
@@ -115,9 +106,35 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, m => map[m]);
 }
 
-/**
- * ✅ NEW: Generate DOCX export with embedded screenshots
- */
+// Downscale and compress a screenshot to a fixed width (600 px)
+async function compressImage(blob, maxWidth = 600, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const scale = Math.min(maxWidth / img.width, 1);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      canvas.toBlob(
+        blobOut => {
+          URL.revokeObjectURL(url);
+          resolve(blobOut);
+        },
+        'image/jpeg',
+        quality
+      );
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+
 async function generateSimpleDocx(exportData) {
   const { session, steps } = exportData;
 
@@ -159,25 +176,21 @@ async function generateSimpleDocx(exportData) {
   const regularSteps = [];
   let stepNumber = 0;
 
-  // ✅ Get all screenshot assets from IndexedDB
   const screenshotAssets = await storage.getAllAssets(session.id);
   const screenshotMap = new Map();
-  
-  console.log('📸 Loading screenshots for export, found:', screenshotAssets.length);
   
   for (const asset of screenshotAssets) {
     if (asset.blob) {
       try {
-        const dataUrl = await blobToDataURL(asset.blob);
+        const compressed = await compressImage(asset.blob, 200, 0.7);
+      const dataUrl = await blobToDataURL(compressed);
         screenshotMap.set(asset.stepId, dataUrl);
-        console.log('✅ Loaded screenshot for step:', asset.stepId);
       } catch (err) {
         console.warn('Failed to convert screenshot blob:', err);
       }
     }
   }
 
-  // Separate manual screenshots and automated screenshots
   steps.forEach(step => {
     if (step.action === 'screenshot' && step.isManual) {
       regularSteps.push(step);
@@ -188,7 +201,6 @@ async function generateSimpleDocx(exportData) {
     }
   });
 
-  // Render regular steps with embedded screenshots
   for (const step of regularSteps) {
     stepNumber++;
     html += `<div class='step'>`;
@@ -220,7 +232,6 @@ async function generateSimpleDocx(exportData) {
     html += `</div>`;
   }
 
-  // Render automated screenshots section
   if (automatedScreenshots.length > 0) {
     html += `
   <div class='automated-screenshots'>
@@ -245,7 +256,6 @@ async function generateSimpleDocx(exportData) {
 </body>
 </html>`;
 
-  console.log('✅ DOCX HTML generated with', screenshotMap.size, 'screenshots embedded');
   return html;
 }
 
@@ -316,6 +326,7 @@ async function resumeRecording(tabId) {
   return { success: true };
 }
 
+// ✅ FIXED: Stop recording now opens standalone review page
 async function stopRecording(tabId) {
   if (currentState === States.IDLE) {
     return { success: false, error: 'Not recording' };
@@ -325,7 +336,10 @@ async function stopRecording(tabId) {
     currentState = States.IDLE;
     chrome.action.setBadgeText({ text: '', tabId });
 
-    await chrome.tabs.sendMessage(tabId, { action: 'stopRecording' });
+    await chrome.tabs.sendMessage(tabId, { action: 'stopRecording' }).catch(() => {
+      // Ignore errors if content script is not responding
+      console.log('Content script not responding, continuing...');
+    });
 
     const sessionId = currentSession?.sessionId;
     currentSession = null;
@@ -333,16 +347,21 @@ async function stopRecording(tabId) {
     stepSequence = 0;
 
     console.log('Recording stopped:', sessionId);
+
+    // ✅ Open standalone review page
+    if (sessionId) {
+      const reviewUrl = chrome.runtime.getURL(`src/assets/html/review-standalone.html?sessionId=${sessionId}`);
+      await chrome.tabs.create({ url: reviewUrl });
+    }
+
     return { success: true, sessionId };
   } catch (error) {
     console.error('Failed to stop recording:', error);
+    currentState = States.IDLE;
     return { success: false, error: error.message };
   }
 }
 
-/**
- * ✅ OPTIMIZED: Screenshot capture - Service Worker compatible
- */
 async function captureScreenshot(tabId, isManual = true) {
   console.log('📸 Screenshot capture requested for tab:', tabId, 'manual:', isManual);
   
@@ -357,38 +376,27 @@ async function captureScreenshot(tabId, isManual = true) {
   }
 
   try {
-    // 1. Get the actual tab
     const tab = await chrome.tabs.get(tabId);
-    console.log('✅ Got tab:', tab.id, 'window:', tab.windowId, 'url:', tab.url);
 
     if (!tab || !tab.windowId) {
       throw new Error('Invalid tab or window ID');
     }
 
-    // 2. Ensure the tab is active and visible
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // 3. Capture screenshot with quality setting
-    console.log('📸 Capturing visible tab in window:', tab.windowId);
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
       format: 'jpeg',
-      quality: 80  // Lower quality for smaller file size
+      quality: 80
     });
 
     if (!dataUrl || !dataUrl.startsWith('data:image/')) {
       throw new Error('Screenshot capture returned invalid data');
     }
 
-    const screenshotSize = Math.round(dataUrl.length / 1024);
-    console.log('✅ Screenshot captured, size:', screenshotSize, 'KB');
-
-    // 4. Convert to blob for storage
     const blob = dataURLtoBlob(dataUrl);
-    console.log('✅ Converted to blob, size:', Math.round(blob.size / 1024), 'KB');
 
-    // 5. Create step
     stepSequence++;
     const step = {
       id: generateUUID(),
@@ -409,9 +417,7 @@ async function captureScreenshot(tabId, isManual = true) {
       step.timestamp = new Date().toISOString();
     }
 
-    // 6. Save step and asset
     await storage.addStep(step);
-    console.log('✅ Step added:', step.id);
 
     await storage.addAsset({
       id: generateUUID(),
@@ -421,12 +427,9 @@ async function captureScreenshot(tabId, isManual = true) {
       blob: blob,
       createdAt: new Date().toISOString()
     });
-    console.log('✅ Screenshot asset saved');
 
-    // 7. Update session count
     currentSession.stepCount++;
     await storage.updateSession(currentSession);
-    console.log('✅ Session updated, total steps:', currentSession.stepCount);
 
     return { success: true, stepId: step.id };
   } catch (error) {
@@ -460,7 +463,6 @@ async function addStep(stepData) {
     currentSession.stepCount++;
     await storage.updateSession(currentSession);
 
-    console.log('Step added:', step.action, 'seq:', step.sequence);
     return { success: true, step };
   } catch (error) {
     console.error('Failed to add step:', error);
@@ -476,13 +478,9 @@ function getState() {
   };
 }
 
-/**
- * ✅ ENHANCED: Export session with DOCX support including screenshots
- */
 async function exportSession(sessionId, format = 'json') {
   try {
     currentState = States.EXPORTING;
-    console.log('📦 Starting export for session:', sessionId, 'format:', format);
 
     const session = await storage.getSession(sessionId);
     let steps = await storage.getSteps(sessionId);
@@ -541,7 +539,6 @@ async function exportSession(sessionId, format = 'json') {
       filename = `testsnapper_${sessionId.substring(0, 8)}_${Date.now()}.csv`;
       mimeType = 'text/csv';
     } else if (format === 'docx') {
-      console.log('📄 Generating DOCX with screenshots...');
       content = await generateSimpleDocx(exportData);
       filename = `testsnapper_${sessionId.substring(0, 8)}_${Date.now()}.doc`;
       mimeType = 'application/msword';
@@ -559,10 +556,9 @@ async function exportSession(sessionId, format = 'json') {
     });
 
     currentState = States.IDLE;
-    console.log('✅ Export completed:', filename);
     return { success: true, filename };
   } catch (error) {
-    console.error('❌ Export failed:', error);
+    console.error('Export failed:', error);
     currentState = States.IDLE;
     return { success: false, error: error.message };
   }
@@ -629,6 +625,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = { success: true, sessions };
           break;
 
+        case 'getSession':
+          const session = await storage.getSession(message.sessionId);
+          response = { success: true, session };
+          break;
+
         case 'getSessionSteps':
           let steps = await storage.getSteps(message.sessionId);
           steps.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
@@ -657,6 +658,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = await captureScreenshot(tabId, true);
           break;
 
+        case 'updateSessionName':
+          await storage.updateSessionName(message.sessionId, message.sessionName);
+          response = { success: true };
+          break;
+
+        case 'updateAllSteps':
+          await storage.updateAllSteps(message.sessionId, message.steps);
+          response = { success: true };
+          break;
+
         case 'getSettings':
           const settings = await getSettings();
           response = { success: true, settings };
@@ -682,4 +693,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-console.log('TestSnapper background service worker initialized');
+console.log('✅ TestSnapper background service worker initialized');

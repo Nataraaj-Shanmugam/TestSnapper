@@ -135,6 +135,40 @@ export class Exporter {
         throw new Error(`Unsupported format: ${format}`);
     }
   }
+
+  async exportPdf(session, steps) {
+  const filename = `${session.name || 'Session'}.pdf`;
+  const docContent = `
+    <h2>${session.name || 'Test Session'}</h2>
+    <p><strong>Date:</strong> ${new Date(session.createdAt).toLocaleString()}</p>
+    <ol>
+      ${steps.map(step => `<li>${step.customDescription || step.action || ''}</li>`).join('')}
+    </ol>
+  `;
+
+  // Dynamically import html2pdf (no external URL — for Chrome extension CSP)
+  const script = document.createElement('script');
+  script.src = chrome.runtime.getURL('libs/html2pdf.bundle.min.js');
+  document.head.appendChild(script);
+
+  await new Promise(res => (script.onload = res));
+
+  const element = document.createElement('div');
+  element.innerHTML = docContent;
+  document.body.appendChild(element);
+
+  const opt = {
+    margin: 0.5,
+    filename,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2 },
+    jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+  };
+
+  await html2pdf().from(element).set(opt).save();
+  element.remove();
+}
+
 }
 
 if (typeof module !== 'undefined' && module.exports) {

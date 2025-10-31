@@ -51,7 +51,10 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/injected.js"
+        "src/injected.js",
+        "src/review-standalone.js",
+        "src/assets/html/review-standalone.html",
+        "libs/jspdf.umd.min.js"
       ],
       "matches": [
         "<all_urls>"
