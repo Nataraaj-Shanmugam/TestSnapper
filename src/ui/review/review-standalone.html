@@ -21,6 +21,7 @@
             --border-color: #e5e7eb;
             --border-hover: #d1d5db;
             --color-primary: #3b82f6;
+            --color-primary-hover: #2563eb;
             --color-danger: #ef4444;
             --color-success: #10b981;
             --hover-bg: #f3f4f6;
@@ -38,6 +39,7 @@
                 --border-color: #374151;
                 --border-hover: #4b5563;
                 --color-primary: #60a5fa;
+                --color-primary-hover: #3b82f6;
                 --color-danger: #f87171;
                 --color-success: #34d399;
                 --hover-bg: #374151;
@@ -131,6 +133,10 @@
             background: var(--color-primary);
             padding: 12px 24px;
             font-size: 15px;
+        }
+
+        .btn-cancel {
+            background: var(--text-secondary);
         }
 
         .message {
@@ -337,25 +343,25 @@
         }
 
         .step-screenshot {
-        margin: 10px 0 20px 45px;
-        border-left: 2px solid var(--border-color);
-        padding-left: 10px;
-        transition: all 0.3s ease;
+            margin: 10px 0 20px 45px;
+            border-left: 2px solid var(--border-color);
+            padding-left: 10px;
+            transition: all 0.3s ease;
         }
 
         .step-screenshot img {
-        max-width: 600px;
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            max-width: 600px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
         }
 
         .hidden {
-        display: none;
+            display: none;
         }
 
         .toggle-img-btn {
-        font-size: 18px;
+            font-size: 18px;
         }
 
         .step-content {
@@ -397,10 +403,43 @@
             background: var(--bg-primary);
             border-bottom: 1px solid var(--border-color);
             transition: background 0.2s ease;
+            position: relative;
         }
 
         .step-doc-line:hover {
             background: var(--hover-bg);
+        }
+
+        .step-doc-line:hover .add-step-after {
+            opacity: 1;
+        }
+
+        .add-step-after {
+            position: absolute;
+            right: -16px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--color-primary);
+            color: white;
+            border: 2px solid var(--bg-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            opacity: 0;
+            transition: all 0.2s ease;
+            z-index: 10;
+            font-size: 18px;
+            font-weight: bold;
+            box-shadow: var(--shadow-md);
+        }
+
+        .add-step-after:hover {
+            background: var(--color-primary-hover);
+            transform: translateY(-50%) scale(1.1);
         }
 
         .step-left {
@@ -506,6 +545,114 @@
             }
         }
 
+        /* Add Step Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-primary);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal h3 {
+            margin-bottom: 20px;
+            color: var(--text-primary);
+            font-size: 20px;
+        }
+
+        .form-field {
+            margin-bottom: 16px;
+        }
+
+        .form-field label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .form-field input,
+        .form-field textarea,
+        .form-field select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 14px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-family: inherit;
+        }
+
+        .form-field textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .form-field input:focus,
+        .form-field textarea:focus,
+        .form-field select:focus {
+            outline: none;
+            border-color: var(--color-primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .screenshot-upload {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .screenshot-upload:hover {
+            border-color: var(--color-primary);
+            background: var(--hover-bg);
+        }
+
+        .screenshot-upload.has-image {
+            border-style: solid;
+            border-color: var(--color-success);
+        }
+
+        .screenshot-preview {
+            max-width: 100%;
+            max-height: 200px;
+            margin-top: 10px;
+            border-radius: 6px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .container {
@@ -605,7 +752,48 @@
         </div>
     </div>
 
-    <script src="../../review-standalone.js"></script>
+    <!-- Add Step Modal -->
+    <div class="modal-overlay" id="addStepModal">
+        <div class="modal">
+            <h3>➕ Add New Step</h3>
+            
+            <div class="form-field">
+                <label>Step Description *</label>
+                <textarea id="newStepDescription" placeholder="Enter step description..." required></textarea>
+            </div>
+
+            <div class="form-field">
+                <label>Action Type</label>
+                <select id="newStepAction">
+                    <option value="click">Click</option>
+                    <option value="type">Type</option>
+                    <option value="navigate">Navigate</option>
+                    <option value="select">Select</option>
+                    <option value="check">Check</option>
+                    <option value="submit">Submit</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+
+            <div class="form-field">
+                <label>Screenshot (Optional)</label>
+                <div class="screenshot-upload" id="screenshotUpload">
+                    <input type="file" id="screenshotInput" accept="image/*" style="display: none;">
+                    <p style="color: var(--text-secondary); margin: 0;">
+                        📸 Click to upload screenshot or drag & drop
+                    </p>
+                    <img id="screenshotPreview" class="screenshot-preview" style="display: none;">
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button id="cancelAddStep" class="btn btn-cancel">Cancel</button>
+                <button id="confirmAddStep" class="btn btn-primary">Add Step</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="review-standalone.js"></script>
 </body>
 
 </html>

@@ -1,11 +1,11 @@
 /**
- * Storage Module - SOLID SOLUTION: Handles IndexedDB with blob support
+ * Storage Module - FIXED: Proper IndexedDB transactions
  */
 
 class StorageManager {
   constructor() {
     this.dbName = 'TestSnapperDB';
-    this.version = 2; // ✅ Increment version for schema update
+    this.version = 2;
     this.db = null;
   }
 
@@ -36,7 +36,7 @@ class StorageManager {
           stepStore.createIndex('sequence', 'sequence', { unique: false });
         }
 
-        // ✅ Create assets store for screenshots (blob storage)
+        // Create assets store for screenshots (blob storage)
         if (!db.objectStoreNames.contains('assets')) {
           const assetStore = db.createObjectStore('assets', { keyPath: 'id' });
           assetStore.createIndex('sessionId', 'sessionId', { unique: false });
@@ -115,6 +115,7 @@ class StorageManager {
 
   async deleteStep(stepId) {
     if (!this.db) await this.init();
+    if (!stepId) throw new Error("Step ID is required");
 
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction(['steps'], 'readwrite');
@@ -126,8 +127,22 @@ class StorageManager {
     });
   }
 
+  async updateStep(step) {
+    if (!this.db) await this.init();
+    if (!step || !step.id) throw new Error("Valid step with ID is required");
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['steps'], 'readwrite');
+      const store = transaction.objectStore('steps');
+      const request = store.put(step);
+
+      request.onsuccess = () => resolve(step);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   /**
-   * ✅ NEW: Add asset (screenshot blob)
+   * Add asset (screenshot blob)
    */
   async addAsset(asset) {
     if (!this.db) await this.init();
@@ -143,7 +158,7 @@ class StorageManager {
   }
 
   /**
-   * ✅ NEW: Get all assets for a session
+   * Get all assets for a session
    */
   async getAllAssets(sessionId) {
     if (!this.db) await this.init();
@@ -160,7 +175,7 @@ class StorageManager {
   }
 
   /**
-   * ✅ NEW: Get assets for a specific step
+   * Get assets for a specific step
    */
   async getAssetsByStepId(stepId) {
     if (!this.db) await this.init();
@@ -177,7 +192,7 @@ class StorageManager {
   }
 
   /**
-   * ✅ NEW: Delete all assets for a session
+   * Delete all assets for a session
    */
   async deleteAssets(sessionId) {
     if (!this.db) await this.init();
@@ -211,7 +226,7 @@ class StorageManager {
           await this.deleteStep(step.id);
         }
 
-        // ✅ Delete all assets
+        // Delete all assets
         await this.deleteAssets(sessionId);
 
         // Delete session
@@ -240,49 +255,94 @@ class StorageManager {
     });
   }
 
+  /**
+   * ✅ FIXED: Update session name with proper transaction handling
+   */
   async updateSessionName(sessionId, sessionName) {
-    const tx = this.db.transaction(['sessions'], 'readwrite');
-    const store = tx.objectStore('sessions');
-    const session = await store.get(sessionId);
+    if (!this.db) await this.init();
 
-    if (session) {
-      session.sessionName = sessionName;
-      await store.put(session);
-    }
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['sessions'], 'readwrite');
+      const store = transaction.objectStore('sessions');
+      const getRequest = store.get(sessionId);
 
-    await tx.done;
+      getRequest.onsuccess = () => {
+        const session = getRequest.result;
+        if (session) {
+          session.sessionName = sessionName;
+          const putRequest = store.put(session);
+          
+          putRequest.onsuccess = () => resolve(session);
+          putRequest.onerror = () => reject(putRequest.error);
+        } else {
+          reject(new Error('Session not found'));
+        }
+      };
+
+      getRequest.onerror = () => reject(getRequest.error);
+    });
   }
 
+  /**
+   * ✅ FIXED: Update all steps with proper transaction handling
+   */
   async updateAllSteps(sessionId, steps) {
-    const tx = this.db.transaction(['steps'], 'readwrite');
-    const store = tx.objectStore('steps');
+    if (!this.db) await this.init();
 
-    // Delete all existing steps for this session
-    const index = store.index('sessionId');
-    const existingSteps = await index.getAll(sessionId);
+    return new Promise(async (resolve, reject) => {
+      try {
+        // First, delete all existing steps for this session
+        const transaction1 = this.db.transaction(['steps'], 'readwrite');
+        const store1 = transaction1.objectStore('steps');
+        const index = store1.index('sessionId');
+        const existingRequest = index.getAll(sessionId);
 
-    for (const step of existingSteps) {
-      await store.delete(step.id);
-    }
+        existingRequest.onsuccess = () => {
+          const existingSteps = existingRequest.result;
+          
+          for (const step of existingSteps) {
+            store1.delete(step.id);
+          }
+        };
 
-    // Add updated steps
-    for (const step of steps) {
-      await store.put(step);
-    }
+        await new Promise((res, rej) => {
+          transaction1.oncomplete = res;
+          transaction1.onerror = () => rej(transaction1.error);
+        });
 
-    await tx.done;
+        // Then, add updated steps
+        const transaction2 = this.db.transaction(['steps'], 'readwrite');
+        const store2 = transaction2.objectStore('steps');
 
-    // Update session step count
-    const sessionTx = this.db.transaction(['sessions'], 'readwrite');
-    const sessionStore = sessionTx.objectStore('sessions');
-    const session = await sessionStore.get(sessionId);
+        for (const step of steps) {
+          store2.put(step);
+        }
 
-    if (session) {
-      session.stepCount = steps.length;
-      await sessionStore.put(session);
-    }
+        await new Promise((res, rej) => {
+          transaction2.oncomplete = res;
+          transaction2.onerror = () => rej(transaction2.error);
+        });
 
-    await sessionTx.done;
+        // Finally, update session step count
+        const transaction3 = this.db.transaction(['sessions'], 'readwrite');
+        const sessionStore = transaction3.objectStore('sessions');
+        const sessionRequest = sessionStore.get(sessionId);
+
+        sessionRequest.onsuccess = () => {
+          const session = sessionRequest.result;
+          if (session) {
+            session.stepCount = steps.length;
+            sessionStore.put(session);
+          }
+        };
+
+        transaction3.oncomplete = () => resolve(true);
+        transaction3.onerror = () => reject(transaction3.error);
+
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 }
 

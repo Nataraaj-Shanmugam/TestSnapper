@@ -1,0 +1,18 @@
+High Priority:
+
+Add ability to reorder steps (drag & drop)
+Improve live steps display in popup
+
+Medium Priority:
+
+Add step filtering/search in review page
+Add undo/redo functionality
+Add keyboard shortcuts (Ctrl+S for save, etc.)
+Add progress indicator for large exports
+
+Low Priority:
+
+Add dark mode toggle (currently uses system preference)
+Add step templates for common actions
+Add bulk edit capability
+Add export preview before download

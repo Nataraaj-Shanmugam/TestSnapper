@@ -16,7 +16,7 @@
     "<all_urls>"
   ],
   "background": {
-    "service_worker": "src/background.js",
+    "service_worker": "src/background/background.js",
     "type": "module"
   },
   "content_scripts": [
@@ -26,16 +26,16 @@
         "file:///*"
       ],
       "js": [
-        "src/selector.js",
-        "src/redactor.js",
-        "src/content.js"
+        "src/content/selector.js",
+        "src/content/redactor.js",
+        "src/content/content.js"
       ],
       "run_at": "document_end",
       "all_frames": false
     }
   ],
   "action": {
-    "default_popup": "src/assets/html/popup.html",
+    "default_popup": "src/ui/popup/popup.html",
     "default_title": "TestSnapper - Record UI Tests",
     "default_icon": {
       "16": "src/assets/icons/icon16.png",
@@ -51,9 +51,9 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/injected.js",
-        "src/review-standalone.js",
-        "src/assets/html/review-standalone.html",
+        "src/storage.js",
+        "src/core/utils.js",
+        "src/core/export-service.js",
         "libs/jspdf.umd.min.js"
       ],
       "matches": [
