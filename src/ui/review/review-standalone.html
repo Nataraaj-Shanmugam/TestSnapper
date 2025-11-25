@@ -545,7 +545,7 @@
             }
         }
 
-        /* Add Step Modal */
+        /* Add Step / Progress Modals */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -653,6 +653,26 @@
             border-top: 1px solid var(--border-color);
         }
 
+        /* Drag handle + drag states */
+        .drag-handle {
+            cursor: grab;
+            font-size: 16px;
+            color: var(--text-tertiary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+        }
+
+        .step-doc-line.dragging {
+            opacity: 0.6;
+            background: rgba(59, 130, 246, 0.05);
+        }
+
+        .step-doc-line.drag-over {
+            border-top: 2px solid var(--color-primary);
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .container {
@@ -705,6 +725,14 @@
                     <span>Review Test Session</span>
                 </h1>
                 <div class="header-actions">
+                    <button id="undoBtn" class="btn btn-secondary" disabled title="Undo (Ctrl+Z / Cmd+Z)">
+                        <span>↶</span>
+                        <span>Undo</span>
+                    </button>
+                    <!-- <button id="redoBtn" class="btn btn-secondary" disabled style="opacity: 0.4; cursor: not-allowed;">
+                        <span>↷</span>
+                        <span>Redo</span>
+                    </button> -->
                     <button id="bulkDeleteBtn" class="btn btn-danger" disabled>
                         <span>🗑️</span>
                         <span>Delete Selected</span>
@@ -731,9 +759,36 @@
                     <option value="docx">DOCX (Microsoft Word)</option>
                     <option value="json">JSON (Data Format)</option>
                     <option value="csv">CSV (Spreadsheet)</option>
-                    <option value="pdf">PDF (Document)</option>
+                    <option value="pdf">TXT (Document)</option>
                 </select>
             </div>
+        </div>
+
+        <!-- Search / Filter Toolbar -->
+        <div class="steps-toolbar"
+            style="margin-bottom: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="stepSearch" placeholder="🔍 Search steps..."
+                style="flex: 1; min-width: 180px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+            <select id="actionFilter"
+                style="padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                <option value="all">All Actions</option>
+                <option value="click">Click</option>
+                <option value="type">Type</option>
+                <option value="navigate">Navigate</option>
+                <option value="select">Select</option>
+                <option value="check">Check</option>
+                <option value="submit">Submit</option>
+                <option value="screenshot">Screenshot</option>
+            </select>
+            <button id="clearFiltersBtn" class="btn btn-secondary" style="white-space: nowrap;">
+                Clear Filters
+            </button>
+        </div>
+        <div id="stepResultsSummary"
+            style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; min-height: 16px;"></div>
+        <div id="noResultsMsg" class="hidden"
+            style="margin-bottom: 10px; font-size: 13px; color: var(--text-secondary);">
+            No results found for the current filters.
         </div>
 
         <div class="steps-container" id="stepsContainer">
@@ -756,7 +811,7 @@
     <div class="modal-overlay" id="addStepModal">
         <div class="modal">
             <h3>➕ Add New Step</h3>
-            
+
             <div class="form-field">
                 <label>Step Description *</label>
                 <textarea id="newStepDescription" placeholder="Enter step description..." required></textarea>
@@ -789,6 +844,30 @@
             <div class="modal-actions">
                 <button id="cancelAddStep" class="btn btn-cancel">Cancel</button>
                 <button id="confirmAddStep" class="btn btn-primary">Add Step</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Progress Modal -->
+    <div class="modal-overlay" id="progressModal">
+        <div class="modal" style="max-width: 420px;">
+            <h3>Exporting...</h3>
+            <div class="form-field" style="margin-top: 12px;">
+                <div class="progress-bar"
+                    style="width: 100%; height: 10px; background: var(--bg-secondary); border-radius: 999px; overflow: hidden; border: 1px solid var(--border-color);">
+                    <div class="progress-fill" id="progressFill"
+                        style="width: 0%; height: 100%; background: var(--color-primary); transition: width 0.2s ease;">
+                    </div>
+                </div>
+            </div>
+            <p id="progressStatus" style="margin-top: 10px; font-size: 13px; color: var(--text-secondary);">
+                Starting export...
+            </p>
+            <p id="progressPercent" style="margin-top: 4px; font-size: 13px; font-weight: 600;">
+                0%
+            </p>
+            <div class="modal-actions">
+                <button id="cancelExportBtn" class="btn btn-cancel">Cancel Export</button>
             </div>
         </div>
     </div>

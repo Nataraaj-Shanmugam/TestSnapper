@@ -1,5 +1,5 @@
 /**
- * Review Session Page - WITH ADD STEP FEATURE
+ * Review Session Page - WITH ADD STEP FEATURE + DND + FILTER + HISTORY + PROGRESS
  * Proper export flow through background script
  */
 
@@ -13,6 +13,18 @@ const storage = new StorageManager();
 let sessionId = null;
 let sessionData = null;
 let stepsData = [];
+
+// Filters
+let searchTerm = '';
+let filterAction = 'all';
+
+// History (undo/redo)
+let history = [];
+let historyIndex = -1;
+const MAX_HISTORY = 50;
+
+// Drag state
+let draggedStepId = null;
 
 // ==================== UI Elements ====================
 
@@ -36,8 +48,36 @@ const screenshotPreview = document.getElementById('screenshotPreview');
 const cancelAddStep = document.getElementById('cancelAddStep');
 const confirmAddStep = document.getElementById('confirmAddStep');
 
+// Filters UI
+const stepSearchInput = document.getElementById('stepSearch');
+const actionFilterSelect = document.getElementById('actionFilter');
+const clearFiltersBtn = document.getElementById('clearFiltersBtn');
+const stepResultsSummary = document.getElementById('stepResultsSummary');
+const noResultsMsg = document.getElementById('noResultsMsg');
+
+// Undo/Redo UI
+const undoBtn = document.getElementById('undoBtn');
+// const redoBtn = document.getElementById('redoBtn');
+
+// Export progress UI
+const progressModal = document.getElementById('progressModal');
+const progressFill = document.getElementById('progressFill');
+const progressStatus = document.getElementById('progressStatus');
+const progressPercent = document.getElementById('progressPercent');
+const cancelExportBtn = document.getElementById('cancelExportBtn');
+
 let newStepScreenshotBlob = null;
 let insertAfterStepId = null;
+
+// ==================== Utils ====================
+
+function debounce(fn, delay = 300) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
 
 // ==================== Initialization ====================
 
@@ -71,7 +111,7 @@ function setupEventListeners() {
   // Session name auto-save
   sessionNameInput.addEventListener('blur', saveSessionName);
 
-  // Listen for checkbox changes
+  // Listen for checkbox changes (delegated)
   stepsContainer.addEventListener('change', (e) => {
     if (e.target.classList.contains('step-checkbox')) {
       updateBulkDeleteButton();
@@ -91,7 +131,7 @@ function setupEventListeners() {
     }
   });
 
-  // Drag & drop for screenshot
+  // Drag & drop for screenshot upload
   screenshotUpload.addEventListener('dragover', (e) => {
     e.preventDefault();
     screenshotUpload.style.borderColor = 'var(--color-primary)';
@@ -108,6 +148,78 @@ function setupEventListeners() {
     const file = e.dataTransfer.files[0];
     if (file && file.type.startsWith('image/')) {
       processScreenshotFile(file);
+    }
+  });
+
+  // Filters
+  if (stepSearchInput) {
+    stepSearchInput.addEventListener(
+      'input',
+      debounce((e) => {
+        searchTerm = e.target.value.trim().toLowerCase();
+        renderSteps();
+      }, 300)
+    );
+  }
+
+  if (actionFilterSelect) {
+    actionFilterSelect.addEventListener('change', (e) => {
+      filterAction = e.target.value;
+      renderSteps();
+    });
+  }
+
+  if (clearFiltersBtn) {
+    clearFiltersBtn.addEventListener('click', () => {
+      searchTerm = '';
+      filterAction = 'all';
+      if (stepSearchInput) stepSearchInput.value = '';
+      if (actionFilterSelect) actionFilterSelect.value = 'all';
+      renderSteps();
+    });
+  }
+
+  // Undo / Redo buttons
+  if (undoBtn) undoBtn.addEventListener('click', undo);
+  // if (redoBtn) redoBtn.addEventListener('click', redo);
+
+  // Keyboard shortcuts: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z
+  document.addEventListener('keydown', (e) => {
+    const meta = e.metaKey;
+    const ctrl = e.ctrlKey;
+
+    if ((ctrl || meta) && !e.altKey) {
+      if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } 
+     /*else if (e.key.toLowerCase() === 'z' && e.shiftKey) {
+        e.preventDefault();
+        redo();
+      }*/
+    }
+  });
+
+  // Cancel export
+  if (cancelExportBtn) {
+    cancelExportBtn.addEventListener('click', async () => {
+      try {
+        await chrome.runtime.sendMessage({
+          action: 'cancelExport',
+          sessionId
+        });
+      } catch (err) {
+        console.error('Failed to send cancelExport:', err);
+      }
+      hideProgressModal();
+      showMessage('Export cancelled.', 'info');
+    });
+  }
+
+  // Listen for export progress events from background
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.action === 'exportProgress') {
+      handleExportProgress(message);
     }
   });
 }
@@ -132,6 +244,15 @@ async function loadSession() {
       `Session ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionDate.textContent = `Created: ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionStepCount.textContent = `Steps: ${stepsData.length}`;
+
+    // Initialize history with initial state
+    history = [];
+    historyIndex = -1;
+    if (stepsData.length > 0) {
+      saveToHistory('initial');
+    } else {
+      updateHistoryButtons();
+    }
 
     await renderSteps();
     hideMessage();
@@ -163,13 +284,101 @@ async function saveSessionName() {
   }
 }
 
+// ==================== Filters & History ====================
+
+function filterSteps() {
+  let filtered = [...stepsData];
+
+  if (searchTerm) {
+    const term = searchTerm;
+    filtered = filtered.filter((step) => {
+      const fields = [
+        step.description,
+        step.fieldName,
+        step.value,
+        step.action,
+        step.url
+      ];
+      return fields.some(
+        (v) => v && String(v).toLowerCase().includes(term)
+      );
+    });
+  }
+
+  if (filterAction && filterAction !== 'all') {
+    filtered = filtered.filter(
+      (step) => (step.action || '').toLowerCase() === filterAction
+    );
+  }
+
+  return filtered;
+}
+
+function saveToHistory(actionLabel) {
+  const snapshot = JSON.parse(JSON.stringify(stepsData));
+
+  // Truncate future if we are in the middle
+  if (historyIndex < history.length - 1) {
+    history = history.slice(0, historyIndex + 1);
+  }
+
+  history.push({ action: actionLabel, steps: snapshot });
+
+  if (history.length > MAX_HISTORY) {
+    history.shift();
+  }
+
+  historyIndex = history.length - 1;
+  updateHistoryButtons();
+}
+
+function updateHistoryButtons() {
+  if (!undoBtn) return;
+  undoBtn.disabled = historyIndex <= 0;
+}
+
+async function restoreFromHistory(targetIndex) {
+  if (targetIndex < 0 || targetIndex >= history.length) return;
+
+  historyIndex = targetIndex;
+  const snapshot = history[historyIndex].steps;
+  stepsData = JSON.parse(JSON.stringify(snapshot));
+
+  // Persist to DB
+  await storage.updateAllSteps(sessionId, stepsData);
+  if (sessionData) {
+    sessionData.stepCount = stepsData.length;
+    await storage.updateSession(sessionData);
+    sessionStepCount.textContent = `Steps: ${stepsData.length}`;
+  }
+
+  await renderSteps();
+  updateHistoryButtons();
+}
+
+function undo() {
+  if (historyIndex <= 0) return;
+  restoreFromHistory(historyIndex - 1);
+}
+
+/*function redo() {
+  if (historyIndex >= history.length - 1) return;
+  restoreFromHistory(historyIndex + 1);
+}*/
+
 // ==================== Step Rendering ====================
 
 async function renderSteps() {
-  const container = document.getElementById('stepsContainer');
+  const container = stepsContainer;
 
   if (!stepsData || stepsData.length === 0) {
     container.innerHTML = '<div class="loading">No steps recorded</div>';
+    if (stepResultsSummary) {
+      stepResultsSummary.textContent = '';
+    }
+    if (noResultsMsg) {
+      noResultsMsg.classList.add('hidden');
+    }
     return;
   }
 
@@ -188,24 +397,55 @@ async function renderSteps() {
     }
   }
 
-  // Render steps
-  container.innerHTML = stepsData.map((step, index) => {
+  const visibleSteps = filterSteps();
+
+  if (stepResultsSummary) {
+    if (visibleSteps.length === stepsData.length) {
+      stepResultsSummary.textContent = `Showing ${stepsData.length} steps`;
+    } else {
+      stepResultsSummary.textContent = `Showing ${visibleSteps.length} of ${stepsData.length} steps`;
+    }
+  }
+
+  if (noResultsMsg) {
+    if (visibleSteps.length === 0) {
+      noResultsMsg.classList.remove('hidden');
+    } else {
+      noResultsMsg.classList.add('hidden');
+    }
+  }
+
+  if (visibleSteps.length === 0) {
+    container.innerHTML = '<div class="loading">No results found</div>';
+    return;
+  }
+
+  container.innerHTML = visibleSteps.map((step, index) => {
     // Use custom description if set, otherwise generate from fields
     const description = step.description || generateStepDescription(step);
-    const screenshotData = screenshotMap.get(step.id);
+    const screenshotData = screenshotMap.get(step.id) || null;
+    const safeDescription = Utils.escapeHtml(description);
 
     return `
-      <div class="step-doc-line" data-step-id="${step.id}">
+      <div class="step-doc-line" data-step-id="${step.id}" draggable="true">
         <div class="step-left">
-          <input type="checkbox" class="step-checkbox" data-step-id="${step.id}">
+          <span class="drag-handle" title="Drag to reorder">☰</span>
+          <input type="checkbox" class="step-checkbox" data-step-id="${step.id}" ${step.selected ? 'checked' : ''}>
           <span class="step-number">${index + 1}.</span>
-          <span class="step-text">${description}</span>
+          <div class="step-text" style="flex: 1;">
+            <textarea
+              class="step-text-input"
+              data-step-id="${step.id}"
+              style="width: 100%; font-size: 15px; padding: 4px 8px;
+                     border-radius: 4px; border: 1px solid var(--border-color);
+                     background: var(--bg-secondary); color: var(--text-primary);
+                     resize: vertical; min-height: 40px;">${safeDescription}</textarea>
+          </div>
         </div>
         <div class="step-actions">
           ${screenshotData ? `
             <button class="icon-btn toggle-img-btn" data-step-id="${step.id}" title="Show Screenshot">📸</button>
           ` : ''}
-          <button class="icon-btn edit-btn" title="Edit" data-step-id="${step.id}">✏️</button>
           <button class="icon-btn delete-btn" title="Delete" data-step-id="${step.id}">🗑️</button>
         </div>
         <button class="add-step-after" data-after-step-id="${step.id}" title="Add step after this">+</button>
@@ -247,25 +487,58 @@ function generateStepDescription(step) {
 }
 
 function attachStepEventListeners() {
-  document.querySelectorAll('.edit-btn').forEach(btn =>
-    btn.addEventListener('click', () => toggleEdit(btn.dataset.stepId))
-  );
-
+  // Delete
   document.querySelectorAll('.delete-btn').forEach(btn =>
     btn.addEventListener('click', () => handleDeleteStep(btn.dataset.stepId))
   );
 
+  // Checkbox selection
   document.querySelectorAll('.step-checkbox').forEach(box =>
     box.addEventListener('change', handleCheckboxChange)
   );
 
+  // Screenshot toggle
   document.querySelectorAll('.toggle-img-btn').forEach(btn =>
     btn.addEventListener('click', () => toggleScreenshot(btn.dataset.stepId))
   );
 
+  // Add step after
   document.querySelectorAll('.add-step-after').forEach(btn =>
     btn.addEventListener('click', () => openAddStepModal(btn.dataset.afterStepId))
   );
+
+  // Inline editing: auto-save on blur
+  document.querySelectorAll('.step-text-input').forEach(textarea => {
+    textarea.addEventListener('blur', async (e) => {
+      const stepId = e.target.dataset.stepId;
+      const step = stepsData.find(s => s.id === stepId);
+      if (!step) return;
+
+      const newText = e.target.value.trim();
+      const oldText = step.description || generateStepDescription(step);
+
+      if (newText && newText !== oldText) {
+        try {
+          saveToHistory('edit');
+          step.description = newText;
+          await storage.updateStep(step);
+          showMessage('Step updated', 'success');
+        } catch (err) {
+          console.error('Failed to update step:', err);
+          showMessage('Failed to update step: ' + err.message, 'error');
+          e.target.value = oldText;
+        }
+      }
+    });
+  });
+
+  // Drag and drop for reordering
+  document.querySelectorAll('.step-doc-line').forEach(line => {
+    line.addEventListener('dragstart', handleDragStart);
+    line.addEventListener('dragover', handleDragOver);
+    line.addEventListener('drop', handleDrop);
+    line.addEventListener('dragend', handleDragEnd);
+  });
 }
 
 // ==================== Add Step Modal ====================
@@ -355,27 +628,15 @@ async function handleConfirmAddStep() {
       });
     }
 
-    // Insert into array and resequence
+    // Save history BEFORE mutation
+    saveToHistory('add');
+
+    // Insert into array and resequence + persist
     stepsData.splice(afterStepIndex + 1, 0, newStep);
-    stepsData.forEach((step, index) => {
-      step.sequence = index + 1;
-    });
+    await resequenceAndPersist();
 
-    // Update all sequences in database
-    for (const step of stepsData) {
-      await storage.updateStep(step);
-    }
-
-    // Update session count
-    sessionData.stepCount = stepsData.length;
-    await storage.updateSession(sessionData);
-
-    // Re-render and close modal
-    await renderSteps();
-    sessionStepCount.textContent = `Steps: ${stepsData.length}`;
     closeAddStepModal();
     showMessage('Step added successfully!', 'success');
-
   } catch (error) {
     console.error('Failed to add step:', error);
     showMessage('Failed to add step: ' + error.message, 'error');
@@ -393,94 +654,31 @@ async function toggleScreenshot(stepId) {
   const isHidden = imgBlock.classList.contains('hidden');
   if (isHidden) {
     imgBlock.classList.remove('hidden');
-    btn.textContent = '🙈';
-    btn.title = 'Hide Screenshot';
+    if (btn) {
+      btn.textContent = '🙈';
+      btn.title = 'Hide Screenshot';
+    }
   } else {
     imgBlock.classList.add('hidden');
-    btn.textContent = '📸';
-    btn.title = 'Show Screenshot';
-  }
-}
-
-async function toggleEdit(stepId) {
-  const line = document.querySelector(`.step-doc-line[data-step-id="${stepId}"]`);
-  if (!line) return;
-
-  const editBtn = line.querySelector('.edit-btn');
-  const textNode = line.querySelector('.step-text');
-  const step = stepsData.find(s => s.id === stepId);
-  if (!step) return;
-
-  const isEditing = line.classList.contains('editing');
-
-  if (!isEditing) {
-    // ✏️ Enter edit mode
-    line.classList.add('editing');
-    editBtn.textContent = '💾';
-    editBtn.title = 'Save';
-
-    // Use existing description or generate from fields
-    const currentText = step.description || generateStepDescription(step);
-    textNode.innerHTML = `
-      <textarea class="edit-input"
-        style="width: 100%; font-size: 15px; padding: 4px 8px;
-               border: 1px solid var(--border-color); border-radius: 4px;
-               background: var(--bg-secondary); color: var(--text-primary);
-               resize: vertical; min-height: 60px;">${Utils.escapeHtml(currentText)}</textarea>
-    `;
-    textNode.querySelector('.edit-input').focus();
-  } else {
-    // 💾 Save mode
-    const input = textNode.querySelector('.edit-input');
-    const newText = input.value.trim();
-    if (!newText) {
-      showMessage('Description cannot be empty', 'error');
-      return;
-    }
-
-    // ✅ Save the custom description to override auto-generation
-    step.description = newText;
-
-    try {
-      await storage.updateStep(step);
-      line.classList.remove('editing');
-      editBtn.textContent = '✏️';
-      editBtn.title = 'Edit';
-
-      // Re-render to show saved description
-      await renderSteps();
-      showMessage('Step updated successfully', 'success');
-    } catch (err) {
-      console.error('Update step failed:', err);
-      showMessage('Failed to update step: ' + err.message, 'error');
+    if (btn) {
+      btn.textContent = '📸';
+      btn.title = 'Show Screenshot';
     }
   }
 }
 
 async function handleDeleteStep(stepId) {
-  if (!confirm('Delete this step?')) return;
+  // if (!confirm('Delete this step?')) return;
 
   try {
     await storage.deleteStep(stepId);
 
+    // Save history BEFORE mutation
+    saveToHistory('delete');
+
     stepsData = stepsData.filter(s => s.id !== stepId);
 
-    // Resequence
-    stepsData.forEach((step, index) => {
-      step.sequence = index + 1;
-    });
-
-    // Update sequences in database
-    for (const step of stepsData) {
-      await storage.updateStep(step);
-    }
-
-    // Update session count
-    sessionData.stepCount = stepsData.length;
-    await storage.updateSession(sessionData);
-
-    await renderSteps();
-    sessionStepCount.textContent = `Steps: ${stepsData.length}`;
+    await resequenceAndPersist();
     showMessage('Step deleted successfully', 'success');
   } catch (error) {
     console.error('Failed to delete step:', error);
@@ -503,22 +701,12 @@ async function handleBulkDelete() {
       await storage.deleteStep(step.id);
     }
 
+    // Save history BEFORE mutation
+    saveToHistory('bulk-delete');
+
     stepsData = stepsData.filter(s => !s.selected);
 
-    // Resequence
-    stepsData.forEach((step, index) => {
-      step.sequence = index + 1;
-    });
-
-    for (const step of stepsData) {
-      await storage.updateStep(step);
-    }
-
-    sessionData.stepCount = stepsData.length;
-    await storage.updateSession(sessionData);
-
-    await renderSteps();
-    sessionStepCount.textContent = `Steps: ${stepsData.length}`;
+    await resequenceAndPersist();
     showMessage('Selected steps deleted.', 'success');
   } catch (error) {
     console.error('Bulk delete failed:', error);
@@ -541,9 +729,115 @@ function updateBulkDeleteButton() {
     checkedCount > 0 ? `Delete Selected (${checkedCount})` : 'Delete Selected';
 }
 
-// ==================== Export ====================
+// ==================== Drag & Drop Reordering ====================
+
+function handleDragStart(event) {
+  const line = event.currentTarget;
+  draggedStepId = line.dataset.stepId;
+  line.classList.add('dragging');
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+  }
+}
+
+function handleDragOver(event) {
+  event.preventDefault();
+  const line = event.currentTarget;
+  if (!line.classList.contains('dragging')) {
+    line.classList.add('drag-over');
+  }
+}
+
+async function handleDrop(event) {
+  event.preventDefault();
+  const targetLine = event.currentTarget;
+  const targetStepId = targetLine.dataset.stepId;
+
+  document.querySelectorAll('.step-doc-line.drag-over').forEach(el =>
+    el.classList.remove('drag-over')
+  );
+
+  if (!draggedStepId || draggedStepId === targetStepId) return;
+
+  const fromIndex = stepsData.findIndex(s => s.id === draggedStepId);
+  const toIndex = stepsData.findIndex(s => s.id === targetStepId);
+  if (fromIndex === -1 || toIndex === -1) return;
+
+  // Save history BEFORE mutation
+  saveToHistory('reorder');
+
+  const [moved] = stepsData.splice(fromIndex, 1);
+  stepsData.splice(toIndex, 0, moved);
+
+  await resequenceAndPersist();
+}
+
+function handleDragEnd() {
+  draggedStepId = null;
+  document.querySelectorAll('.step-doc-line.dragging').forEach(el =>
+    el.classList.remove('dragging')
+  );
+  document.querySelectorAll('.step-doc-line.drag-over').forEach(el =>
+    el.classList.remove('drag-over')
+  );
+}
+
+async function resequenceAndPersist() {
+  stepsData.forEach((step, index) => {
+    step.sequence = index + 1;
+  });
+
+  await storage.updateAllSteps(sessionId, stepsData);
+
+  if (sessionData) {
+    sessionData.stepCount = stepsData.length;
+    await storage.updateSession(sessionData);
+    sessionStepCount.textContent = `Steps: ${stepsData.length}`;
+  }
+
+  await renderSteps();
+}
+
+// ==================== Export + Progress ====================
+
+function showProgressModal() {
+  if (!progressModal) return;
+  progressModal.classList.add('active');
+  if (progressFill) progressFill.style.width = '0%';
+  if (progressStatus) progressStatus.textContent = 'Starting export...';
+  if (progressPercent) progressPercent.textContent = '0%';
+}
+
+function hideProgressModal() {
+  if (!progressModal) return;
+  progressModal.classList.remove('active');
+}
+
+function handleExportProgress(message) {
+  const { percent, status, error, done } = message;
+
+  if (typeof percent === 'number' && progressFill && progressPercent) {
+    progressFill.style.width = `${percent}%`;
+    progressPercent.textContent = `${percent}%`;
+  }
+
+  if (status && progressStatus) {
+    progressStatus.textContent = status;
+  }
+
+  if (error) {
+    hideProgressModal();
+    showMessage('Export failed: ' + error, 'error');
+  }
+
+  // 🔑 THIS MUST EXIST
+  if (done) {
+    hideProgressModal();
+  }
+}
 
 async function handleSaveAndExport() {
+  showProgressModal();
   try {
     showMessage('Saving changes...', 'info');
     await saveSessionName();
@@ -557,20 +851,23 @@ async function handleSaveAndExport() {
       format: format
     });
 
-    if (response.success) {
+    if (response && response.success) {
       showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
 
-      setTimeout(() => {
+      /*setTimeout(() => {
         if (confirm('Export successful! Close this window?')) {
           window.close();
         }
-      }, 1000);
-    } else {
+      }, 1000);*/
+    } else if (response && !response.success) {
       throw new Error(response.error || 'Export failed');
     }
   } catch (error) {
     console.error('Save and export failed:', error);
     showMessage('Failed: ' + error.message, 'error');
+  } finally {
+    // 🛟 Safety net: close modal even if progress events misbehave
+    hideProgressModal();
   }
 }
 

@@ -1,151 +1,168 @@
-# TestSnapper v1.0 - Installation and Testing Guide
+# Testing Guide
 
-## Quick Installation Steps
+This guide covers manual + functional testing for TestSnapper.
 
-1. **Enable Developer Mode in Chrome**:
-   - Open Chrome and navigate to `chrome://extensions/`
-   - Toggle "Developer mode" ON (top-right corner)
+---
 
-2. **Load the Extension**:
-   - Click "Load unpacked" button
-   - Select the `/app/testsnapper-extension` folder
-   - Click "Select Folder"
+# 🧭 Test Categories
 
-3. **Verify Installation**:
-   - TestSnapper icon should appear in Chrome toolbar
-   - Extension should be listed as "TestSnapper v1.0" in extensions page
+### 1. Recording Engine  
+### 2. Selector Logic  
+### 3. Field Name Extraction  
+### 4. Redaction  
+### 5. Screenshots  
+### 6. Storage  
+### 7. Review UI  
+### 8. Exporting  
+### 9. Settings  
 
-## Test Scenario Walkthrough
+---
 
-### Step 1: Start Recording
-1. Click the TestSnapper icon in toolbar
-2. Click "Start Recording" button
-3. Popup closes and recording begins (red indicator when reopened)
+# 1️⃣ Recording Engine Tests
 
-### Step 2: Perform Test Interactions
-Open `/app/testsnapper-extension/demo.html` in browser and:
+### ✔ Should capture:
+- Clicks  
+- Inputs  
+- Dropdown changes  
+- Navigation events  
+- Manual screenshots  
+- Auto screenshots  
 
-**Form Testing**:
-- Fill out the contact form with various inputs
-- Test password field (should be redacted)
-- Select dropdown options
-- Check/uncheck checkboxes
-- Submit the form
+### Steps:
+1. Start recording  
+2. Interact with demo form  
+3. Open popup → check Live Steps  
+4. Validate step count  
+5. Stop → verify session saved  
 
-**Button Interactions**:
-- Click "Show Alert" button
-- Click "Change Background" multiple times
-- Click "Add List Item" several times
-- Toggle section visibility
+---
 
-**Network Error Testing**:
-- Click "Trigger 404 Error" button
-- Click "Trigger 500 Error" button  
-- Click "Trigger Timeout" button
-- Click "Successful Request" for comparison
+# 2️⃣ Selector Logic Tests
 
-**Navigation & Scrolling**:
-- Click navigation links (smooth scrolling)
-- Scroll within the scrollable content section
-- Hover over the colored boxes
+For each element type:
+- inputs  
+- buttons  
+- checkboxes  
+- radios  
+- selects  
+- links  
+- custom widgets  
 
-### Step 3: Stop Recording
-1. Click TestSnapper icon again
-2. Click "Stop Recording" button
-3. Session is automatically saved
+Verify selectors include:
+- CSS  
+- XPath  
+- Best-match chosen correctly  
 
-### Step 4: View Session Data
-1. Click "Sessions" tab in extension popup
-2. Review recorded session with:
-   - Session name and timestamp
-   - Number of interactions captured
-   - Duration of recording
-   - Network error count (if any)
+---
 
-### Step 5: Export Session
-1. Click "Export" button next to a session
-2. Download `.txt` file with detailed log
-3. Review exported content containing:
-   - Step-by-step interactions with selectors
-   - Timestamps and metadata
-   - Network errors (4xx/5xx) with URLs and status codes
-   - Browser and system information
+# 3️⃣ Field Name Extraction Tests
 
-### Step 6: Test Settings
-1. Click "Settings" tab
-2. Modify configuration options:
-   - Toggle auto-screenshot setting
-   - Change screenshot quality
-   - Update data redaction patterns
-   - Enable/disable dark mode
-3. Click "Save Settings"
+Test combinations:
+- Labeled inputs  
+- Label wrapped inputs  
+- ARIA-based inputs  
+- Placeholder-only fields  
+- No-name, no-id fields  
 
-## Expected Export Format Example
+Expected:
+- Clean readable name  
+- No leakage of sensitive data  
 
-```
-TestSnapper Session Export
-Session: Session 1/20/2025, 2:30:15 PM
-URL: file:///app/testsnapper-extension/demo.html
-Date: 1/20/2025, 2:30:15 PM
-Duration: 45s
+---
 
-Metadata:
-Browser: Chrome
-Version: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36...
-OS: Linux x86_64
+# 4️⃣ Redaction Tests
 
-Recorded Interactions:
-1. [2s] CLICK "input#name" value: "John Doe" at file:///app/testsnapper-extension/demo.html
-2. [5s] INPUT "input#email" value: "john@example.com" at file:///app/testsnapper-extension/demo.html
-3. [8s] INPUT "input#password" value: "[REDACTED]" at file:///app/testsnapper-extension/demo.html
-4. [12s] CLICK "button[onclick="trigger404()"]" text: "Trigger 404 Error" at file:///app/testsnapper-extension/demo.html
-5. [15s] SCROLL scrollY: 150 at file:///app/testsnapper-extension/demo.html
+Ensure:
+- password fields masked  
+- credit card masked  
+- email partially masked (if configured)  
+- no raw secrets in JSON  
 
-Failed Network Calls:
-1. GET https://httpstat.us/404 - Status: 404 
-2. GET https://httpstat.us/500 - Status: 500
-```
+---
 
-## Troubleshooting Common Issues
+# 5️⃣ Screenshot Tests
 
-**Extension Not Loading**:
-- Ensure all files are in `/app/testsnapper-extension/` directory
-- Check that manifest.json is valid
-- Look for errors in Chrome extension console
+### Manual Screenshot
+- Trigger manually  
+- Verify asset stored  
 
-**Recording Not Working**:
-- Refresh the web page after installing extension
-- Check browser console for JavaScript errors
-- Ensure content script permissions are granted
+### Auto Screenshot
+- Set interval = 3 seconds  
+- Record 10 seconds  
+- Expect 3–4 screenshots  
 
-**Network Tracking Issues**:
-- Some requests may be blocked by CORS
-- Test with different websites
-- Check background script console for errors
+### File Integrity
+- Export DOCX  
+- Images present  
+- Images compressed correctly  
 
-**Export Not Working**:
-- Disable popup blockers
-- Check browser download permissions
-- Ensure sufficient storage space
+---
 
-## Success Criteria Verification
+# 6️⃣ Storage Tests (IndexedDB)
 
-✅ **UI Interaction Recording**: All clicks, inputs, navigation captured with accurate selectors
-✅ **Network Error Tracking**: 4xx/5xx HTTP errors detected and logged  
-✅ **Session Management**: Sessions saved locally, viewable, and deletable
-✅ **Export Functionality**: .txt files generated with structured interaction data
-✅ **Settings Configuration**: User preferences saved and applied
-✅ **Chrome Compatibility**: Works with Chrome v126+ and Manifest V3
-✅ **Privacy Compliance**: All data stored locally, no external transmissions
-✅ **Performance**: Minimal impact on page load and interaction responsiveness
+- Session creation  
+- Step append  
+- Asset storage  
+- Deletion of sessions  
+- Clear All function  
+- Max session limit enforcement  
 
-## Next Development Phase
+---
 
-The foundation is ready for implementing:
-- Screenshot capture with html2canvas
-- Annotation tools (arrows, highlights, blur, text)
-- .har file export for network data
-- Enhanced session search and filtering
-- Project-based organization
+# 7️⃣ Review UI Tests
 
-The current MVP provides complete QA recording functionality for the first two priority features, with a robust architecture ready for feature expansion.
+Verify:
+- Step editing  
+- Adding steps  
+- Drag sorting  
+- Screenshot visibility toggle  
+- Insert-between-line feature  
+- Delete step  
+- Title editing  
+- Responsive layout  
+
+---
+
+# 8️⃣ Export Tests
+
+### JSON  
+- Must include all steps + metadata  
+
+### CSV  
+- Columns aligned  
+- Special characters handled  
+
+### DOCX  
+- Heading  
+- Step text  
+- Screenshots  
+- Layout intact  
+- No blank images  
+
+---
+
+# 9️⃣ Settings Tests
+
+Validate:
+- Auto Screenshot  
+- API Logging  
+- Capture Failed Calls  
+- Capture All Calls  
+- Limit sessions  
+- Timestamp inclusion  
+
+---
+
+# 🏁 Final Acceptance Scenarios
+
+1. Record login → dashboard → logout  
+2. Capture 2–3 screenshots  
+3. Edit steps  
+4. Export DOCX  
+5. Verify selectors  
+6. Verify DOCX formatting  
+7. Clear sessions  
+8. Restart recording → works correctly  
+
+---
+

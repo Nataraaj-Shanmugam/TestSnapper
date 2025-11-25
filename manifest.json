@@ -60,5 +60,14 @@
         "<all_urls>"
       ]
     }
-  ]
+  ],
+  "commands": {
+    "capture_screenshot": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Capture screenshot"
+    }
+  }
 }

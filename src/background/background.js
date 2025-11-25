@@ -1,6 +1,5 @@
 /**
- * Background Service Worker - REFACTORED
- * Clean architecture with shared modules
+ * Background Service Worker - FIXED: Unicode export, race conditions, session recovery
  */
 
 import { StorageManager } from '../storage.js';
@@ -11,9 +10,11 @@ import { Utils } from '../core/utils.js';
 
 class RecordingStateManager {
   constructor() {
-    this.state = 'idle'; // idle | recording | paused | exporting
+    this.state = 'idle';
     this.session = null;
     this.stepSequence = 0;
+    // 🔧 FIX #3: Add lock for sequence generation
+    this.sequenceLock = Promise.resolve();
   }
 
   startRecording(session) {
@@ -50,12 +51,29 @@ class RecordingStateManager {
     };
   }
 
-  incrementStepCount() {
-    this.stepSequence++;
-    if (this.session) {
-      this.session.stepCount++;
+  /**
+   * 🔧 FIX #3: Thread-safe sequence increment with locking
+   */
+  async incrementStepCount() {
+    // Acquire lock
+    await this.sequenceLock;
+
+    // Create new lock for next caller
+    let releaseLock;
+    this.sequenceLock = new Promise(resolve => {
+      releaseLock = resolve;
+    });
+
+    try {
+      this.stepSequence++;
+      if (this.session) {
+        this.session.stepCount++;
+      }
+      return this.stepSequence;
+    } finally {
+      // Release lock
+      releaseLock();
     }
-    return this.stepSequence;
   }
 
   isRecording() {
@@ -115,6 +133,16 @@ const settingsManager = new SettingsManager();
 
 storage.init().catch(console.error);
 
+// 🔧 FIX #7: Persist session state to survive service worker restarts
+chrome.storage.local.get('activeRecording', (result) => {
+  if (result.activeRecording) {
+    console.log('🔄 Recovering active recording:', result.activeRecording.sessionId);
+    stateManager.state = result.activeRecording.state;
+    stateManager.session = result.activeRecording.session;
+    stateManager.stepSequence = result.activeRecording.stepSequence;
+  }
+});
+
 // ==================== Badge Management ====================
 
 class BadgeManager {
@@ -156,6 +184,21 @@ async function createSession(tabInfo) {
   return session;
 }
 
+// 🔧 FIX #7: Persist state helper
+async function persistActiveRecording() {
+  if (stateManager.state !== 'idle' && stateManager.session) {
+    await chrome.storage.local.set({
+      activeRecording: {
+        state: stateManager.state,
+        session: stateManager.session,
+        stepSequence: stateManager.stepSequence
+      }
+    });
+  } else {
+    await chrome.storage.local.remove('activeRecording');
+  }
+}
+
 // ==================== Screenshot Management ====================
 
 async function captureScreenshot(tabId, isManual = true) {
@@ -178,12 +221,10 @@ async function captureScreenshot(tabId, isManual = true) {
       throw new Error('Invalid tab or window ID');
     }
 
-    // Focus tab and window
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Capture screenshot
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
       format: 'jpeg',
       quality: 80
@@ -194,7 +235,7 @@ async function captureScreenshot(tabId, isManual = true) {
     }
 
     const blob = Utils.dataURLtoBlob(dataUrl);
-    const sequence = stateManager.incrementStepCount();
+    const sequence = await stateManager.incrementStepCount();
 
     const step = {
       id: Utils.generateUUID(),
@@ -227,6 +268,7 @@ async function captureScreenshot(tabId, isManual = true) {
     });
 
     await storage.updateSession(stateManager.session);
+    await persistActiveRecording(); // 🔧 FIX #7
 
     return { success: true, stepId: step.id };
   } catch (error) {
@@ -245,10 +287,10 @@ async function startRecording(tabId, tabInfo) {
   try {
     const session = await createSession(tabInfo);
     stateManager.startRecording(session);
+    await persistActiveRecording(); // 🔧 FIX #7
 
     await BadgeManager.setRecording(tabId);
 
-    // Inject content scripts
     try {
       await chrome.scripting.executeScript({
         target: { tabId },
@@ -262,6 +304,7 @@ async function startRecording(tabId, tabInfo) {
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
+    // 🔧 FIX #7: Send session info to content script
     await chrome.tabs.sendMessage(tabId, {
       action: 'startRecording',
       sessionId: session.sessionId
@@ -273,6 +316,7 @@ async function startRecording(tabId, tabInfo) {
   } catch (error) {
     console.error('Failed to start recording:', error);
     stateManager.stopRecording();
+    await persistActiveRecording(); // 🔧 FIX #7
     return { success: false, error: error.message };
   }
 }
@@ -283,6 +327,7 @@ async function pauseRecording(tabId) {
   }
 
   stateManager.pauseRecording();
+  await persistActiveRecording(); // 🔧 FIX #7
   await BadgeManager.setPaused(tabId);
   await chrome.tabs.sendMessage(tabId, { action: 'pauseRecording' });
   return { success: true };
@@ -294,6 +339,7 @@ async function resumeRecording(tabId) {
   }
 
   stateManager.resumeRecording();
+  await persistActiveRecording(); // 🔧 FIX #7
   await BadgeManager.setRecording(tabId);
   await chrome.tabs.sendMessage(tabId, { action: 'resumeRecording' });
   return { success: true };
@@ -306,6 +352,7 @@ async function stopRecording(tabId) {
 
   try {
     const sessionId = stateManager.stopRecording();
+    await persistActiveRecording(); // 🔧 FIX #7: Clear persisted state
     await BadgeManager.clear(tabId);
 
     await chrome.tabs.sendMessage(tabId, { action: 'stopRecording' }).catch(() => {
@@ -314,7 +361,6 @@ async function stopRecording(tabId) {
 
     console.log('✅ Recording stopped:', sessionId);
 
-    // Open standalone review page
     if (sessionId) {
       const reviewUrl = chrome.runtime.getURL(
         `src/ui/review/review-standalone.html?sessionId=${sessionId}`
@@ -326,6 +372,7 @@ async function stopRecording(tabId) {
   } catch (error) {
     console.error('Failed to stop recording:', error);
     stateManager.stopRecording();
+    await persistActiveRecording(); // 🔧 FIX #7
     return { success: false, error: error.message };
   }
 }
@@ -333,13 +380,15 @@ async function stopRecording(tabId) {
 // ==================== Step Management ====================
 
 async function addStep(stepData) {
+  // 🔧 FIX #7: Validate session exists
   if (!stateManager.session) {
+    console.error('❌ No active session - rejecting step');
     return { success: false, error: 'No active session' };
   }
 
   try {
     const settings = await settingsManager.get();
-    const sequence = stateManager.incrementStepCount();
+    const sequence = await stateManager.incrementStepCount(); // 🔧 FIX #3: Thread-safe
 
     const step = {
       id: Utils.generateUUID(),
@@ -354,6 +403,7 @@ async function addStep(stepData) {
 
     await storage.addStep(step);
     await storage.updateSession(stateManager.session);
+    await persistActiveRecording(); // 🔧 FIX #7
 
     return { success: true, step };
   } catch (error) {
@@ -366,40 +416,100 @@ async function addStep(stepData) {
 
 async function exportSession(sessionId, format = 'json') {
   try {
+    // Mark state as exporting
     stateManager.setExporting();
 
-    const result = await exportService.exportSession(sessionId, format);
+    // Progress callback → forward to review UI
+    const progressCallback = (update = {}) => {
+      try {
+        chrome.runtime.sendMessage({
+          action: 'exportProgress',
+          sessionId,
+          ...update
+        });
+      } catch (err) {
+        console.warn('Failed to send export progress message', err);
+      }
+    };
 
-    // ✅ Convert content to base64 data URL with proper Unicode handling
-    const encoder = new TextEncoder();
-    const uint8Array = encoder.encode(result.content);
-    
-    // Convert Uint8Array to binary string
-    let binaryString = '';
-    for (let i = 0; i < uint8Array.length; i++) {
-      binaryString += String.fromCharCode(uint8Array[i]);
+    // Initial "starting" progress
+    progressCallback({
+      percent: 0,
+      status: 'Preparing export...'
+    });
+
+    // Optional: send total steps info
+    try {
+      const steps = await storage.getSteps(sessionId);
+      progressCallback({
+        status: 'Preparing export...',
+        totalSteps: steps.length
+      });
+    } catch (e) {
+      console.warn('Unable to load steps for progress metadata', e);
     }
-    
+
+    // Call ExportService with progress callback
+    const result = await exportService.exportSession(sessionId, format, progressCallback);
+
+    // TextEncoder for proper UTF-8 → base64 conversion
+    const utf8Bytes = new TextEncoder().encode(result.content);
+
+    let binaryString = '';
+    const chunkSize = 0x8000; // avoid stack overflow for large files
+    for (let i = 0; i < utf8Bytes.length; i += chunkSize) {
+      const chunk = utf8Bytes.subarray(i, i + chunkSize);
+      binaryString += String.fromCharCode.apply(null, chunk);
+    }
+
     const base64Content = btoa(binaryString);
-    const dataUrl = `data:${result.mimeType};base64,${base64Content}`;
+    const dataUrl = `data:${result.mimeType};charset=utf-8;base64,${base64Content}`;
+
+    // Progress near completion
+    progressCallback({
+      percent: 95,
+      status: 'Preparing download...'
+    });
 
     await chrome.downloads.download({
       url: dataUrl,
       filename: result.filename,
-      saveAs: false,  // Auto-download without dialog
-      conflictAction: 'uniquify'  // Auto-rename if file exists
+      saveAs: false,
+      conflictAction: 'uniquify'
     });
 
+    // Reset state
     stateManager.state = 'idle';
+
+    // Final "done" update so UI can close the modal
+    progressCallback({
+      percent: 100,
+      status: 'Download started',
+      done: true
+    });
+
     return { success: true, filename: result.filename };
   } catch (error) {
     console.error('Export failed:', error);
     stateManager.state = 'idle';
+
+    // Notify UI about the error and signal completion
+    try {
+      chrome.runtime.sendMessage({
+        action: 'exportProgress',
+        sessionId,
+        error: error.message,
+        done: true
+      });
+    } catch (err) {
+      console.warn('Failed to send export error progress', err);
+    }
+
     return { success: false, error: error.message };
   }
 }
 
-// ==================== Message Handler ====================
+// ==================== Message Handler Helpers ====================
 
 async function getSenderTabId(sender) {
   if (sender?.tab?.id) return sender.tab.id;
@@ -420,6 +530,8 @@ async function getScreenshot(stepId) {
     return { success: false, error: error.message };
   }
 }
+
+// ==================== Runtime Message Handler ====================
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
@@ -461,6 +573,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = await exportSession(message.sessionId, message.format);
           break;
 
+        // ⭐ NEW: optional cancel support from UI
+        case 'cancelExport':
+          if (typeof exportService.cancelExport === 'function') {
+            await exportService.cancelExport(message.sessionId);
+          }
+          stateManager.state = 'idle';
+          try {
+            chrome.runtime.sendMessage({
+              action: 'exportProgress',
+              status: 'Export cancelled',
+              done: true,
+              canceled: true,
+              sessionId: message.sessionId
+            });
+          } catch (err) {
+            console.warn('Failed to send cancel progress', err);
+          }
+          response = { success: true };
+          break;
+
         case 'getAllSessions':
           let sessions = await storage.getAllSessions();
           sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -489,8 +621,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'clearAllSessions':
           const allSessions = await storage.getAllSessions();
-          for (const session of allSessions) {
-            await storage.clearSession(session.sessionId);
+          for (const sessionItem of allSessions) {
+            await storage.clearSession(sessionItem.sessionId);
           }
           response = { success: true };
           break;
@@ -532,6 +664,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   })();
 
   return true;
+});
+
+// ==================== Keyboard Shortcut Handler ====================
+
+// ⭐ NEW: Cross-platform keyboard shortcut for screenshot via commands
+chrome.commands?.onCommand.addListener(async (command) => {
+  // Match the command name you define in manifest.json:
+  // "capture_screenshot" or use "_execute_action" if you bind the shortcut there.
+  if (command === 'capture_screenshot' || command === '_execute_action') {
+    try {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!activeTab?.id) {
+        console.warn('No active tab for screenshot command');
+        return;
+      }
+
+      const result = await captureScreenshot(activeTab.id, true);
+      if (!result.success) {
+        console.warn('Screenshot command failed:', result.error);
+      }
+    } catch (err) {
+      console.error('Error handling screenshot command:', err);
+    }
+  }
+});
+
+chrome.runtime.onSuspend.addListener(() => {
+  console.log('⚠️ Service worker suspending - persisting state');
+  persistActiveRecording();
 });
 
 console.log('✅ TestSnapper background service worker initialized');

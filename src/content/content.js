@@ -1,6 +1,5 @@
 /**
- * Content Script - Records user interactions with smart deduplication
- * FIXED: Eliminates redundant steps and incorrect ordering
+ * Content Script - FIXED: Modal state management + session recovery
  */
 
 let selectorEngine;
@@ -9,7 +8,7 @@ let isRecording = false;
 let currentSessionId = null;
 let highlightOverlay = null;
 
-// ✅ NEW: Track last interactions to prevent duplicates
+// Track last interactions to prevent duplicates
 let lastInteraction = {
   element: null,
   action: null,
@@ -17,8 +16,17 @@ let lastInteraction = {
   value: null
 };
 
-// ✅ NEW: Pending input timeouts per element
+// Pending input timeouts per element
 const pendingInputs = new Map();
+
+// 🔧 FIX #2: Enhanced modal state management
+let isModalOpen = false;
+let pendingStep = null;
+let modalResolver = null;
+let modalTimeout = null;
+
+// 🔧 FIX #7: Add heartbeat to detect background script restart
+let sessionValidationInterval = null;
 
 // Initialize modules
 function initModules() {
@@ -41,8 +49,420 @@ if (!initModules()) {
 }
 
 /**
- * Create highlight overlay for captured elements
+ * Enhanced field name extraction for better reporting
  */
+function getEnhancedFieldName(element) {
+  const label = findAssociatedLabel(element);
+  if (label) return cleanFieldName(label);
+
+  if (element.placeholder) {
+    return cleanFieldName(element.placeholder);
+  }
+
+  if (element.getAttribute('aria-label')) {
+    return cleanFieldName(element.getAttribute('aria-label'));
+  }
+  if (element.getAttribute('aria-labelledby')) {
+    const labelElement = document.getElementById(element.getAttribute('aria-labelledby'));
+    if (labelElement) return cleanFieldName(labelElement.textContent);
+  }
+
+  if (element.name) {
+    return cleanFieldName(element.name);
+  }
+
+  if (element.id) {
+    return cleanFieldName(element.id);
+  }
+
+  if (element.type) {
+    return cleanFieldName(element.type);
+  }
+
+  const nearbyText = findNearbyText(element);
+  if (nearbyText) return cleanFieldName(nearbyText);
+
+  const fallback = selectorEngine.extractFieldName(element);
+  return fallback || null;
+}
+
+function findAssociatedLabel(element) {
+  if (element.id) {
+    const label = document.querySelector(`label[for="${element.id}"]`);
+    if (label) return label.textContent.trim();
+  }
+
+  const parentLabel = element.closest('label');
+  if (parentLabel) {
+    const clone = parentLabel.cloneNode(true);
+    const inputs = clone.querySelectorAll('input, select, textarea');
+    inputs.forEach(input => input.remove());
+    return clone.textContent.trim();
+  }
+
+  let sibling = element.previousElementSibling;
+  while (sibling) {
+    if (sibling.tagName.toLowerCase() === 'label') {
+      return sibling.textContent.trim();
+    }
+    sibling = sibling.previousElementSibling;
+  }
+
+  return null;
+}
+
+function findNearbyText(element) {
+  let parent = element.parentElement;
+  let depth = 0;
+  
+  while (parent && depth < 2) {
+    const textNodes = Array.from(parent.childNodes).filter(
+      node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()
+    );
+    
+    if (textNodes.length > 0) {
+      return textNodes[0].textContent.trim();
+    }
+
+    const labelCandidates = parent.querySelectorAll('span, div:not(:has(*)), p');
+    for (const candidate of labelCandidates) {
+      const text = candidate.textContent.trim();
+      if (text && text.length < 50 && !candidate.contains(element)) {
+        return text;
+      }
+    }
+
+    parent = parent.parentElement;
+    depth++;
+  }
+
+  return null;
+}
+
+function cleanFieldName(text) {
+  if (!text) return '';
+  
+  return text
+    .trim()
+    .replace(/[*:]/g, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/-/g, ' ')
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+    .trim();
+}
+
+function getSuggestedFieldName(element, selector) {
+  if (selector?.css) {
+    const css = selector.css;
+    
+    const idMatch = css.match(/#([a-zA-Z0-9_-]+)/);
+    if (idMatch) return cleanFieldName(idMatch[1]);
+    
+    const classMatch = css.match(/\.([a-zA-Z0-9_-]+)/);
+    if (classMatch) return cleanFieldName(classMatch[1]);
+    
+    const nameMatch = css.match(/\[name="([^"]+)"\]/);
+    if (nameMatch) return cleanFieldName(nameMatch[1]);
+  }
+  
+  return cleanFieldName(element.tagName + ' ' + (element.type || 'Field'));
+}
+
+/**
+ * 🔧 FIX #2: Enhanced modal with auto-close and cleanup
+ */
+function showManualEntryModal(element, action, stepData) {
+  return new Promise((resolve) => {
+    if (isModalOpen) {
+      resolve(null);
+      return;
+    }
+
+    isModalOpen = true;
+    modalResolver = resolve;
+    pendingStep = stepData;
+
+    // 🔧 FIX #2: Auto-close modal after 30 seconds
+    modalTimeout = setTimeout(() => {
+      console.warn('⚠️ Modal auto-closed after timeout');
+      closeModal(overlay);
+      resolve(null);
+    }, 30000);
+
+    const overlay = document.createElement('div');
+    overlay.id = 'testsnapper-modal-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999999;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      animation: modalSlideIn 0.2s ease-out;
+    `;
+
+    const suggestedName = getSuggestedFieldName(element, stepData.selector);
+
+    modal.innerHTML = `
+      <style>
+        @keyframes modalSlideIn {
+          from {
+            opacity: 0;
+            transform: translateY(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      </style>
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+        <div style="width: 40px; height: 40px; background: #FFA500; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px;">
+          ⚠️
+        </div>
+        <div>
+          <h3 style="margin: 0; font-size: 18px; color: #333;">Field Name Required</h3>
+          <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Cannot auto-detect field name</p>
+        </div>
+      </div>
+
+      <div style="background: #f5f5f5; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Action: <strong>${action}</strong></div>
+        <div style="font-size: 11px; color: #999; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${stepData.selector?.css || 'N/A'}
+        </div>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-size: 13px; font-weight: 500; color: #333; margin-bottom: 8px;">
+          Enter Field Name:
+        </label>
+        <input 
+          type="text" 
+          id="testsnapper-field-name-input"
+          placeholder="e.g., Email Address, Password, Submit Button"
+          value="${suggestedName}"
+          style="
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.2s;
+          "
+        />
+        <div style="font-size: 11px; color: #999; margin-top: 6px;">
+          💡 Suggested: <span style="color: #666;">${suggestedName}</span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        <button 
+          id="testsnapper-modal-skip"
+          style="
+            padding: 10px 20px;
+            border: 2px solid #ddd;
+            background: white;
+            color: #666;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+          "
+        >
+          Skip
+        </button>
+        <button 
+          id="testsnapper-modal-save"
+          style="
+            padding: 10px 24px;
+            border: none;
+            background: #4CAF50;
+            color: white;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+          "
+        >
+          Save & Continue
+        </button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const input = document.getElementById('testsnapper-field-name-input');
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 100);
+
+    const skipBtn = document.getElementById('testsnapper-modal-skip');
+    const saveBtn = document.getElementById('testsnapper-modal-save');
+
+    skipBtn.addEventListener('mouseenter', () => {
+      skipBtn.style.borderColor = '#999';
+      skipBtn.style.color = '#333';
+    });
+    skipBtn.addEventListener('mouseleave', () => {
+      skipBtn.style.borderColor = '#ddd';
+      skipBtn.style.color = '#666';
+    });
+
+    saveBtn.addEventListener('mouseenter', () => {
+      saveBtn.style.background = '#45a049';
+    });
+    saveBtn.addEventListener('mouseleave', () => {
+      saveBtn.style.background = '#4CAF50';
+    });
+
+    skipBtn.addEventListener('click', () => {
+      closeModal(overlay);
+      resolve(null);
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const fieldName = input.value.trim();
+      if (fieldName) {
+        closeModal(overlay);
+        resolve(fieldName);
+      } else {
+        input.style.borderColor = '#FF0000';
+        input.focus();
+      }
+    });
+
+    input.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        saveBtn.click();
+      }
+    });
+
+    input.addEventListener('input', () => {
+      input.style.borderColor = '#ddd';
+    });
+
+    // 🔧 FIX #2: ESC key to close
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        closeModal(overlay);
+        resolve(null);
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+  });
+}
+
+/**
+ * 🔧 FIX #2: Enhanced cleanup
+ */
+function closeModal(overlay) {
+  if (modalTimeout) {
+    clearTimeout(modalTimeout);
+    modalTimeout = null;
+  }
+
+  if (overlay && overlay.parentNode) {
+    overlay.style.animation = 'fadeOut 0.2s ease-out';
+    setTimeout(() => {
+      overlay.remove();
+      isModalOpen = false;
+      pendingStep = null;
+      modalResolver = null;
+    }, 200);
+  } else {
+    isModalOpen = false;
+    pendingStep = null;
+    modalResolver = null;
+  }
+}
+
+/**
+ * 🔧 FIX #2: Process step with modal pause/resume
+ */
+async function processStepWithManualEntry(element, action, stepData) {
+  let fieldName = stepData.fieldName;
+
+  if (!fieldName || fieldName === 'Unknown Field' || fieldName.trim() === '') {
+    console.log('⚠️ Field name not detected, requesting manual entry...');
+    
+    const wasRecording = isRecording;
+    isRecording = false;
+    updateRecordingIndicator('PAUSED');
+
+    fieldName = await showManualEntryModal(element, action, stepData);
+
+    // 🔧 FIX #2: Only resume if still valid
+    if (wasRecording && currentSessionId) {
+      // Validate session still exists
+      const valid = await validateSession();
+      if (valid) {
+        isRecording = true;
+        updateRecordingIndicator('RECORDING');
+      } else {
+        console.error('❌ Session invalidated during modal - stopping recording');
+        stopRecording();
+        return null;
+      }
+    }
+
+    if (!fieldName) {
+      console.log('⏭️ User skipped field name entry');
+      return null;
+    }
+
+    console.log('✅ Manual field name entered:', fieldName);
+  }
+
+  stepData.fieldName = fieldName;
+  return stepData;
+}
+
+/**
+ * 🔧 FIX #7: Validate session still exists in background
+ */
+async function validateSession() {
+  if (!currentSessionId) return false;
+
+  try {
+    const response = await chrome.runtime.sendMessage({ action: 'getState' });
+    if (!response || response.session?.sessionId !== currentSessionId) {
+      console.error('❌ Session mismatch or background restarted');
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to validate session:', error);
+    return false;
+  }
+}
+
 function createHighlight(element) {
   removeHighlight();
 
@@ -66,9 +486,6 @@ function createHighlight(element) {
   setTimeout(removeHighlight, 1000);
 }
 
-/**
- * Remove highlight overlay
- */
 function removeHighlight() {
   if (highlightOverlay) {
     highlightOverlay.remove();
@@ -76,19 +493,14 @@ function removeHighlight() {
   }
 }
 
-/**
- * ✅ NEW: Check if this interaction is a duplicate
- */
 function isDuplicateInteraction(element, action, value = null) {
   const now = Date.now();
   const timeSinceLastAction = now - lastInteraction.timestamp;
   
-  // If same element and action within 500ms, it's a duplicate
   if (lastInteraction.element === element && 
       lastInteraction.action === action && 
       timeSinceLastAction < 500) {
     
-    // For input fields, only consider duplicate if value is same
     if (action === 'type' && value !== lastInteraction.value) {
       return false;
     }
@@ -99,9 +511,6 @@ function isDuplicateInteraction(element, action, value = null) {
   return false;
 }
 
-/**
- * ✅ NEW: Update last interaction tracking
- */
 function updateLastInteraction(element, action, value = null) {
   lastInteraction = {
     element: element,
@@ -111,41 +520,31 @@ function updateLastInteraction(element, action, value = null) {
   };
 }
 
-/**
- * ✅ NEW: Check if element is an input field
- */
 function isInputElement(element) {
   const tag = element.tagName.toLowerCase();
   return tag === 'input' || tag === 'textarea' || tag === 'select';
 }
 
-/**
- * ✅ FIXED: Capture click event - skip redundant clicks on input fields
- */
-function handleClick(event) {
-  if (!isRecording || !selectorEngine || !redactor) return;
+async function handleClick(event) {
+  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
 
   const element = event.target;
 
-  // Skip TestSnapper UI
   if (element.id?.startsWith('testsnapper-')) return;
 
-  // ✅ Skip click on input fields (will be captured as type/change)
   if (isInputElement(element) && element.type !== 'radio' && element.type !== 'checkbox' && element.type !== 'submit' && element.type !== 'button') {
     console.log('Skipping click on input field - will capture as type/change');
     return;
   }
 
-  // ✅ Check for duplicate
   if (isDuplicateInteraction(element, 'click')) {
     console.log('Skipping duplicate click');
     return;
   }
 
   const selector = selectorEngine.generateSelector(element);
-  const fieldName = selectorEngine.extractFieldName(element);
+  const fieldName = getEnhancedFieldName(element);
 
-  // ✅ Determine correct action based on element type
   let action = 'click';
   let value = null;
 
@@ -157,7 +556,7 @@ function handleClick(event) {
     value = element.checked ? 'checked' : 'unchecked';
   }
 
-  const stepData = {
+  let stepData = {
     action: action,
     selector: selector,
     fieldName: fieldName,
@@ -167,41 +566,38 @@ function handleClick(event) {
     isSensitive: false
   };
 
+  stepData = await processStepWithManualEntry(element, action, stepData);
+  if (!stepData) return;
+
   createHighlight(element);
   updateLastInteraction(element, action, value);
   sendStepToBackground(stepData);
 
-  console.log('Interaction captured:', action, fieldName);
+  console.log('Interaction captured:', action, stepData.fieldName);
 }
 
-/**
- * ✅ FIXED: Capture input event with proper debouncing
- */
 function handleInput(event) {
-  if (!isRecording || !selectorEngine || !redactor) return;
+  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
 
   const element = event.target;
   const elementKey = selectorEngine.generateSelector(element)?.css || element;
   
-  // ✅ Cancel any pending input for this element
   if (pendingInputs.has(elementKey)) {
     clearTimeout(pendingInputs.get(elementKey));
   }
 
-  // ✅ Debounce input - wait for user to stop typing
-  const timeoutId = setTimeout(() => {
+  const timeoutId = setTimeout(async () => {
     const selector = selectorEngine.generateSelector(element);
-    const fieldName = selectorEngine.extractFieldName(element);
+    const fieldName = getEnhancedFieldName(element);
     const isSensitive = redactor.shouldIgnoreField(element);
     const value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
 
-    // ✅ Skip if this is a duplicate
     if (isDuplicateInteraction(element, 'type', value)) {
       console.log('Skipping duplicate input');
       return;
     }
 
-    const stepData = {
+    let stepData = {
       action: 'type',
       selector: selector,
       fieldName: fieldName,
@@ -211,25 +607,24 @@ function handleInput(event) {
       isSensitive: isSensitive
     };
 
+    stepData = await processStepWithManualEntry(element, 'type', stepData);
+    if (!stepData) return;
+
     updateLastInteraction(element, 'type', value);
     sendStepToBackground(stepData);
     pendingInputs.delete(elementKey);
     
-    console.log('Input captured:', fieldName, value);
-  }, 800); // Increased debounce time for better UX
+    console.log('Input captured:', stepData.fieldName, value);
+  }, 800);
 
   pendingInputs.set(elementKey, timeoutId);
 }
 
-/**
- * ✅ FIXED: Capture change event - avoid duplicates with input
- */
-function handleChange(event) {
-  if (!isRecording || !selectorEngine || !redactor) return;
+async function handleChange(event) {
+  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
 
   const element = event.target;
   
-  // ✅ Cancel any pending input for this element to avoid duplicate
   const elementKey = selectorEngine.generateSelector(element)?.css || element;
   if (pendingInputs.has(elementKey)) {
     clearTimeout(pendingInputs.get(elementKey));
@@ -237,34 +632,30 @@ function handleChange(event) {
   }
 
   const selector = selectorEngine.generateSelector(element);
-  const fieldName = selectorEngine.extractFieldName(element);
+  const fieldName = getEnhancedFieldName(element);
 
   let value;
   let action;
 
   if (element.type === 'checkbox') {
-    // ✅ Skip - already handled by click
     return;
   } else if (element.type === 'radio') {
-    // ✅ Skip - already handled by click
     return;
   } else if (element.tagName.toLowerCase() === 'select') {
     action = 'select';
     value = element.options[element.selectedIndex]?.text || element.value;
   } else {
-    // ✅ For text inputs, use 'type' action
     action = 'type';
     const isSensitive = redactor.shouldIgnoreField(element);
     value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
   }
 
-  // ✅ Check for duplicate
   if (isDuplicateInteraction(element, action, value)) {
     console.log('Skipping duplicate change');
     return;
   }
 
-  const stepData = {
+  let stepData = {
     action: action,
     selector: selector,
     fieldName: fieldName,
@@ -274,20 +665,19 @@ function handleChange(event) {
     isSensitive: false
   };
 
+  stepData = await processStepWithManualEntry(element, action, stepData);
+  if (!stepData) return;
+
   updateLastInteraction(element, action, value);
   sendStepToBackground(stepData);
-  console.log('Change captured:', fieldName, value);
+  console.log('Change captured:', stepData.fieldName, value);
 }
 
-/**
- * ✅ FIXED: Capture form submit - prevent duplicate with button click
- */
 function handleSubmit(event) {
-  if (!isRecording || !selectorEngine) return;
+  if (!isRecording || !selectorEngine || isModalOpen) return;
 
   const form = event.target;
   
-  // ✅ Check for duplicate submit
   if (isDuplicateInteraction(form, 'submit')) {
     console.log('Skipping duplicate submit');
     return;
@@ -311,18 +701,14 @@ function handleSubmit(event) {
   console.log('Submit captured:', fieldName);
 }
 
-/**
- * ✅ FIXED: Capture navigation - only once per URL change
- */
 let lastNavigationUrl = '';
 let isInitialNavigation = true;
 
 function captureNavigation() {
-  if (!isRecording) return;
+  if (!isRecording || isModalOpen) return;
 
   const currentUrl = window.location.href;
   
-  // ✅ Skip initial navigation when recording starts
   if (isInitialNavigation) {
     isInitialNavigation = false;
     lastNavigationUrl = currentUrl;
@@ -330,7 +716,6 @@ function captureNavigation() {
     return;
   }
 
-  // ✅ Skip if URL hasn't changed
   if (currentUrl === lastNavigationUrl) {
     return;
   }
@@ -352,30 +737,40 @@ function captureNavigation() {
 }
 
 /**
- * Send step to background script
+ * 🔧 FIX #7: Enhanced with validation
  */
 function sendStepToBackground(stepData) {
+  // Validate session before sending
+  if (!currentSessionId) {
+    console.error('❌ No active session - cannot send step');
+    stopRecording();
+    return;
+  }
+
   chrome.runtime.sendMessage({
     action: 'addStep',
     stepData: stepData
   }, (response) => {
     if (chrome.runtime.lastError) {
       console.error('Failed to send step:', chrome.runtime.lastError);
+      // 🔧 FIX #7: Background might have restarted
+      console.warn('⚠️ Background script may have restarted - stopping recording');
+      stopRecording();
     } else if (response && !response.success) {
       console.error('Failed to add step:', response.error);
+      if (response.error === 'No active session') {
+        stopRecording();
+      }
     }
   });
 }
 
-/**
- * Start recording
- */
 function startRecording(sessionId) {
   if (isRecording) return;
 
   isRecording = true;
   currentSessionId = sessionId;
-  isInitialNavigation = true; // ✅ Reset initial navigation flag
+  isInitialNavigation = true;
   lastNavigationUrl = window.location.href;
 
   document.addEventListener('click', handleClick, true);
@@ -385,12 +780,18 @@ function startRecording(sessionId) {
 
   addRecordingIndicator();
 
+  // 🔧 FIX #7: Start session validation heartbeat
+  sessionValidationInterval = setInterval(async () => {
+    const valid = await validateSession();
+    if (!valid) {
+      console.error('❌ Session validation failed - stopping recording');
+      stopRecording();
+    }
+  }, 5000);
+
   console.log('Content script: Recording started');
 }
 
-/**
- * Pause recording
- */
 function pauseRecording() {
   if (!isRecording) return;
   isRecording = false;
@@ -398,9 +799,6 @@ function pauseRecording() {
   console.log('Content script: Recording paused');
 }
 
-/**
- * Resume recording
- */
 function resumeRecording() {
   if (isRecording) return;
   isRecording = true;
@@ -408,21 +806,33 @@ function resumeRecording() {
   console.log('Content script: Recording resumed');
 }
 
-/**
- * Stop recording
- */
 function stopRecording() {
   if (!isRecording && !currentSessionId) return;
 
   isRecording = false;
   currentSessionId = null;
 
-  // ✅ Clear all pending inputs
+  // 🔧 FIX #7: Clear validation interval
+  if (sessionValidationInterval) {
+    clearInterval(sessionValidationInterval);
+    sessionValidationInterval = null;
+  }
+
   pendingInputs.forEach(timeoutId => clearTimeout(timeoutId));
   pendingInputs.clear();
 
-  // ✅ Reset tracking
   lastInteraction = { element: null, action: null, timestamp: 0, value: null };
+
+  // 🔧 FIX #2: Force close modal if open
+  const modal = document.getElementById('testsnapper-modal-overlay');
+  if (modal) {
+    closeModal(modal);
+  }
+
+  if (modalTimeout) {
+    clearTimeout(modalTimeout);
+    modalTimeout = null;
+  }
 
   document.removeEventListener('click', handleClick, true);
   document.removeEventListener('input', handleInput, true);
@@ -435,9 +845,6 @@ function stopRecording() {
   console.log('Content script: Recording stopped');
 }
 
-/**
- * Add recording indicator to page
- */
 function addRecordingIndicator() {
   if (document.getElementById('testsnapper-indicator')) return;
 
@@ -475,15 +882,16 @@ function addRecordingIndicator() {
         0%, 100% { opacity: 1; }
         50% { opacity: 0.3; }
       }
+      @keyframes fadeOut {
+        from { opacity: 1; }
+        to { opacity: 0; }
+      }
     </style>
   `;
 
   document.body.appendChild(indicator);
 }
 
-/**
- * Update recording indicator
- */
 function updateRecordingIndicator(status) {
   const indicator = document.getElementById('testsnapper-indicator');
   if (!indicator) return;
@@ -503,9 +911,6 @@ function updateRecordingIndicator(status) {
   }
 }
 
-/**
- * Remove recording indicator
- */
 function removeRecordingIndicator() {
   const indicator = document.getElementById('testsnapper-indicator');
   if (indicator) {
@@ -513,9 +918,6 @@ function removeRecordingIndicator() {
   }
 }
 
-/**
- * Listen for messages from background script
- */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Content script received message:', message.action);
 
@@ -547,7 +949,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// ✅ FIXED: Monitor URL changes without capturing initial load
 let lastUrl = window.location.href;
 setInterval(() => {
   if (isRecording && window.location.href !== lastUrl) {

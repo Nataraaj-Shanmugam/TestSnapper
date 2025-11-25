@@ -1,0 +1,453 @@
+High Priority:
+
+Add ability to reorder steps (drag & drop)
+Improve live steps display in popup
+
+Medium Priority:
+
+Add step filtering/search in review page
+Add undo/redo functionality
+Add keyboard shortcuts (Ctrl+S for save, etc.)
+Add progress indicator for large exports
+
+Low Priority:
+
+Add dark mode toggle (currently uses system preference)
+Add step templates for common actions
+Add bulk edit capability
+Add export preview before download
+------------------
+
+background.js
+
+From Feature 1 – Screenshot shortcut
+
+Add keyboard shortcut listener:
+
+Use chrome.commands.onCommand.addListener(...).
+
+Add handler for screenshot command:
+
+When command is "capture_screenshot" or "_execute_action", call captureScreenshot().
+
+(Optional) Add OS-aware fallback:
+
+If needed, detect Mac vs Windows for any behavior differences (though commands usually abstracts this).
+
+From Feature 6 – Export progress
+
+In exportSession():
+
+Compute total steps / screenshots to process.
+
+Accept or create a progress callback OR:
+
+Send progress events with chrome.runtime.sendMessage({ action: 'exportProgress', ... }).
+
+In _exportDOCX():
+
+After each batch/chunk of work, emit progress updates:
+
+{ action: 'exportProgress', percent: X, status: 'Processing screenshots...' }
+
+Wrap export logic in try/catch:
+
+On error, send a “reset/cleanup” progress message so UI can hide the modal / show error.
+
+manifest.json
+
+From Feature 1 – Screenshot shortcut
+
+Add (or update) "commands" section:
+
+"commands": {
+  "capture_screenshot": {
+    "suggested_key": {
+      "default": "Ctrl+Shift+S",
+      "mac": "Command+Shift+S"
+    },
+    "description": "Capture screenshot"
+  }
+}
+
+
+Alternatively use "_execute_action" if you want the shortcut to trigger the default extension action:
+
+"commands": {
+  "_execute_action": {
+    "suggested_key": {
+      "default": "Ctrl+Shift+S",
+      "mac": "Command+Shift+S"
+    }
+  }
+}
+
+
+Ensure "background" and permissions setup still valid for your existing code.
+
+review-standalone.html
+
+From Feature 2 – Always-editable steps
+
+Remove CSS for .editing state:
+
+Any rules like .step-doc-line.editing ... should be deleted.
+
+Remove styles for “edit” button/icon:
+
+Classes, icons, buttons purely for toggling edit mode.
+
+From Feature 3 – Drag-and-drop reorder
+
+Add styles for drag affordances:
+
+Cursor change on hover (e.g., cursor: grab;).
+
+Add CSS for drag states:
+
+.dragging (lower opacity, etc.).
+
+.drag-over (highlight drop target).
+
+Add drag handle icon inside each step row:
+
+For example: ☰ or an SVG inside .step-doc-line (e.g., <span class="drag-handle">☰</span>).
+
+From Feature 4 – Search/filter steps
+
+Add search input above the steps container:
+
+<input type="text" id="stepSearch" placeholder="🔍 Search steps...">
+
+
+Add action filter dropdown:
+
+<select id="actionFilter">
+  <option value="all">All Actions</option>
+  <option value="click">Click</option>
+  <option value="type">Type</option>
+  <!-- etc... -->
+</select>
+
+
+Add “Clear Filters” button:
+
+<button id="clearFiltersBtn">Clear Filters</button>
+
+
+Add area to show result count and “no results” state:
+
+E.g. <p id="stepResultsSummary"></p> and/or <div id="noResultsMsg" hidden>...</div>.
+
+Style the search/filter bar:
+
+Spacing, alignment, maybe a small toolbar at the top.
+
+From Feature 5 – Undo/redo
+
+Add buttons in header:
+
+<button id="undoBtn" disabled title="Undo (Ctrl+Z / Cmd+Z)">↶ Undo</button>
+<button id="redoBtn" disabled title="Redo (Ctrl+Shift+Z / Cmd+Shift+Z)">↷ Redo</button>
+
+
+From Feature 6 – Export progress
+
+Add progress modal container:
+
+<div class="progress-modal" id="progressModal" hidden>
+  <div class="progress-content">
+    <h3>Exporting...</h3>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <p id="progressStatus">Starting export...</p>
+    <p id="progressPercent">0%</p>
+    <!-- Optional cancel button -->
+    <!-- <button id="cancelExportBtn">Cancel</button> -->
+  </div>
+</div>
+
+
+Add CSS:
+
+Modal overlay (fixed, centered, backdrop).
+
+Progress bar track + fill.
+
+Optional animation for the fill.
+
+review-standalone.js
+A. Always-editable steps (Feature 2)
+
+Remove toggleEdit() function entirely.
+
+In renderSteps():
+
+Instead of rendering static <span> or read-only text, render editable <textarea> / <input> for each editable field (e.g., step description, value, etc.).
+
+In attachStepEventListeners():
+
+Remove all code that wires “edit” buttons (click listeners, etc.).
+
+Add auto-save behavior:
+
+On blur / change of each textarea/input:
+
+Update the corresponding step in stepsData.
+
+Persist change to DB (single-step update or updateAllSteps).
+
+Update handleConfirmAddStep():
+
+Ensure newly added steps are created already in “editable” form (which now is the default).
+
+Remove all usage of .classList.add('editing') and .classList.remove('editing').
+
+B. Drag-and-drop reorder (Feature 3)
+
+In renderSteps():
+
+Add draggable="true" to each .step-doc-line element.
+
+Ensure drag handle is present and integrated.
+
+Implement drag handlers:
+
+handleDragStart(event):
+
+Mark the dragged element (event.currentTarget).
+
+Store dragged step ID / index (e.g., in event.dataTransfer or module-level variable).
+
+Add .dragging class.
+
+handleDragOver(event):
+
+event.preventDefault() to allow drop.
+
+Add .drag-over class to potential drop target.
+
+handleDrop(event):
+
+Determine source and target indices.
+
+Reorder stepsData array accordingly.
+
+Call resequenceAndPersist().
+
+Re-render steps.
+
+handleDragEnd(event):
+
+Cleanup: remove .dragging / .drag-over classes from all items.
+
+Add resequenceAndPersist():
+
+Recompute step.sequence for all steps in current order.
+
+Call storage.updateAllSteps(sessionId, stepsData).
+
+In attachStepEventListeners():
+
+Attach dragstart, dragover, drop, and dragend listeners to each .step-doc-line.
+
+C. Search / filter (Feature 4)
+
+Add state variables near the top:
+
+let searchTerm = '';
+let filterAction = 'all';
+
+
+Implement filterSteps():
+
+Take stepsData and:
+
+Filter by searchTerm (check description, fieldName, value, etc.).
+
+Filter by filterAction (e.g., step.actionType).
+
+Return filtered list.
+
+Update renderSteps():
+
+Before rendering, call const visibleSteps = filterSteps();
+
+Render visibleSteps instead of raw stepsData.
+
+Update “Showing X of Y steps” UI (stepResultsSummary).
+
+If visibleSteps is empty, show “No results found” message instead of list.
+
+Add event listeners for filters:
+
+#stepSearch:
+
+On input, use a 300ms debounce:
+
+Update searchTerm.
+
+Call renderSteps().
+
+#actionFilter:
+
+On change, update filterAction.
+
+Call renderSteps().
+
+#clearFiltersBtn:
+
+Reset searchTerm and filterAction to defaults.
+
+Reset UI values.
+
+Call renderSteps().
+
+D. Undo / redo (Feature 5)
+
+Add history variables near stepsData:
+
+let history = [];
+let historyIndex = -1;
+const MAX_HISTORY = 50;
+
+
+Implement saveToHistory(action, data):
+
+Create a deep copy of stepsData (and maybe search/filter state if needed).
+
+Add { action, steps: clonedStepsData } to history after truncating any “future” states when doing a new action after undo.
+
+Clamp history length to MAX_HISTORY.
+
+Update historyIndex to point to latest.
+
+Enable/disable undo/redo buttons based on historyIndex.
+
+Implement undo():
+
+If historyIndex <= 0, ignore.
+
+Decrement historyIndex.
+
+Restore stepsData from history[historyIndex].steps.
+
+Call storage.updateAllSteps(sessionId, stepsData).
+
+Call renderSteps().
+
+Implement redo():
+
+If historyIndex >= history.length - 1, ignore.
+
+Increment historyIndex.
+
+Restore stepsData from that entry.
+
+Update DB and re-render as above.
+
+Call saveToHistory() before these operations:
+
+Deleting a step.
+
+Adding a step.
+
+Editing a step (maybe on blur or before first change).
+
+Reordering steps via drag-and-drop.
+
+Wire buttons in attachEventListeners() (or equivalent):
+
+#undoBtn.addEventListener('click', undo)
+
+#redoBtn.addEventListener('click', redo)
+
+Add keyboard shortcuts:
+
+Global keydown listener:
+
+Ctrl+Z / Cmd+Z → undo()
+
+Ctrl+Shift+Z / Cmd+Shift+Z → redo()
+
+Make sure you don’t interfere with typing in textareas (ignore if event.target is an input/textarea and default modifiers say you should let it pass, depending on UX preference).
+
+E. Export progress UI wiring (Feature 6)
+
+In handleSaveAndExport() (or wherever export starts):
+
+Show progress modal:
+
+progressModal.hidden = false;
+
+Reset progressFill width, status text, percent.
+
+Trigger background export as usual.
+
+Listen for progress messages:
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'exportProgress') {
+    const { percent, status, done, error } = message;
+    // Update #progressFill, #progressStatus, #progressPercent
+    // If done or error, hide modal
+  }
+});
+
+
+Update progress bar:
+
+Set width style: progressFill.style.width = percent + '%';
+
+Update text nodes.
+
+Hide modal on completion or error:
+
+Optionally show a final “finished” message briefly before hiding.
+
+(Optional) Cancel button:
+
+On click of #cancelExportBtn, send message to background:
+
+{ action: 'cancelExport' }
+
+Handle cleanup in background and then send a final progress message to hide modal.
+
+storage.js
+
+From Feature 3 – Reordering
+
+Verify/ensure updateAllSteps(sessionId, stepsData):
+
+Accepts full steps array with updated sequence.
+
+Performs batch update reliably (ordering, indexing).
+
+Handles potentially large step counts efficiently.
+
+(You already noted: this “already exists ✓”, so just sanity-check vs new usage.)
+
+export-service.js
+
+From Feature 6 – Export progress
+
+Update exportSession() signature:
+
+Accept a progressCallback parameter (optional).
+
+Call progressCallback (if provided) at key milestones:
+
+After loading session → 10%.
+
+After loading steps → 20%.
+
+During screenshot processing → increment between 30–90%.
+
+After file generation → 95%.
+
+Right before download → 100%.
+
+Wrap progressCallback calls in try/catch:
+
+If the callback throws, log but do not break the export.
