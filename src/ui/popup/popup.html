@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TestSnapper</title>
+  <link rel="stylesheet" href="popup.css">
+
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>🎬 TestSnapper</h1>
+    </header>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-tab="recording">Recording</button>
+      <button class="tab" data-tab="export">Export</button>
+      <!-- <button class="tab" data-tab="settings">Settings</button> -->
+    </div>
+
+    <div class="message" id="message"></div>
+
+    <!-- Recording Tab -->
+    <div class="tab-content active" id="recording-tab">
+      <div class="state-indicator" id="stateIndicator">
+        <div class="state-dot" id="stateDot"></div>
+        <span id="stateText">Idle</span>
+      </div>
+
+      <div class="stats">
+        <div class="stat-item">
+          <span class="stat-label">Steps Recorded</span>
+          <span class="stat-value" id="stepCount">0</span>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="button-row">
+          <button id="startBtn" class="btn btn-primary" data-testid="start-recording-btn">
+            <span class="btn-icon">▶️</span>
+            <span>Start</span>
+          </button>
+
+          <button id="pauseBtn" class="btn btn-warning" disabled data-testid="pause-recording-btn">
+            <span class="btn-icon">⏸️</span>
+            <span>Pause</span>
+          </button>
+        </div>
+
+        <div class="button-row">
+          <button id="resumeBtn" class="btn btn-success" disabled data-testid="resume-recording-btn">
+            <span class="btn-icon">▶️</span>
+            <span>Resume</span>
+          </button>
+
+          <button id="stopBtn" class="btn btn-danger" disabled data-testid="stop-recording-btn">
+            <span class="btn-icon">⏹️</span>
+            <span>Stop</span>
+          </button>
+        </div>
+
+        <button id="screenshotBtn" class="btn btn-info" disabled data-testid="screenshot-btn">
+          <span class="btn-icon">📸</span>
+          <span>Capture Screenshot</span>
+        </button>
+      </div>
+
+      <div class="steps-viewer" id="liveStepsViewer" style="display: none;">
+        <h3>Live Steps</h3>
+        <div id="liveStepsList" class="steps-list"></div>
+      </div>
+    </div>
+
+    <!-- Export Tab -->
+    <div class="tab-content" id="export-tab">
+      <div class="export-section">
+        <h3>📦 Export Session</h3>
+
+        <div class="form-group">
+          <label>Select Session:</label>
+          <select id="sessionDropdown" class="select" data-testid="session-dropdown">
+            <option value="">Select a session...</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Export Format:</label>
+          <div class="format-options">
+            <label class="radio-label">
+              <input type="radio" name="format" value="docx" checked data-testid="format-docx">
+              <span>DOCX</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="format" value="json" data-testid="format-json">
+              <span>JSON</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="format" value="csv" data-testid="format-csv">
+              <span>CSV</span>
+            </label>
+          </div>
+        </div>
+
+        <button id="exportBtn" class="btn btn-info" disabled data-testid="export-btn">
+          <span class="btn-icon">📥</span>
+          <span>Export Session</span>
+        </button>
+
+        <button id="viewStepsBtn" class="btn btn-secondary" disabled data-testid="view-steps-btn"
+          style="margin-top: 8px;">
+          <span class="btn-icon">👁️</span>
+          <span>View Steps</span>
+        </button>
+      </div>
+
+      <div class="storage-section">
+        <h3>🗑️ Storage Management</h3>
+        <div class="storage-actions">
+          <button id="deleteSessionBtn" class="btn btn-danger btn-small" disabled>
+            Delete Selected
+          </button>
+          <button id="clearAllBtn" class="btn btn-secondary btn-small">
+            Clear All
+          </button>
+        </div>
+      </div>
+
+      <div class="steps-viewer" id="stepsViewer" style="display: none;">
+        <h3>Recorded Steps</h3>
+        <div id="stepsList" class="steps-list"></div>
+        <button id="closeStepsBtn" class="btn btn-secondary btn-small">Close</button>
+      </div>
+    </div>
+<!-- 
+    Settings Tab
+    <div class="tab-content" id="settings-tab">
+      <div class="export-section">
+        <h3>⚙️ Recording Settings</h3>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="captureApiCalls">
+            <span>Capture API Calls</span>
+          </label>
+
+          <div class="sub-settings" id="apiCallsOptions" style="display: none;">
+            <label class="checkbox-label sub-option">
+              <input type="checkbox" id="captureFailedCalls">
+              <span>Failed Requests Only</span>
+            </label>
+
+            <label class="checkbox-label sub-option">
+              <input type="checkbox" id="captureAllCalls">
+              <span>All Requests</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="includeTimestamp" checked>
+            <span>Include Timestamp for Each Step</span>
+          </label>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoScreenshot">
+            <span>Capture Screenshots Automatically</span>
+          </label>
+
+          <div class="sub-settings" id="screenshotInterval" style="display: none;">
+            <div class="input-group">
+              <label>Every</label>
+              <input type="number" id="screenshotSeconds" min="1" max="60" value="5" class="small-input">
+              <label>seconds</label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="storage-section">
+        <h3>💾 Storage Settings</h3>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoSave" checked>
+            <span>Auto-save Sessions</span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>Max Sessions to Keep:</label>
+          <select id="maxSessions" class="select">
+            <option value="10">10 sessions</option>
+            <option value="25" selected>25 sessions</option>
+            <option value="50">50 sessions</option>
+            <option value="100">100 sessions</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="saveSettingsBtn" class="btn btn-info">
+        <span class="btn-icon">💾</span>
+        <span>Save Settings</span>
+      </button>
+    </div> -->
+
+    <footer>
+      <p>TestSnapper v0.0.1</p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

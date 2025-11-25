@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TestSnapper Demo Page</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      padding: 40px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+    }
+    
+    h1 {
+      color: #667eea;
+      margin-bottom: 10px;
+    }
+    
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    
+    .form-group {
+      margin-bottom: 20px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #333;
+    }
+    
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="tel"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.3s;
+    }
+    
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .checkbox-group input[type="checkbox"] {
+      width: auto;
+    }
+    
+    .radio-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .radio-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .radio-item input[type="radio"] {
+      width: auto;
+    }
+    
+    button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    button:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    button:active {
+      transform: translateY(0);
+    }
+    
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 30px;
+    }
+    
+    .secondary-btn {
+      background: #95a5a6;
+    }
+    
+    .secondary-btn:hover {
+      background: #7f8c8d;
+    }
+    
+    .info-box {
+      background: #e8f4fd;
+      border-left: 4px solid #2196f3;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 4px;
+    }
+    
+    .info-box h3 {
+      color: #1976d2;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+    
+    .info-box p {
+      color: #555;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    
+    .feature-list {
+      list-style: none;
+      margin-top: 10px;
+    }
+    
+    .feature-list li {
+      padding: 5px 0;
+      color: #555;
+      font-size: 14px;
+    }
+    
+    .feature-list li:before {
+      content: "✓ ";
+      color: #27ae60;
+      font-weight: bold;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎬 TestSnapper Demo</h1>
+    <p class="subtitle">Test form with various input types for TestSnapper extension</p>
+    
+    <div class="info-box">
+      <h3>How to Test</h3>
+      <p>1. Install the TestSnapper extension<br>
+         2. Click the extension icon and click "Start Recording"<br>
+         3. Fill out this form and click submit<br>
+         4. Stop recording and export to see captured field names and selectors</p>
+    </div>
+    
+    <form id="demo-form" data-testid="demo-form">
+      <div class="form-group">
+        <label for="username">Username:</label>
+        <input 
+          type="text" 
+          id="username" 
+          name="username" 
+          placeholder="Enter your username"
+          data-testid="username-input"
+        >
+      </div>
+      
+      <div class="form-group">
+        <label for="email">Email Address:</label>
+        <input 
+          type="email" 
+          id="email" 
+          name="email" 
+          placeholder="you@example.com"
+          aria-label="Your email address"
+          data-testid="email-input"
+        >
+      </div>
+      
+      <div class="form-group">
+        <label for="password">Password:</label>
+        <input 
+          type="password" 
+          id="password" 
+          name="password" 
+          placeholder="Enter secure password"
+          data-testid="password-input"
+        >
+      </div>
+      
+      <div class="form-group">
+        <label for="phone">Phone Number:</label>
+        <input 
+          type="tel" 
+          id="phone" 
+          name="phone" 
+          placeholder="123-456-7890"
+          data-testid="phone-input"
+        >
+      </div>
+      
+      <div class="form-group">
+        <label for="country">Country:</label>
+        <select id="country" name="country" data-testid="country-select">
+          <option value="">Select country...</option>
+          <option value="us">United States</option>
+          <option value="uk">United Kingdom</option>
+          <option value="ca">Canada</option>
+          <option value="au">Australia</option>
+          <option value="de">Germany</option>
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label>Gender:</label>
+        <div class="radio-group">
+          <div class="radio-item">
+            <input 
+              type="radio" 
+              id="male" 
+              name="gender" 
+              value="male"
+              data-testid="gender-male"
+            >
+            <label for="male">Male</label>
+          </div>
+          <div class="radio-item">
+            <input 
+              type="radio" 
+              id="female" 
+              name="gender" 
+              value="female"
+              data-testid="gender-female"
+            >
+            <label for="female">Female</label>
+          </div>
+          <div class="radio-item">
+            <input 
+              type="radio" 
+              id="other" 
+              name="gender" 
+              value="other"
+              data-testid="gender-other"
+            >
+            <label for="other">Other</label>
+          </div>
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input 
+            type="checkbox" 
+            id="newsletter" 
+            name="newsletter"
+            data-testid="newsletter-checkbox"
+          >
+          <label for="newsletter">Subscribe to newsletter</label>
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input 
+            type="checkbox" 
+            id="terms" 
+            name="terms"
+            data-testid="terms-checkbox"
+          >
+          <label for="terms">I agree to terms and conditions</label>
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label for="comments">Comments:</label>
+        <textarea 
+          id="comments" 
+          name="comments" 
+          rows="4" 
+          placeholder="Any additional comments..."
+          data-testid="comments-textarea"
+        ></textarea>
+      </div>
+      
+      <div class="button-group">
+        <button type="submit" data-testid="submit-button">
+          Submit Form
+        </button>
+        <button type="button" class="secondary-btn" data-testid="reset-button" onclick="resetForm()">
+          Reset
+        </button>
+      </div>
+    </form>
+    
+    <div class="info-box" style="margin-top: 30px;">
+      <h3>What TestSnapper Will Capture</h3>
+      <ul class="feature-list">
+        <li>Field names from labels, placeholders, and aria-labels</li>
+        <li>Robust CSS selectors (ID, data-testid, name, etc.)</li>
+        <li>Click events on buttons</li>
+        <li>Input/type events in text fields</li>
+        <li>Selection changes in dropdowns</li>
+        <li>Checkbox and radio button selections</li>
+        <li>Form submission</li>
+        <li>Automatic password masking (••••••••)</li>
+      </ul>
+    </div>
+  </div>
+  
+  <script>
+    const form = document.getElementById('demo-form');
+    
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      
+      // Simulate form submission
+      alert('Form submitted! TestSnapper has captured all your interactions.\\n\\nCheck the extension popup to export your recording.');
+      
+      // Log form data (for demo purposes)
+      const formData = new FormData(form);
+      console.log('Form Data:');
+      for (let [key, value] of formData.entries()) {
+        console.log(`${key}: ${value}`);
+      }
+    });
+    
+    function resetForm() {
+      form.reset();
+      console.log('Form reset');
+    }
+    
+    // Add some console logs for demo
+    console.log('🎬 TestSnapper Demo Page Loaded');
+    console.log('Start recording with the TestSnapper extension and interact with the form!');
+  </script>
+</body>
+</html>
