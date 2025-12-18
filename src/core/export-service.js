@@ -60,8 +60,8 @@ export class ExportService {
           throw new Error(`Unsupported format: ${format}`);
       }
     } finally {
-      // 🔧 FIX #5: Force garbage collection hint
-      if (global.gc) global.gc();
+      // // 🔧 FIX #5: Force garbage collection hint
+      // if (global.gc) global.gc();
     }
   }
 
