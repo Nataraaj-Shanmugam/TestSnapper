@@ -59,9 +59,53 @@ let currentSessionId = null;
 async function init() {
   setupTabs();
   setupEventListeners();
+  setupTheme(); // Initialize theme
   await updateState();
   await loadSessions();
   await loadSettings();
+}
+
+function setupTheme() {
+  const themeToggle = document.getElementById('themeToggle');
+  const icon = themeToggle.querySelector('.icon');
+  
+  // 1. Check for manual override in localStorage
+  const savedTheme = localStorage.getItem('theme');
+  
+  if (savedTheme) {
+    applyTheme(savedTheme);
+  } else {
+    // 2. Default to time-based logic (Dark: 6 PM - 6 AM)
+    const hour = new Date().getHours();
+    const isDarkTime = hour >= 18 || hour < 6;
+    applyTheme(isDarkTime ? 'dark' : 'light');
+  }
+
+  // Toggle Listener
+  themeToggle.addEventListener('click', () => {
+    const isDark = document.body.classList.contains('dark-mode'); // Actually checking for absence of light-mode
+    // Logic: if current is light (has class), switch to dark. If default dark, switch to light.
+    // My impl uses body.light-mode for light, default is dark.
+    
+    // If body has .light-mode, we are compatible with Light.
+    // If not, we are Dark.
+    const currentIsLight = document.body.classList.contains('light-mode');
+    const newTheme = currentIsLight ? 'dark' : 'light';
+    
+    applyTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+  });
+}
+
+function applyTheme(theme) {
+  const icon = document.querySelector('#themeToggle .icon');
+  if (theme === 'light') {
+    document.body.classList.add('light-mode');
+    if (icon) icon.textContent = '☀️';
+  } else {
+    document.body.classList.remove('light-mode');
+    if (icon) icon.textContent = '🌙';
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

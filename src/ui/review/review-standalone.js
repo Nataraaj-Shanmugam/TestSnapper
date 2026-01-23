@@ -97,9 +97,51 @@ async function init() {
 
     await loadSession();
     setupEventListeners();
+    setupTheme();
   } catch (error) {
     console.error('Initialization failed:', error);
     showMessage('Failed to initialize: ' + error.message, 'error');
+  }
+}
+
+function setupTheme() {
+  const themeToggle = document.getElementById('themeToggle');
+  const icon = themeToggle.querySelector('.icon');
+
+  // 1. Check for manual override in localStorage
+  const savedTheme = localStorage.getItem('theme');
+
+  if (savedTheme) {
+    applyTheme(savedTheme);
+  } else {
+    // 2. Default to time-based logic (Dark: 6 PM - 6 AM)
+    const hour = new Date().getHours();
+    const isDarkTime = hour >= 18 || hour < 6;
+    applyTheme(isDarkTime ? 'dark' : 'light');
+  }
+
+  // Toggle Listener
+  themeToggle.addEventListener('click', () => {
+    // Logic: if current is light (has class), switch to dark. If default dark, switch to light.
+
+    // If body has .light-mode, we are compatible with Light.
+    // If not, we are Dark.
+    const currentIsLight = document.body.classList.contains('light-mode');
+    const newTheme = currentIsLight ? 'dark' : 'light';
+
+    applyTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+  });
+}
+
+function applyTheme(theme) {
+  const icon = document.querySelector('#themeToggle .icon');
+  if (theme === 'light') {
+    document.body.classList.add('light-mode');
+    if (icon) icon.textContent = '☀️';
+  } else {
+    document.body.classList.remove('light-mode');
+    if (icon) icon.textContent = '🌙';
   }
 }
 
@@ -123,7 +165,7 @@ function setupEventListeners() {
   screenshotInput.addEventListener('change', handleScreenshotUpload);
   cancelAddStep.addEventListener('click', closeAddStepModal);
   confirmAddStep.addEventListener('click', handleConfirmAddStep);
-  
+
   // Click outside modal to close
   addStepModal.addEventListener('click', (e) => {
     if (e.target === addStepModal) {
@@ -192,11 +234,11 @@ function setupEventListeners() {
       if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
         e.preventDefault();
         undo();
-      } 
-     /*else if (e.key.toLowerCase() === 'z' && e.shiftKey) {
-        e.preventDefault();
-        redo();
-      }*/
+      }
+      /*else if (e.key.toLowerCase() === 'z' && e.shiftKey) {
+         e.preventDefault();
+         redo();
+       }*/
     }
   });
 
@@ -573,7 +615,7 @@ function processScreenshotFile(file) {
     screenshotPreview.src = e.target.result;
     screenshotPreview.style.display = 'block';
     screenshotUpload.classList.add('has-image');
-    
+
     // Convert to blob
     fetch(e.target.result)
       .then(res => res.blob())
@@ -586,7 +628,7 @@ function processScreenshotFile(file) {
 
 async function handleConfirmAddStep() {
   const description = newStepDescription.value.trim();
-  
+
   if (!description) {
     showMessage('Please enter a step description', 'error');
     return;
