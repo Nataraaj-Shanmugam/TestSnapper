@@ -1,5 +1,5 @@
 /**
- * Background Service Worker - FIXED: Unicode export, race conditions, session recovery
+ * Background Service Worker
  */
 
 import { StorageManager } from '../storage.js';
@@ -13,7 +13,6 @@ class RecordingStateManager {
     this.state = 'idle';
     this.session = null;
     this.stepSequence = 0;
-    // 🔧 FIX #3: Add lock for sequence generation
     this.sequenceLock = Promise.resolve();
   }
 
@@ -51,15 +50,9 @@ class RecordingStateManager {
     };
   }
 
-  /**
-   * 🔧 FIX #3: Thread-safe sequence increment with locking
-   */
   async incrementStepCount() {
-    // Acquire lock
     await this.sequenceLock;
 
-    // Create new lock for next caller
-    let releaseLock;
     this.sequenceLock = new Promise(resolve => {
       releaseLock = resolve;
     });
@@ -71,7 +64,6 @@ class RecordingStateManager {
       }
       return this.stepSequence;
     } finally {
-      // Release lock
       releaseLock();
     }
   }
@@ -184,7 +176,6 @@ async function createSession(tabInfo) {
   return session;
 }
 
-// 🔧 FIX #7: Persist state helper
 async function persistActiveRecording() {
   if (stateManager.state !== 'idle' && stateManager.session) {
     await chrome.storage.local.set({
@@ -223,12 +214,16 @@ async function captureScreenshot(tabId, isManual = true) {
 
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
-    await new Promise(resolve => setTimeout(resolve, 100));
+
+    await chrome.tabs.sendMessage(tabId, { action: 'beforeScreenshot' }).catch(() => { });
+    await new Promise(resolve => setTimeout(resolve, 150));
 
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
       format: 'jpeg',
-      quality: 80
+      quality: 95
     });
+
+    chrome.tabs.sendMessage(tabId, { action: 'afterScreenshot' }).catch(() => { });
 
     if (!dataUrl || !dataUrl.startsWith('data:image/')) {
       throw new Error('Screenshot capture returned invalid data');
@@ -307,7 +302,8 @@ async function startRecording(tabId, tabInfo) {
     // 🔧 FIX #7: Send session info to content script
     await chrome.tabs.sendMessage(tabId, {
       action: 'startRecording',
-      sessionId: session.sessionId
+      sessionId: session.sessionId,
+      session: session
     });
 
     console.log('✅ Recording started:', session.sessionId);
@@ -601,6 +597,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'getSession':
           const session = await storage.getSession(message.sessionId);
+          // Enrich with duration if active
+          if (stateManager.session && stateManager.session.sessionId === message.sessionId) {
+            session.startTime = stateManager.session.createdAt;
+          }
           response = { success: true, session };
           break;
 
@@ -687,6 +687,23 @@ chrome.commands?.onCommand.addListener(async (command) => {
     } catch (err) {
       console.error('Error handling screenshot command:', err);
     }
+  }
+
+  if (command === 'toggle_recording') {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!activeTab?.id) return;
+
+    if (stateManager.state === 'recording') {
+      await pauseRecording(activeTab.id);
+    } else if (stateManager.state === 'paused') {
+      await resumeRecording(activeTab.id);
+    }
+  }
+
+  if (command === 'stop_recording') {
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!activeTab?.id) return;
+    await stopRecording(activeTab.id);
   }
 });
 

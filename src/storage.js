@@ -76,7 +76,7 @@ class StorageManager {
 
         request.onsuccess = () => resolve(sessionData);
         request.onerror = () => reject(request.error);
-        
+
         // 🔧 FIX #6: Handle transaction errors
         transaction.onerror = () => reject(transaction.error);
       });
@@ -237,7 +237,7 @@ class StorageManager {
 
     return this._retryOperation(async () => {
       const assets = await this.getAllAssets(sessionId);
-      
+
       return new Promise((resolve, reject) => {
         const transaction = this.db.transaction(['assets'], 'readwrite');
         const store = transaction.objectStore('assets');
@@ -317,7 +317,7 @@ class StorageManager {
           if (session) {
             session.sessionName = sessionName;
             const putRequest = store.put(session);
-            
+
             putRequest.onsuccess = () => resolve(session);
             putRequest.onerror = () => reject(putRequest.error);
           } else {
@@ -331,9 +331,6 @@ class StorageManager {
     }, 'updateSessionName');
   }
 
-  /**
-   * 🔧 FIX #6: Single transaction for all step updates with rollback
-   */
   async updateAllSteps(sessionId, steps) {
     if (!this.db) await this.init();
 
@@ -347,10 +344,10 @@ class StorageManager {
 
         // Step 1: Get all existing steps
         const getExistingRequest = stepIndex.getAll(sessionId);
-        
+
         getExistingRequest.onsuccess = () => {
           const existingSteps = getExistingRequest.result;
-          
+
           // Step 2: Delete existing steps
           for (const step of existingSteps) {
             stepStore.delete(step.id);
@@ -363,7 +360,7 @@ class StorageManager {
 
           // Step 4: Update session count
           const sessionRequest = sessionStore.get(sessionId);
-          
+
           sessionRequest.onsuccess = () => {
             const session = sessionRequest.result;
             if (session) {
@@ -384,12 +381,12 @@ class StorageManager {
           console.log('✅ All steps updated successfully in single transaction');
           resolve(true);
         };
-        
+
         transaction.onerror = () => {
           console.error('❌ Transaction failed, rolling back all changes');
           reject(transaction.error);
         };
-        
+
         transaction.onabort = () => {
           console.error('❌ Transaction aborted');
           reject(new Error('Transaction aborted'));

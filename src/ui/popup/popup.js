@@ -68,10 +68,10 @@ async function init() {
 function setupTheme() {
   const themeToggle = document.getElementById('themeToggle');
   const icon = themeToggle.querySelector('.icon');
-  
+
   // 1. Check for manual override in localStorage
   const savedTheme = localStorage.getItem('theme');
-  
+
   if (savedTheme) {
     applyTheme(savedTheme);
   } else {
@@ -86,12 +86,12 @@ function setupTheme() {
     const isDark = document.body.classList.contains('dark-mode'); // Actually checking for absence of light-mode
     // Logic: if current is light (has class), switch to dark. If default dark, switch to light.
     // My impl uses body.light-mode for light, default is dark.
-    
+
     // If body has .light-mode, we are compatible with Light.
     // If not, we are Dark.
     const currentIsLight = document.body.classList.contains('light-mode');
     const newTheme = currentIsLight ? 'dark' : 'light';
-    
+
     applyTheme(newTheme);
     localStorage.setItem('theme', newTheme);
   });
@@ -189,6 +189,7 @@ async function handleStart() {
       showMessage("Recording started!", "success");
       await updateState();
       liveStepsViewer.style.display = "block";
+      setTimeout(() => window.close(), 500);
     } else showMessage("Failed to start: " + response.error, "error");
   } catch (err) {
     console.error("Start failed:", err);
@@ -237,9 +238,9 @@ async function handleExport() {
 
   const format = document.querySelector('input[name="format"]:checked').value;
   showMessage("Exporting...", "info");
-  
+
   const response = await chrome.runtime.sendMessage({ action: "exportSession", sessionId, format });
-  
+
   if (response.success) {
     showMessage(`Exported as ${response.filename}`, "success");
   } else {

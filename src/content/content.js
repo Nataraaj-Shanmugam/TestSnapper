@@ -7,6 +7,10 @@ let redactor;
 let isRecording = false;
 let currentSessionId = null;
 let highlightOverlay = null;
+let floatingPanelContainer = null;
+let timerInterval = null;
+let recordingSeconds = 0;
+let isPaused = false;
 
 // Track last interactions to prevent duplicates
 let lastInteraction = {
@@ -114,12 +118,12 @@ function findAssociatedLabel(element) {
 function findNearbyText(element) {
   let parent = element.parentElement;
   let depth = 0;
-  
+
   while (parent && depth < 2) {
     const textNodes = Array.from(parent.childNodes).filter(
       node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()
     );
-    
+
     if (textNodes.length > 0) {
       return textNodes[0].textContent.trim();
     }
@@ -141,7 +145,7 @@ function findNearbyText(element) {
 
 function cleanFieldName(text) {
   if (!text) return '';
-  
+
   return text
     .trim()
     .replace(/[*:]/g, '')
@@ -158,17 +162,17 @@ function cleanFieldName(text) {
 function getSuggestedFieldName(element, selector) {
   if (selector?.css) {
     const css = selector.css;
-    
+
     const idMatch = css.match(/#([a-zA-Z0-9_-]+)/);
     if (idMatch) return cleanFieldName(idMatch[1]);
-    
+
     const classMatch = css.match(/\.([a-zA-Z0-9_-]+)/);
     if (classMatch) return cleanFieldName(classMatch[1]);
-    
+
     const nameMatch = css.match(/\[name="([^"]+)"\]/);
     if (nameMatch) return cleanFieldName(nameMatch[1]);
   }
-  
+
   return cleanFieldName(element.tagName + ' ' + (element.type || 'Field'));
 }
 
@@ -411,7 +415,7 @@ async function processStepWithManualEntry(element, action, stepData) {
 
   if (!fieldName || fieldName === 'Unknown Field' || fieldName.trim() === '') {
     console.log('⚠️ Field name not detected, requesting manual entry...');
-    
+
     const wasRecording = isRecording;
     isRecording = false;
     updateRecordingIndicator('PAUSED');
@@ -496,18 +500,18 @@ function removeHighlight() {
 function isDuplicateInteraction(element, action, value = null) {
   const now = Date.now();
   const timeSinceLastAction = now - lastInteraction.timestamp;
-  
-  if (lastInteraction.element === element && 
-      lastInteraction.action === action && 
-      timeSinceLastAction < 500) {
-    
+
+  if (lastInteraction.element === element &&
+    lastInteraction.action === action &&
+    timeSinceLastAction < 500) {
+
     if (action === 'type' && value !== lastInteraction.value) {
       return false;
     }
-    
+
     return true;
   }
-  
+
   return false;
 }
 
@@ -581,7 +585,7 @@ function handleInput(event) {
 
   const element = event.target;
   const elementKey = selectorEngine.generateSelector(element)?.css || element;
-  
+
   if (pendingInputs.has(elementKey)) {
     clearTimeout(pendingInputs.get(elementKey));
   }
@@ -613,7 +617,7 @@ function handleInput(event) {
     updateLastInteraction(element, 'type', value);
     sendStepToBackground(stepData);
     pendingInputs.delete(elementKey);
-    
+
     console.log('Input captured:', stepData.fieldName, value);
   }, 800);
 
@@ -624,7 +628,7 @@ async function handleChange(event) {
   if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
 
   const element = event.target;
-  
+
   const elementKey = selectorEngine.generateSelector(element)?.css || element;
   if (pendingInputs.has(elementKey)) {
     clearTimeout(pendingInputs.get(elementKey));
@@ -677,7 +681,7 @@ function handleSubmit(event) {
   if (!isRecording || !selectorEngine || isModalOpen) return;
 
   const form = event.target;
-  
+
   if (isDuplicateInteraction(form, 'submit')) {
     console.log('Skipping duplicate submit');
     return;
@@ -708,7 +712,7 @@ function captureNavigation() {
   if (!isRecording || isModalOpen) return;
 
   const currentUrl = window.location.href;
-  
+
   if (isInitialNavigation) {
     isInitialNavigation = false;
     lastNavigationUrl = currentUrl;
@@ -765,20 +769,45 @@ function sendStepToBackground(stepData) {
   });
 }
 
-function startRecording(sessionId) {
+function startRecording(sessionId, isRestoring = false, startTimeStr = null) {
   if (isRecording) return;
 
   isRecording = true;
+  isPaused = false;
   currentSessionId = sessionId;
-  isInitialNavigation = true;
-  lastNavigationUrl = window.location.href;
+
+  if (isRestoring) {
+    isInitialNavigation = false;
+    lastNavigationUrl = '';
+  } else {
+    isInitialNavigation = true;
+    lastNavigationUrl = window.location.href;
+  }
 
   document.addEventListener('click', handleClick, true);
   document.addEventListener('input', handleInput, true);
   document.addEventListener('change', handleChange, true);
   document.addEventListener('submit', handleSubmit, true);
 
-  addRecordingIndicator();
+  if (isRestoring && !startTimeStr) {
+    console.log('⚠️ startRecording: Missing startTimeStr during restore, fetching from session...');
+    chrome.runtime.sendMessage({ action: 'getSession', sessionId }, (res) => {
+      if (res && res.session && res.session.createdAt) {
+        startRecording(sessionId, isRestoring, res.session.createdAt);
+      } else {
+        console.warn('❌ Failed to recover start time, defaulting to now');
+        addRecordingIndicator(Date.now());
+      }
+    });
+    return;
+  }
+
+  let startTime = Date.now();
+  if (startTimeStr) {
+    startTime = new Date(startTimeStr).getTime();
+  }
+  console.log('Starting timer with:', { startTimeStr, startTime, now: Date.now() });
+  addRecordingIndicator(startTime);
 
   // 🔧 FIX #7: Start session validation heartbeat
   sessionValidationInterval = setInterval(async () => {
@@ -789,12 +818,17 @@ function startRecording(sessionId) {
     }
   }, 5000);
 
+  if (isRestoring) {
+    captureNavigation();
+  }
+
   console.log('Content script: Recording started');
 }
 
 function pauseRecording() {
   if (!isRecording) return;
   isRecording = false;
+  isPaused = true;
   updateRecordingIndicator('PAUSED');
   console.log('Content script: Recording paused');
 }
@@ -802,6 +836,7 @@ function pauseRecording() {
 function resumeRecording() {
   if (isRecording) return;
   isRecording = true;
+  isPaused = false;
   updateRecordingIndicator('RECORDING');
   console.log('Content script: Recording resumed');
 }
@@ -845,76 +880,272 @@ function stopRecording() {
   console.log('Content script: Recording stopped');
 }
 
-function addRecordingIndicator() {
-  if (document.getElementById('testsnapper-indicator')) return;
+function addRecordingIndicator(startTime = Date.now()) {
+  if (document.getElementById('testsnapper-control-panel-container')) {
+    // Just update the timer if it exists? No, easier to rely on existing one unless we want to force resync.
+    // But for navigation, the container is gone, so this runs fresh.
+    return;
+  }
 
-  const indicator = document.createElement('div');
-  indicator.id = 'testsnapper-indicator';
-  indicator.innerHTML = `
-    <div style="
+  const panelContainer = document.createElement('div');
+  panelContainer.id = 'testsnapper-control-panel-container';
+  const shadow = panelContainer.attachShadow({ mode: 'open' });
+
+  const style = document.createElement('style');
+  style.textContent = `
+    :host {
       position: fixed;
-      top: 10px;
-      right: 10px;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2147483647;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .panel {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #1e1e1e;
       padding: 8px 16px;
-      background: #FF0000;
-      color: white;
-      border-radius: 20px;
-      font-family: sans-serif;
-      font-size: 12px;
-      font-weight: bold;
-      z-index: 999999;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      border-radius: 999px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1);
+      cursor: grab;
+      backdrop-filter: blur(10px);
+      transition: transform 0.1s;
+      user-select: none;
+    }
+    .panel:active {
+      cursor: grabbing;
+      transform: scale(0.98);
+    }
+    .status-container {
       display: flex;
       align-items: center;
       gap: 8px;
-    ">
-      <div style="
-        width: 8px;
-        height: 8px;
-        background: white;
-        border-radius: 50%;
-        animation: pulse 1s infinite;
-      "></div>
-      <span>RECORDING</span>
-    </div>
-    <style>
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.3; }
-      }
-      @keyframes fadeOut {
-        from { opacity: 1; }
-        to { opacity: 0; }
-      }
-    </style>
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: #FF4444;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    .status-dot.paused {
+      background: #FFBB33;
+      animation: none;
+    }
+    .time-display {
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+      color: #e0e0e0;
+      font-weight: 500;
+      min-width: 35px;
+    }
+    .divider {
+      width: 1px;
+      height: 16px;
+      background: rgba(255,255,255,0.15);
+    }
+    .controls {
+      display: flex;
+      gap: 4px;
+    }
+    .btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #e0e0e0;
+      transition: all 0.2s ease;
+    }
+    .btn:hover {
+      background: rgba(255,255,255,0.1);
+      transform: translateY(-1px);
+    }
+    .btn:active {
+      transform: translateY(1px);
+    }
+    .btn svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+    .btn.stop { color: #FF6B6B; }
+    .btn.pause { color: #FFCC00; }
+    .btn.resume { color: #4CAF50; }
+    .btn.screenshot { color: #4FC3F7; }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.4); }
+      70% { box-shadow: 0 0 0 6px rgba(255, 68, 68, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0); }
+    }
   `;
 
-  document.body.appendChild(indicator);
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+
+  panel.innerHTML = `
+    <div class="status-container">
+      <div class="status-dot" id="status-dot"></div>
+      <div class="time-display" id="time-display">00:00</div>
+    </div>
+    <div class="divider"></div>
+    <div class="controls">
+      <button class="btn pause" id="btn-pause" title="Pause">
+        <svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+      </button>
+      <button class="btn resume" id="btn-resume" title="Resume" style="display:none">
+         <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button class="btn screenshot" id="btn-screenshot" title="Screenshot">
+           <svg viewBox="0 0 24 24"><path d="M12 12m-3.2 0a3.2 3.2 0 1 0 6.4 0a3.2 3.2 0 1 0 -6.4 0"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5s5 2.24 5 5s-2.24 5-5 5z"/></svg>
+      </button>
+      <button class="btn stop" id="btn-stop" title="Stop">
+          <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+      </button>
+    </div>
+  `;
+
+  shadow.appendChild(style);
+  shadow.appendChild(panel);
+  document.body.appendChild(panelContainer);
+  floatingPanelContainer = panelContainer;
+
+  // --- Drag Logic ---
+  let isDragging = false;
+  let startX, startY;
+  let initialLeft, initialTop;
+
+  // We need to handle offsets because the container uses transform for centering first
+  // But subsequent drags should probably set top/left directly and remove transform centering
+
+  // Actually simplest way: Use transform translate for dragging
+  let currentTranslateX = -50; // percent
+  let currentTranslateY = 0;   // px
+  // But wait, using pixels for drag is smoother.
+  // Let's reset the container positioning to simply be absolute/fixed coordinates after first drag.
+
+  let xOffset = 0;
+  let yOffset = 0;
+  let initialX;
+  let initialY;
+
+  // We will use transform properly
+  // Since initial is left:50% translateX(-50%)
+  // It's tricky. Let's just set top/left to computed values on drag start.
+
+  const handleMouseDown = (e) => {
+    if (e.target.closest('button')) return;
+    isDragging = true;
+
+    // Get current visual position
+    const rect = panelContainer.getBoundingClientRect();
+
+    // Switch to explicit pixel positioning to make dragging easier
+    panelContainer.style.transform = 'none';
+    panelContainer.style.left = rect.left + 'px';
+    panelContainer.style.top = rect.top + 'px';
+
+    initialX = e.clientX - rect.left;
+    initialY = e.clientY - rect.top;
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+    e.preventDefault();
+
+    const x = e.clientX - initialX;
+    const y = e.clientY - initialY;
+
+    // Boundary checks (optional)
+
+    panelContainer.style.left = `${x}px`;
+    panelContainer.style.top = `${y}px`;
+  };
+
+  const handleMouseUp = () => {
+    isDragging = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+  };
+
+  panel.addEventListener('mousedown', handleMouseDown);
+
+  // --- Event Wiring ---
+  shadow.getElementById('btn-pause').onclick = (e) => {
+    e.stopPropagation();
+    chrome.runtime.sendMessage({ action: 'pauseRecording' });
+  };
+  shadow.getElementById('btn-resume').onclick = (e) => {
+    e.stopPropagation();
+    chrome.runtime.sendMessage({ action: 'resumeRecording' });
+  };
+  shadow.getElementById('btn-stop').onclick = (e) => {
+    e.stopPropagation();
+    chrome.runtime.sendMessage({ action: 'stopRecording' });
+  };
+  shadow.getElementById('btn-screenshot').onclick = (e) => {
+    e.stopPropagation();
+    chrome.runtime.sendMessage({ action: 'captureScreenshot' });
+  };
+
+  // --- Timer ---
+  recordingSeconds = Math.floor((Date.now() - startTime) / 1000);
+  if (recordingSeconds < 0) recordingSeconds = 0;
+
+  if (timerInterval) clearInterval(timerInterval);
+  const timeDisplay = shadow.getElementById('time-display');
+
+  // Initial display
+  const mins = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
+  const secs = (recordingSeconds % 60).toString().padStart(2, '0');
+  if (timeDisplay) timeDisplay.textContent = `${mins}:${secs}`;
+
+  timerInterval = setInterval(() => {
+    if (!isPaused) {
+      recordingSeconds++;
+      const mins = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
+      const secs = (recordingSeconds % 60).toString().padStart(2, '0');
+      if (timeDisplay) timeDisplay.textContent = `${mins}:${secs}`;
+    }
+  }, 1000);
 }
 
 function updateRecordingIndicator(status) {
-  const indicator = document.getElementById('testsnapper-indicator');
-  if (!indicator) return;
+  if (!floatingPanelContainer || !floatingPanelContainer.shadowRoot) return;
+  const shadow = floatingPanelContainer.shadowRoot;
 
-  const span = indicator.querySelector('span');
-  const dot = indicator.querySelector('div > div');
-  const container = indicator.querySelector('div');
+  const pauseBtn = shadow.getElementById('btn-pause');
+  const resumeBtn = shadow.getElementById('btn-resume');
+  const dot = shadow.getElementById('status-dot');
 
   if (status === 'PAUSED') {
-    span.textContent = 'PAUSED';
-    container.style.background = '#FFA500';
-    dot.style.animation = 'none';
+    pauseBtn.style.display = 'none';
+    resumeBtn.style.display = 'flex';
+    dot.classList.add('paused');
   } else if (status === 'RECORDING') {
-    span.textContent = 'RECORDING';
-    container.style.background = '#FF0000';
-    dot.style.animation = 'pulse 1s infinite';
+    pauseBtn.style.display = 'flex';
+    resumeBtn.style.display = 'none';
+    dot.classList.remove('paused');
   }
 }
 
 function removeRecordingIndicator() {
-  const indicator = document.getElementById('testsnapper-indicator');
-  if (indicator) {
-    indicator.remove();
+  if (floatingPanelContainer) {
+    floatingPanelContainer.remove();
+    floatingPanelContainer = null;
+  }
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
   }
 }
 
@@ -923,7 +1154,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   switch (message.action) {
     case 'startRecording':
-      startRecording(message.sessionId);
+      startRecording(message.sessionId, false, message.session?.createdAt);
       sendResponse({ success: true });
       break;
 
@@ -939,6 +1170,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'stopRecording':
       stopRecording();
+      sendResponse({ success: true });
+      break;
+
+    case 'beforeScreenshot':
+      if (floatingPanelContainer) floatingPanelContainer.style.display = 'none';
+      document.querySelectorAll('[id^="testsnapper-"]').forEach(el => {
+        el.style.display = 'none';
+      });
+      sendResponse({ success: true });
+      break;
+
+    case 'afterScreenshot':
+      if (floatingPanelContainer) floatingPanelContainer.style.display = 'block';
+      // Note: we don't automatically restore other bits like modals to avoid logic issues, 
+      // but usually the modal is what triggered the capture or it's manual.
       sendResponse({ success: true });
       break;
 
@@ -958,3 +1204,23 @@ setInterval(() => {
 }, 1000);
 
 console.log('TestSnapper content script loaded');
+
+// Check for active recording on load to restore overlay and state
+chrome.runtime.sendMessage({ action: 'getState' }, (response) => {
+  if (chrome.runtime.lastError) {
+    console.log('Background connection error:', chrome.runtime.lastError);
+    return;
+  }
+
+  if (response && response.session) {
+    console.log('Restoring session state:', response.state, response.session);
+    if (response.state === 'recording') {
+      startRecording(response.session.sessionId, true, response.session.createdAt);
+    } else if (response.state === 'paused') {
+      startRecording(response.session.sessionId, true, response.session.createdAt);
+      pauseRecording();
+    }
+  } else {
+    console.log('No active session state to restore');
+  }
+});

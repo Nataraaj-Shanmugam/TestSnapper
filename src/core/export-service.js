@@ -1,5 +1,5 @@
 /**
- * Export Service - FIXED: Screenshot compression, memory leaks, unicode handling
+ * Export Service
  */
 
 export class ExportService {
@@ -14,7 +14,7 @@ export class ExportService {
    */
   async exportSession(sessionId, format, progressCallback) {
     const notify =
-      typeof progressCallback === 'function' ? progressCallback : () => {};
+      typeof progressCallback === 'function' ? progressCallback : () => { };
 
     console.log('📄 Starting export:', format, 'for session:', sessionId);
 
@@ -77,9 +77,6 @@ export class ExportService {
     };
   }
 
-  /**
-   * 🔧 FIX #5: Convert blob to data URL with explicit cleanup
-   */
   async _blobToDataURL(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -96,10 +93,7 @@ export class ExportService {
     });
   }
 
-  /**
-   * 🔧 FIX #1: Fixed compression - uses 500px for DOCX, maintains quality
-   */
-  async _compressImage(blob, maxWidth = 500, quality = 0.85) {
+  async _compressImage(blob, maxWidth = 1600, quality = 0.9) {
     try {
       const useOffscreen = typeof OffscreenCanvas !== 'undefined';
 
@@ -118,9 +112,8 @@ export class ExportService {
           quality
         });
 
-        // 🔧 FIX #5: Explicit cleanup
         imageBitmap.close();
-        
+
         return compressed;
       } else {
         const dataUrl = await this._blobToDataURL(blob);
@@ -141,7 +134,6 @@ export class ExportService {
 
               canvas.toBlob(
                 (compressedBlob) => {
-                  // 🔧 FIX #5: Cleanup
                   canvas.width = 0;
                   canvas.height = 0;
                   img.src = '';
@@ -221,13 +213,9 @@ export class ExportService {
     };
   }
 
-  /**
-   * 🔧 FIX #1 + #5: Proper 500px compression + memory cleanup
-   * (UPDATED: now takes progressCallback for progress UI)
-   */
   async _exportDOCX(exportData, sessionId, progressCallback) {
     const notify =
-      typeof progressCallback === 'function' ? progressCallback : () => {};
+      typeof progressCallback === 'function' ? progressCallback : () => { };
 
     const { session, steps } = exportData;
 
@@ -249,21 +237,21 @@ export class ExportService {
     ol { line-height: 1.8; padding-left: 30px; margin-top: 20px; }
     li { margin: 15px 0; color: #333; font-size: 14px; }
     .screenshot-img { 
-      width: 500px !important; 
-      max-width: 500px !important; 
+      width: 100% !important; 
+      max-width: 6.5in !important; 
       height: auto !important; 
-      margin-top: 10px; 
-      border: 1px solid #ddd; 
+      margin-top: 15px; 
+      border: 1px solid #ccc; 
       display: block; 
     }
-    .automated-screenshots { margin-top: 30px; padding-top: 20px; border-top: 2px solid #3498db; }
-    .auto-screenshot { margin: 20px 0; text-align: center; }
+    .automated-screenshots { margin-top: 40px; padding-top: 20px; border-top: 2px solid #3498db; }
+    .auto-screenshot { margin: 30px 0; text-align: center; }
     .auto-screenshot img { 
-      width: 500px !important; 
-      max-width: 500px !important; 
+      width: 100% !important; 
+      max-width: 6.5in !important; 
       height: auto !important; 
-      margin: 10px auto; 
-      border: 1px solid #ddd; 
+      margin: 15px auto; 
+      border: 1px solid #ccc; 
       display: block; 
     }
   </style>
@@ -282,7 +270,6 @@ export class ExportService {
   <h2>Test Execution Steps</h2>
 `;
 
-    // 🔧 FIX #5: Load screenshots in batches to prevent memory overload
     const screenshotAssets = await this.storage.getAllAssets(session.id);
     const screenshotMap = new Map();
     const BATCH_SIZE = 5;
@@ -292,12 +279,11 @@ export class ExportService {
 
     for (let i = 0; i < screenshotAssets.length; i += BATCH_SIZE) {
       const batch = screenshotAssets.slice(i, i + BATCH_SIZE);
-      
+
       await Promise.all(batch.map(async (asset) => {
         if (asset.blob) {
           try {
-            // 🔧 FIX #1: Use 500px compression to match CSS
-            const compressed = await this._compressImage(asset.blob, 500, 0.85);
+            const compressed = await this._compressImage(asset.blob, 1200, 0.9);
             const dataUrl = await this._blobToDataURL(compressed);
             screenshotMap.set(asset.stepId, dataUrl);
           } catch (err) {
@@ -315,7 +301,6 @@ export class ExportService {
         status: `Processing screenshots... (${processed}/${totalScreens})`
       });
 
-      // 🔧 FIX #5: Allow GC between batches
       await new Promise(resolve => setTimeout(resolve, 10));
     }
 
@@ -343,7 +328,7 @@ export class ExportService {
 
         const screenshotData = screenshotMap.get(step.id);
         if (screenshotData) {
-          html += `<br><img src="${screenshotData}" class="screenshot-img" width="500" height="auto" alt="Manual Screenshot"/>`;
+          html += `<br><img src="${screenshotData}" class="screenshot-img" alt="Manual Screenshot"/>`;
         }
 
         html += `</li>`;
@@ -384,7 +369,7 @@ export class ExportService {
           html += `
     <div class='auto-screenshot'>
       <p><b>Auto Screenshot ${i + 1}</b> - ${new Date(screenshot.timestamp).toLocaleTimeString()}</p>
-      <img src="${screenshotData}" width="500" height="auto" alt="Automated Screenshot ${i + 1}"/>
+      <img src="${screenshotData}" class="auto-screenshot img" alt="Automated Screenshot ${i + 1}"/>
     </div>`;
         }
       }
@@ -396,7 +381,6 @@ export class ExportService {
 </body>
 </html>`;
 
-    // 🔧 FIX #5: Clear screenshot map to free memory
     screenshotMap.clear();
 
     notify({ percent: 90, status: 'Finalizing DOCX content...' });

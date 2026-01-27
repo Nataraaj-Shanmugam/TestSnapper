@@ -67,6 +67,20 @@
         "mac": "Command+Shift+S"
       },
       "description": "Capture screenshot"
+    },
+    "toggle_recording": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      },
+      "description": "Pause/Resume recording"
+    },
+    "stop_recording": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
+      },
+      "description": "Stop recording"
     }
   }
 }

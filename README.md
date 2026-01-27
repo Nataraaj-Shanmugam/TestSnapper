@@ -31,20 +31,24 @@ From:
 - No raw password storage  
 
 ### 📄 Full Review & Editing
-- Rich standalone review UI  
-- Edit step text & metadata  
-- Hide/Show screenshots  
-- Reorder steps (drag & drop)  
-- Add manual steps  
+- Rich standalone review UI (Card-based)
+- Edit step text & metadata
+- **Always-on** expanded screenshots (High Quality)
+- Reorder steps (drag & drop)
+- **Bulk Delete** selected steps
+- Add manual steps between existing ones
+- **Theme Toggle** (Light/Dark mode)
 
 ### 📤 Export Formats
-- **DOCX** (with compressed screenshots)  
-- **JSON**  
-- **CSV**  
+- **DOCX** (Full-width 1200px screenshots)
+- **PDF** (Professional document layout)
+- **JSON** (Raw data)
+- **CSV** (Spreadsheet compatible)
+- **TXT** (Simple text summary)
 
 ### 💾 Storage
-- IndexedDB session storage  
-- Automatic cleanup  
+- IndexedDB session storage
+- Automatic cleanup
 - Session limit handling  
 
 ---

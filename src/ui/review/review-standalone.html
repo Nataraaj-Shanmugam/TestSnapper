@@ -6,579 +6,185 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Review Session - TestSnapper</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            /* ============================== */
-            /*       THEME VARIABLES          */
-            /* ============================== */
-
-            /* Default (Dark Mode) - "Cyber Blue" */
-            --bg-primary: #0f172a;
-            /* Slate 900 */
-            --bg-secondary: #1e293b;
-            /* Slate 800 */
-            --bg-tertiary: #334155;
-            /* Slate 700 */
-
-            --accent-primary: #0ea5e9;
-            /* Sky 500 */
-            --accent-secondary: #0284c7;
-            /* Sky 600 */
-            --accent-hover: #38bdf8;
-            /* Sky 400 */
-            --accent-text: #ffffff;
-
-            --text-primary: #f8fafc;
-            /* Slate 50 */
-            --text-secondary: #cbd5e1;
-            /* Slate 300 */
-            --text-muted: #94a3b8;
-            /* Slate 400 */
-
-            --glass-bg: rgba(30, 41, 59, 0.7);
-            --glass-border: rgba(255, 255, 255, 0.1);
-            --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-            --backdrop-blur: 12px;
-
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --info: #3b82f6;
-
-            /* Gradients */
-            --gradient-primary: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-            --gradient-soft: linear-gradient(180deg, rgba(14, 165, 233, 0.1) 0%, transparent 100%);
-            --header-height: 70px;
-        }
-
-        /* Light Mode Overrides */
-        body.light-mode {
-            --bg-primary: #f1f5f9;
-            /* Slate 100 */
-            --bg-secondary: #ffffff;
-            /* White */
-            --bg-tertiary: #e2e8f0;
-            /* Slate 200 */
-
-            --accent-primary: #0284c7;
-            /* Sky 600 */
-            --accent-secondary: #0369a1;
-            /* Sky 700 */
-            --accent-hover: #0ea5e9;
-            /* Sky 500 */
-
-            --text-primary: #0f172a;
-            /* Slate 900 */
-            --text-secondary: #475569;
-            /* Slate 600 */
-            --text-muted: #64748b;
-            /* Slate 500 */
-
-            --glass-bg: rgba(255, 255, 255, 0.85);
-            --glass-border: rgba(0, 0, 0, 0.08);
-            --glass-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-            --backdrop-blur: 12px;
-        }
-
-        body {
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            background-color: var(--bg-primary);
-            /* Subtle mesh gradient for depth - Blue */
-            background-image:
-                radial-gradient(circle at 10% 20%, rgba(14, 165, 233, 0.1) 0%, transparent 40%),
-                radial-gradient(circle at 90% 80%, rgba(2, 132, 199, 0.1) 0%, transparent 40%);
-            color: var(--text-primary);
-            font-size: 14px;
-            line-height: 1.6;
-            min-height: 100vh;
-            transition: background-color 0.3s ease, color 0.3s ease;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 30px 20px;
-        }
-
-        /* Header */
-        header {
-            margin-bottom: 32px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(var(--backdrop-blur));
-            border: 1px solid var(--glass-border);
-            border-radius: 16px;
-            padding: 20px 30px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        }
-
-        .header-content {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-        }
-
-        header h1 {
-            font-size: 28px;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: var(--gradient-primary);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-        }
-
-        header h1 span:first-child {
-            font-size: 32px;
-            /* Emoji */
-            -webkit-background-clip: unset;
-            background-clip: unset;
-            color: initial;
-            filter: drop-shadow(0 0 8px rgba(14, 165, 233, 0.3));
-        }
-
-        .header-actions {
-            display: flex;
-            gap: 12px;
-        }
-
-        /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            color: white;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .btn:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-            filter: brightness(1.1);
-        }
-
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            filter: grayscale(0.5);
-        }
-
-        .btn-primary {
-            background: var(--gradient-primary);
-        }
-
-        .btn-secondary {
-            background: var(--bg-tertiary);
-            border: 1px solid var(--glass-border);
-            color: var(--text-primary);
-        }
-
-        .btn-danger {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-        }
-
-        .btn-success {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        }
-
-        /* Session Info Card */
-        .session-info {
-            background: var(--glass-bg);
-            backdrop-filter: blur(var(--backdrop-blur));
-            border: 1px solid var(--glass-border);
-            border-radius: 16px;
-            padding: 24px;
-            margin-bottom: 30px;
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 24px;
-        }
-
-        .session-field label {
-            display: block;
-            font-size: 12px;
-            color: var(--text-muted);
-            margin-bottom: 8px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .session-name-input {
-            width: 100%;
-            padding: 12px 16px;
-            border: 1px solid var(--glass-border);
-            border-radius: 8px;
-            font-size: 18px;
-            font-weight: 500;
-            background: rgba(17, 24, 39, 0.6);
-            color: var(--text-primary);
-            transition: all 0.2s;
-        }
-
-        .session-name-input:focus {
-            outline: none;
-            border-color: var(--accent-primary);
-            box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2);
-        }
-
-        .export-format select {
-            width: 100%;
-            padding: 12px;
-            background: rgba(17, 24, 39, 0.6);
-            border: 1px solid var(--glass-border);
-            border-radius: 8px;
-            color: var(--text-primary);
-            cursor: pointer;
-        }
-
-        /* Toolbar */
-        .steps-toolbar {
-            background: var(--bg-secondary);
-            padding: 12px;
-            border-radius: 12px;
-            border: 1px solid var(--glass-border);
-            display: flex;
-            gap: 12px;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
-        .steps-toolbar input,
-        .steps-toolbar select {
-            background: var(--bg-primary) !important;
-            border: 1px solid var(--glass-border) !important;
-            color: var(--text-primary) !important;
-            border-radius: 8px !important;
-            padding: 10px 14px !important;
-        }
-
-        .steps-toolbar input:focus,
-        .steps-toolbar select:focus {
-            border-color: var(--accent-primary) !important;
-            outline: none;
-        }
-
-        /* Steps Container */
-        .step-item {
-            background: var(--bg-tertiary);
-            /* Solid background for legibility */
-            border: 1px solid var(--glass-border);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 16px;
-            transition: all 0.2s;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .step-item::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 4px;
-            background: var(--accent-primary);
-            opacity: 0.5;
-        }
-
-        .step-item:hover {
-            transform: translateY(-2px);
-            border-color: var(--accent-primary);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-        }
-
-        .step-item:hover::before {
-            opacity: 1;
-        }
-
-        .step-number {
-            font-size: 16px;
-            font-weight: 700;
-            color: var(--accent-primary);
-            margin-right: 12px;
-        }
-
-        .step-actions {
-            opacity: 0.6;
-            transition: opacity 0.2s;
-        }
-
-        .step-item:hover .step-actions {
-            opacity: 1;
-        }
-
-        .icon-btn {
-            background: rgba(255, 255, 255, 0.05);
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 6px;
-            border: none;
-            color: var(--text-secondary);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .icon-btn:hover {
-            background: var(--accent-primary);
-            color: white;
-        }
-
-        .icon-btn.delete-btn:hover {
-            background: var(--danger);
-        }
-
-        .step-input {
-            background: transparent;
-            border: 1px solid transparent;
-            color: var(--text-primary);
-            font-size: 15px;
-            padding: 8px;
-            border-radius: 6px;
-            width: 100%;
-        }
-
-        .step-input:focus {
-            background: rgba(0, 0, 0, 0.2);
-            border-color: var(--accent-primary);
-            outline: none;
-        }
-
-        /* Add Step Button */
-        .hover-line {
-            height: 24px;
-        }
-
-        .add-step-btn {
-            width: 28px;
-            height: 28px;
-            background: var(--bg-tertiary);
-            border: 2px solid var(--accent-primary);
-            color: var(--accent-primary);
-            box-shadow: 0 0 10px rgba(14, 165, 233, 0.2);
-        }
-
-        /* Screenshot */
-        .step-screenshot img {
-            border-radius: 8px;
-            border: 1px solid var(--glass-border);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        }
-
-        /* Modal */
-        .modal-overlay {
-            backdrop-filter: blur(8px);
-            background: rgba(0, 0, 0, 0.7);
-        }
-
-        .modal {
-            background: #1f2937;
-            /* Solid dark bg */
-            border: 1px solid var(--glass-border);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            color: var(--text-primary);
-        }
-
-        .modal h3 {
-            color: var(--text-primary);
-        }
-
-        .form-field input,
-        .form-field textarea,
-        .form-field select {
-            background: #111827;
-            border-color: var(--glass-border);
-            color: white;
-        }
-
-        /* Loading */
-        .loading {
-            color: var(--accent-primary);
-            font-weight: 500;
-        }
-    </style>
+    <link rel="stylesheet" href="review-standalone.css">
 </head>
 
 <body>
-    <div class="container">
-        <header>
-            <div class="header-content">
-                <h1>
-                    <span>📋</span>
-                    <span>Review Test Session</span>
+    <div class="app-wrapper">
+        <!-- Sidebar for Settings and Metadata -->
+        <aside class="sidebar">
+            <div class="header-logo">
+                <h1 style="font-size: 20px; color: var(--primary);">
+                    <span style="font-size: 24px;">📋</span> TestSnapper
                 </h1>
-                <div class="header-actions">
-                    <button id="themeToggle" class="icon-btn"
-                        style="width: 38px; height: 38px; border: 1px solid var(--glass-border); border-radius: 8px; margin-right: 8px;"
-                        title="Toggle Theme">
-                        <span class="icon">🌙</span>
+            </div>
+
+            <div class="session-settings-card">
+                <div class="field-group">
+                    <label>Session Name</label>
+                    <input type="text" id="sessionName" class="input-styled" placeholder="Session name..."
+                        autocomplete="off">
+                </div>
+
+                <div class="field-group">
+                    <label>Export Format</label>
+                    <select id="exportFormat" class="select-styled">
+                        <option value="docx">Microsoft Word (.docx)</option>
+                        <option value="json">JSON Format (Data)</option>
+                        <option value="csv">Excel / CSV (.csv)</option>
+                        <option value="pdf">Text Document (.txt)</option>
+                    </select>
+                </div>
+
+                <div class="meta-info"
+                    style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); margin-bottom: 24px;">
+                    <div class="meta-item">
+                        <span class="meta-label">Created:</span>
+                        <span id="sessionDate" style="font-size: 13px;">-</span>
+                    </div>
+                    <div class="meta-item" style="margin-top: 8px;">
+                        <span class="meta-label">Steps:</span>
+                        <span id="sessionStepCount" style="font-size: 13px;">-</span>
+                    </div>
+                </div>
+
+                <div class="sidebar-actions" style="display: flex; flex-direction: column; gap: 12px;">
+                    <button id="saveExportBtn" class="btn btn-primary" style="width: 100%;">
+                        <span>💾</span> Export Documentation
                     </button>
-                    <button id="undoBtn" class="btn btn-secondary" disabled title="Undo (Ctrl+Z / Cmd+Z)">
-                        <span>↶</span>
-                        <span>Undo</span>
-                    </button>
-                    <!-- <button id="redoBtn" class="btn btn-secondary" disabled style="opacity: 0.4; cursor: not-allowed;">
-                        <span>↷</span>
-                        <span>Redo</span>
-                    </button> -->
-                    <button id="bulkDeleteBtn" class="btn btn-danger" disabled>
-                        <span>🗑️</span>
-                        <span>Delete Selected</span>
+
+                    <button id="cancelBtn" class="btn btn-secondary" style="width: 100%;">
+                        <span>✖️</span> Close
                     </button>
                 </div>
             </div>
-        </header>
 
-        <div class="message" id="message"></div>
 
-        <div class="session-info">
-            <div class="session-field">
-                <label>Session Name:</label>
-                <input type="text" id="sessionName" class="session-name-input" placeholder="Enter session name..."
-                    autocomplete="off">
-            </div>
-            <div class="session-meta">
-                <span id="sessionDate"></span>
-                <span id="sessionStepCount"></span>
-            </div>
-            <div class="export-format">
-                <label>Export Format:</label>
-                <select id="exportFormat">
-                    <option value="docx">DOCX (Microsoft Word)</option>
-                    <option value="json">JSON (Data Format)</option>
-                    <option value="csv">CSV (Spreadsheet)</option>
-                    <option value="pdf">TXT (Document)</option>
-                </select>
-            </div>
-        </div>
+        </aside>
 
-        <!-- Search / Filter Toolbar -->
-        <div class="steps-toolbar"
-            style="margin-bottom: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <input type="text" id="stepSearch" placeholder="🔍 Search steps..."
-                style="flex: 1; min-width: 180px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
-            <select id="actionFilter"
-                style="padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
-                <option value="all">All Actions</option>
-                <option value="click">Click</option>
-                <option value="type">Type</option>
-                <option value="navigate">Navigate</option>
-                <option value="select">Select</option>
-                <option value="check">Check</option>
-                <option value="submit">Submit</option>
-                <option value="screenshot">Screenshot</option>
-            </select>
-            <button id="clearFiltersBtn" class="btn btn-secondary" style="white-space: nowrap;">
-                Clear Filters
-            </button>
-        </div>
-        <div id="stepResultsSummary"
-            style="font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; min-height: 16px;"></div>
-        <div id="noResultsMsg" class="hidden"
-            style="margin-bottom: 10px; font-size: 13px; color: var(--text-secondary);">
-            No results found for the current filters.
-        </div>
+        <!-- Main Review Area -->
+        <main class="main-content">
+            <header class="page-header">
+                <div>
+                    <h1>Review & Refine</h1>
+                    <p style="color: var(--text-muted); font-size: 14px;">Review your captured interactions and export
+                        your documentation.</p>
+                </div>
+                <div class="header-actions">
+                    <button id="themeToggle" class="icon-btn" title="Toggle Theme"
+                        style="width: 42px; height: 42px; font-size: 20px;">
+                        <span class="icon">🌙</span>
+                    </button>
+                    <button id="bulkDeleteBtn" class="btn btn-danger" disabled
+                        style="height: 42px; padding: 0 16px; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 14px; white-space: nowrap;">
+                        <span style="margin-right: 8px;">🗑️</span> Delete Selection
+                    </button>
+                    <button id="undoBtn" class="icon-btn" disabled title="Undo (Ctrl+Z)"
+                        style="width: 42px; height: 42px;">
+                        <span style="font-size: 18px;">↶</span>
+                    </button>
+                </div>
+            </header>
 
-        <div class="steps-container" id="stepsContainer">
-            <div class="loading">Loading steps</div>
-        </div>
+            <!-- Notification Area -->
+            <div id="message" class="message hidden" style="margin-bottom: 20px;"></div>
 
-        <div class="bottom-actions">
-            <button id="saveExportBtn" class="btn btn-primary">
-                <span>💾</span>
-                <span>Save & Export</span>
-            </button>
-            <button id="cancelBtn" class="btn btn-secondary">
-                <span>✖️</span>
-                <span>Close</span>
-            </button>
-        </div>
-    </div>
-
-    <!-- Add Step Modal -->
-    <div class="modal-overlay" id="addStepModal">
-        <div class="modal">
-            <h3>➕ Add New Step</h3>
-
-            <div class="form-field">
-                <label>Step Description *</label>
-                <textarea id="newStepDescription" placeholder="Enter step description..." required></textarea>
-            </div>
-
-            <div class="form-field">
-                <label>Action Type</label>
-                <select id="newStepAction">
+            <!-- Toolbar -->
+            <section class="toolbar">
+                <div class="search-wrapper">
+                    <span class="icon">🔍</span>
+                    <input type="text" id="stepSearch" class="input-styled search-input"
+                        placeholder="Search steps, actions, or values...">
+                </div>
+                <select id="actionFilter" class="select-styled" style="width: 180px;">
+                    <option value="all">All Actions</option>
                     <option value="click">Click</option>
                     <option value="type">Type</option>
                     <option value="navigate">Navigate</option>
                     <option value="select">Select</option>
                     <option value="check">Check</option>
                     <option value="submit">Submit</option>
-                    <option value="custom">Custom</option>
+                    <option value="screenshot">Screenshot</option>
+                </select>
+                <button id="clearFiltersBtn" class="btn btn-secondary">Clear</button>
+            </section>
+
+            <div id="stepResultsSummary"
+                style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; font-weight: 500;"></div>
+
+            <!-- Steps List -->
+            <div id="stepsContainer" class="steps-container">
+                <div class="loading" style="text-align: center; padding: 40px;">Loading documented steps...</div>
+            </div>
+
+            <div id="noResultsMsg" class="hidden" style="text-align: center; padding: 60px; color: var(--text-muted);">
+                <span style="font-size: 40px; display: block; margin-bottom: 16px;">🔍</span>
+                <p>No steps match your current filters.</p>
+            </div>
+        </main>
+
+
+    </div>
+
+    <!-- Modals -->
+    <div class="modal-overlay" id="addStepModal">
+        <div class="modal-card">
+            <h3 style="margin-bottom: 24px;">➕ Add Manual Step</h3>
+
+            <div class="field-group">
+                <label>Step Description *</label>
+                <textarea id="newStepDescription" class="input-styled" style="min-height: 80px;"
+                    placeholder="Describe what happens in this step..."></textarea>
+            </div>
+
+            <div class="field-group">
+                <label>Action Category</label>
+                <select id="newStepAction" class="select-styled">
+                    <option value="click">Click</option>
+                    <option value="type">Type</option>
+                    <option value="navigate">Navigate</option>
+                    <option value="select">Select</option>
+                    <option value="check">Check</option>
+                    <option value="submit">Submit</option>
+                    <option value="custom">Custom Action</option>
                 </select>
             </div>
 
-            <div class="form-field">
-                <label>Screenshot (Optional)</label>
-                <div class="screenshot-upload" id="screenshotUpload">
+            <div class="field-group">
+                <label>Screenshot</label>
+                <div id="screenshotUpload"
+                    style="border: 2px dashed var(--border); border-radius: 12px; padding: 24px; text-align: center; cursor: pointer;">
                     <input type="file" id="screenshotInput" accept="image/*" style="display: none;">
-                    <p style="color: var(--text-secondary); margin: 0;">
-                        📸 Click to upload screenshot or drag & drop
-                    </p>
-                    <img id="screenshotPreview" class="screenshot-preview" style="display: none;">
+                    <span style="font-size: 24px; display: block; margin-bottom: 8px;">📸</span>
+                    <p style="font-size: 13px; color: var(--text-muted);">Drop image here or click to upload</p>
+                    <img id="screenshotPreview"
+                        style="max-width: 100%; margin-top: 16px; border-radius: 8px; display: none;">
                 </div>
             </div>
 
-            <div class="modal-actions">
-                <button id="cancelAddStep" class="btn btn-cancel">Cancel</button>
+            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 32px;">
+                <button id="cancelAddStep" class="btn btn-secondary">Cancel</button>
                 <button id="confirmAddStep" class="btn btn-primary">Add Step</button>
             </div>
         </div>
     </div>
 
-    <!-- Export Progress Modal -->
+    <!-- Export Progress -->
     <div class="modal-overlay" id="progressModal">
-        <div class="modal" style="max-width: 420px;">
-            <h3>Exporting...</h3>
-            <div class="form-field" style="margin-top: 12px;">
-                <div class="progress-bar"
-                    style="width: 100%; height: 10px; background: var(--bg-secondary); border-radius: 999px; overflow: hidden; border: 1px solid var(--border-color);">
-                    <div class="progress-fill" id="progressFill"
-                        style="width: 0%; height: 100%; background: var(--color-primary); transition: width 0.2s ease;">
-                    </div>
-                </div>
+        <div class="modal-card" style="max-width: 400px; text-align: center;">
+            <div id="exportLoader" style="margin-bottom: 24px;">
+                <svg width="50" height="50" viewBox="0 0 50 50">
+                    <circle cx="25" cy="25" r="20" fill="none" stroke="var(--border)" stroke-width="4" />
+                    <circle id="progressCircle" cx="25" cy="25" r="20" fill="none" stroke="var(--primary)"
+                        stroke-width="4" stroke-dasharray="125.6" stroke-dashoffset="125.6" stroke-linecap="round"
+                        style="transition: stroke-dashoffset 0.3s ease;" />
+                </svg>
             </div>
-            <p id="progressStatus" style="margin-top: 10px; font-size: 13px; color: var(--text-secondary);">
-                Starting export...
-            </p>
-            <p id="progressPercent" style="margin-top: 4px; font-size: 13px; font-weight: 600;">
-                0%
-            </p>
-            <div class="modal-actions">
-                <button id="cancelExportBtn" class="btn btn-cancel">Cancel Export</button>
-            </div>
+            <h3 id="progressPercent" style="font-size: 24px;">0%</h3>
+            <p id="progressStatus" style="color: var(--text-muted); margin-top: 8px; margin-bottom: 24px;">Preparing
+                export...</p>
+
+            <button id="cancelExportBtn" class="btn btn-danger" style="width: 100%;">Cancel Export</button>
         </div>
     </div>
 

@@ -7,70 +7,84 @@
 }
 
 :root {
-  /* ============================== */
-  /*       THEME VARIABLES          */
-  /* ============================== */
+  /* Dark Mode (Primary) */
+  --bg-primary: #1a1b1e;
+  --bg-secondary: #2d2e32;
+  --bg-tertiary: #3a3b3f;
 
-  /* Default (Dark Mode) - "Cyber Blue" */
-  --bg-primary: #0f172a;
-  /* Slate 900 */
-  --bg-secondary: #1e293b;
-  /* Slate 800 */
-  --bg-tertiary: #334155;
-  /* Slate 700 */
-
-  --accent-primary: #0ea5e9;
-  /* Sky 500 */
-  --accent-secondary: #0284c7;
-  /* Sky 600 */
+  --accent-primary: #0284c7;
+  --accent-secondary: #0369a1;
   --accent-text: #ffffff;
 
-  --text-primary: #f8fafc;
-  /* Slate 50 */
-  --text-secondary: #cbd5e1;
-  /* Slate 300 */
-  --text-muted: #94a3b8;
-  /* Slate 400 */
+  --text-primary: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
 
-  --glass-bg: rgba(30, 41, 59, 0.7);
-  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(45, 46, 50, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.08);
   --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
   --backdrop-blur: 12px;
+  --border: var(--glass-border);
 
   --success: #10b981;
   --warning: #f59e0b;
   --danger: #ef4444;
-  --info: #3b82f6;
+  --info: #0ea5e9;
 
-  /* Gradients */
-  --gradient-primary: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-  --gradient-soft: linear-gradient(180deg, rgba(14, 165, 233, 0.1) 0%, transparent 100%);
+  /* Gradients for Dark Mode depth */
+  --gradient-primary: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  --gradient-soft: linear-gradient(180deg, rgba(2, 132, 199, 0.1) 0%, transparent 100%);
+
+  /* Button System (Dark Default) */
+  --btn-primary-bg: var(--gradient-primary);
+  --btn-success-bg: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  --btn-warning-bg: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  --btn-danger-bg: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  --btn-info-bg: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  --btn-text: #ffffff;
+  --btn-secondary-bg: transparent;
+  --btn-secondary-border: var(--border);
+  --btn-secondary-text: var(--text-primary);
+
+  /* Aliases for JS compatibility */
+  --border-color: var(--border);
+  --color-primary: var(--accent-primary);
 }
 
 /* Light Mode Overrides */
 body.light-mode {
-  --bg-primary: #f1f5f9;
-  /* Slate 100 */
-  --bg-secondary: #ffffff;
-  /* White */
-  --bg-tertiary: #e2e8f0;
-  /* Slate 200 */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9fafb;
+  --bg-tertiary: #f3f4f6;
 
   --accent-primary: #0284c7;
-  /* Sky 600 - darker for contrast */
   --accent-secondary: #0369a1;
-  /* Sky 700 */
 
-  --text-primary: #0f172a;
-  /* Slate 900 */
-  --text-secondary: #475569;
-  /* Slate 600 */
-  --text-muted: #64748b;
-  /* Slate 500 */
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --text-muted: #6b7280;
 
-  --glass-bg: rgba(255, 255, 255, 0.75);
-  --glass-border: rgba(0, 0, 0, 0.06);
-  --glass-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --border: var(--glass-border);
+  --border-color: var(--border);
+
+  /* Button System (Light Override) - Solid, High Contrast */
+  --btn-primary-bg: #0284c7;
+  --btn-primary-text: #ffffff;
+  --btn-success-bg: #10b981;
+  --btn-success-text: #ffffff;
+  --btn-warning-bg: #f59e0b;
+  --btn-warning-text: #ffffff;
+  --btn-danger-bg: #ef4444;
+  --btn-danger-text: #ffffff;
+  --btn-info-bg: #0ea5e9;
+  --btn-info-text: #ffffff;
+  --btn-text: #ffffff;
+  --btn-secondary-bg: transparent;
+  --btn-secondary-border: 1.5px solid var(--border);
+  --btn-secondary-text: var(--text-primary);
 }
 
 body {
@@ -117,7 +131,7 @@ header h1 {
 /* Tabs */
 .tabs {
   display: flex;
-  background: rgba(31, 41, 55, 0.5);
+  background: var(--bg-tertiary);
   padding: 4px;
   border-radius: 12px;
   margin-bottom: 20px;
@@ -142,7 +156,7 @@ header h1 {
 }
 
 .tab.active {
-  background: var(--bg-tertiary);
+  background: var(--bg-primary);
   color: var(--text-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
@@ -182,7 +196,7 @@ header h1 {
   border-radius: 16px;
   padding: 16px;
   margin-bottom: 16px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 
 /* State Indicator */
@@ -262,13 +276,13 @@ header h1 {
   justify-content: center;
   gap: 8px;
   padding: 12px 16px;
-  border: none;
+  border: 1px solid transparent;
   border-radius: 10px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
-  color: white;
+  color: var(--btn-text);
   position: relative;
   overflow: hidden;
 }
@@ -281,8 +295,8 @@ header h1 {
 
 .btn:not(:disabled):hover {
   transform: translateY(-1px);
-  filter: brightness(1.1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  filter: brightness(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .btn:not(:disabled):active {
@@ -290,28 +304,39 @@ header h1 {
 }
 
 .btn-primary {
-  background: var(--gradient-primary);
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text, var(--btn-text));
+  border-color: rgba(0, 0, 0, 0.05);
 }
 
 .btn-success {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: var(--btn-success-bg);
+  color: var(--btn-success-text, var(--btn-text));
+  border-color: rgba(0, 0, 0, 0.05);
 }
 
 .btn-warning {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  background: var(--btn-warning-bg);
+  color: var(--btn-warning-text, var(--btn-text));
+  border-color: rgba(0, 0, 0, 0.05);
 }
 
 .btn-danger {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  background: var(--btn-danger-bg);
+  color: var(--btn-danger-text, var(--btn-text));
+  border-color: rgba(0, 0, 0, 0.05);
 }
 
 .btn-info {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  background: var(--btn-info-bg);
+  color: var(--btn-info-text, var(--btn-text));
+  border-color: rgba(0, 0, 0, 0.05);
 }
 
 .btn-secondary {
-  background: rgba(55, 65, 81, 0.5);
-  border: 1px solid var(--glass-border);
+  background: var(--btn-secondary-bg);
+  border: var(--btn-secondary-border);
+  color: var(--btn-secondary-text);
 }
 
 /* Export & Inputs */

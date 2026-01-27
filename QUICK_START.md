@@ -55,15 +55,14 @@ Screenshots are saved as compressed Blobs in IndexedDB.
 ---
 
 ## 👁 View / Edit Steps
-
-Click **View Steps** to open the editor:
-- Rename step  
-- Edit description  
-- Add steps  
-- Reorder steps (drag & drop)  
-- Delete steps  
-- Toggle screenshot visibility  
-- Replace screenshot  
+ 
+Click **View Steps** to open the professional editor:
+- **Theme**: Toggle Light/Dark mode (top-right moon/sun icon)
+- **Edit**: Click description to modify text 
+- **Add**: Click `+` button between cards to insert steps
+- **Reorder**: Drag steps using the `⋮⋮` handle
+- **Bulk Delete**: Check multiple steps and click `Delete Selection` in header
+- **Screenshots**: High-quality images are always visible
 
 ---
 
@@ -72,14 +71,16 @@ Click **View Steps** to open the editor:
 1. Go to **Export** tab  
 2. Select a session  
 3. Choose format:
-   - DOCX  
-   - JSON  
-   - CSV  
+   - **DOCX**: Word doc with full-width images
+   - **PDF**: Portable document format
+   - **JSON**: Raw data
+   - **CSV**: Excel compatible
+   - **TXT**: Plain text
 4. Click **Export**
 
 DOCX includes:
-- Screenshot compression  
-- Multi-page layout  
+- High-resolution screenshots (1200px)
+- Professional layout
 - Clean step formatting  
 
 ---

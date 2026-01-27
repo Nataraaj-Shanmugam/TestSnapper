@@ -106,42 +106,34 @@ async function init() {
 
 function setupTheme() {
   const themeToggle = document.getElementById('themeToggle');
-  const icon = themeToggle.querySelector('.icon');
+  if (!themeToggle) return;
 
-  // 1. Check for manual override in localStorage
   const savedTheme = localStorage.getItem('theme');
-
   if (savedTheme) {
     applyTheme(savedTheme);
   } else {
-    // 2. Default to time-based logic (Dark: 6 PM - 6 AM)
     const hour = new Date().getHours();
     const isDarkTime = hour >= 18 || hour < 6;
     applyTheme(isDarkTime ? 'dark' : 'light');
   }
 
-  // Toggle Listener
-  themeToggle.addEventListener('click', () => {
-    // Logic: if current is light (has class), switch to dark. If default dark, switch to light.
-
-    // If body has .light-mode, we are compatible with Light.
-    // If not, we are Dark.
-    const currentIsLight = document.body.classList.contains('light-mode');
-    const newTheme = currentIsLight ? 'dark' : 'light';
-
+  themeToggle.onclick = () => {
+    const currentIsDark = document.body.classList.contains('dark-mode');
+    const newTheme = currentIsDark ? 'light' : 'dark';
     applyTheme(newTheme);
     localStorage.setItem('theme', newTheme);
-  });
+  };
 }
 
 function applyTheme(theme) {
   const icon = document.querySelector('#themeToggle .icon');
-  if (theme === 'light') {
-    document.body.classList.add('light-mode');
-    if (icon) icon.textContent = '☀️';
-  } else {
-    document.body.classList.remove('light-mode');
+  console.log('Applying theme:', theme);
+  if (theme === 'dark') {
+    document.body.classList.add('dark-mode');
     if (icon) icon.textContent = '🌙';
+  } else {
+    document.body.classList.remove('dark-mode');
+    if (icon) icon.textContent = '☀️';
   }
 }
 
@@ -153,12 +145,7 @@ function setupEventListeners() {
   // Session name auto-save
   sessionNameInput.addEventListener('blur', saveSessionName);
 
-  // Listen for checkbox changes (delegated)
-  stepsContainer.addEventListener('change', (e) => {
-    if (e.target.classList.contains('step-checkbox')) {
-      updateBulkDeleteButton();
-    }
-  });
+
 
   // Add Step Modal
   screenshotUpload.addEventListener('click', () => screenshotInput.click());
@@ -348,8 +335,9 @@ function filterSteps() {
   }
 
   if (filterAction && filterAction !== 'all') {
+    const targetAction = filterAction.toLowerCase();
     filtered = filtered.filter(
-      (step) => (step.action || '').toLowerCase() === filterAction
+      (step) => (step.action || 'click').toLowerCase() === targetAction
     );
   }
 
@@ -414,13 +402,9 @@ async function renderSteps() {
   const container = stepsContainer;
 
   if (!stepsData || stepsData.length === 0) {
-    container.innerHTML = '<div class="loading">No steps recorded</div>';
-    if (stepResultsSummary) {
-      stepResultsSummary.textContent = '';
-    }
-    if (noResultsMsg) {
-      noResultsMsg.classList.add('hidden');
-    }
+    container.innerHTML = '<div class="loading" style="text-align: center; padding: 40px;">No steps recorded. Start a session to see steps here!</div>';
+    if (stepResultsSummary) stepResultsSummary.textContent = '';
+    if (noResultsMsg) noResultsMsg.classList.add('hidden');
     return;
   }
 
@@ -443,7 +427,7 @@ async function renderSteps() {
 
   if (stepResultsSummary) {
     if (visibleSteps.length === stepsData.length) {
-      stepResultsSummary.textContent = `Showing ${stepsData.length} steps`;
+      stepResultsSummary.textContent = `${stepsData.length} Documented Steps`;
     } else {
       stepResultsSummary.textContent = `Showing ${visibleSteps.length} of ${stepsData.length} steps`;
     }
@@ -458,45 +442,56 @@ async function renderSteps() {
   }
 
   if (visibleSteps.length === 0) {
-    container.innerHTML = '<div class="loading">No results found</div>';
+    container.innerHTML = '';
     return;
   }
 
   container.innerHTML = visibleSteps.map((step, index) => {
-    // Use custom description if set, otherwise generate from fields
     const description = step.description || generateStepDescription(step);
     const screenshotData = screenshotMap.get(step.id) || null;
     const safeDescription = Utils.escapeHtml(description);
 
     return `
-      <div class="step-doc-line" data-step-id="${step.id}" draggable="true">
-        <div class="step-left">
-          <span class="drag-handle" title="Drag to reorder">☰</span>
-          <input type="checkbox" class="step-checkbox" data-step-id="${step.id}" ${step.selected ? 'checked' : ''}>
-          <span class="step-number">${index + 1}.</span>
-          <div class="step-text" style="flex: 1;">
-            <textarea
-              class="step-text-input"
-              data-step-id="${step.id}"
-              style="width: 100%; font-size: 15px; padding: 4px 8px;
-                     border-radius: 4px; border: 1px solid var(--border-color);
-                     background: var(--bg-secondary); color: var(--text-primary);
-                     resize: vertical; min-height: 40px;">${safeDescription}</textarea>
-          </div>
-        </div>
-        <div class="step-actions">
-          ${screenshotData ? `
-            <button class="icon-btn toggle-img-btn" data-step-id="${step.id}" title="Show Screenshot">📸</button>
-          ` : ''}
-          <button class="icon-btn delete-btn" title="Delete" data-step-id="${step.id}">🗑️</button>
-        </div>
-        <button class="add-step-after" data-after-step-id="${step.id}" title="Add step after this">+</button>
-        ${screenshotData ? `
-          <div class="step-screenshot hidden" id="img-${step.id}">
-            <img src="${screenshotData}" alt="Step Screenshot" />
-          </div>
-        ` : ''}
+      <div class="add-between">
+         <button class="btn-add" data-before-step-id="${step.id}" title="Add step here">+</button>
       </div>
+      <div class="step-card" data-step-id="${step.id}" draggable="true">
+        <div class="step-number-badge">${index + 1}</div>
+        <div class="step-top" style="align-items: center;">
+          <div class="step-handle" title="Drag to reorder" style="font-size: 20px;">⋮⋮</div>
+          <div style="display: flex; align-items: center; justify-content: center; width: 40px; height: 40px;">
+            <input type="checkbox" class="step-checkbox" data-step-id="${step.id}" 
+                   ${step.selected ? 'checked' : ''} 
+                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--primary);">
+          </div>
+          <div class="step-main">
+            <textarea
+              class="step-description-area"
+              data-step-id="${step.id}"
+              placeholder="Describe this step..."
+              rows="1">${safeDescription}</textarea>
+            
+
+
+            ${screenshotData ? `
+              <div class="screenshot-container" id="img-${step.id}" data-step-id="${step.id}">
+                <img src="${screenshotData}" alt="Interaction Screenshot" loading="lazy">
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="step-actions">
+            <button class="icon-btn delete-btn" title="Delete Step" data-step-id="${step.id}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
+              ✕
+            </button>
+          </div>
+        </div>
+      </div>
+      ${index === visibleSteps.length - 1 ? `
+        <div class="add-between">
+           <button class="btn-add" data-after-last="true" title="Add step at the end">+</button>
+        </div>
+      ` : ''}
     `;
   }).join('');
 
@@ -529,28 +524,47 @@ function generateStepDescription(step) {
 }
 
 function attachStepEventListeners() {
-  // Delete
   document.querySelectorAll('.delete-btn').forEach(btn =>
-    btn.addEventListener('click', () => handleDeleteStep(btn.dataset.stepId))
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleDeleteStep(btn.dataset.stepId);
+    })
   );
 
-  // Checkbox selection
   document.querySelectorAll('.step-checkbox').forEach(box =>
     box.addEventListener('change', handleCheckboxChange)
   );
 
-  // Screenshot toggle
-  document.querySelectorAll('.toggle-img-btn').forEach(btn =>
-    btn.addEventListener('click', () => toggleScreenshot(btn.dataset.stepId))
+
+
+  document.querySelectorAll('.step-checkbox').forEach(box =>
+    box.addEventListener('change', handleCheckboxChange)
   );
 
-  // Add step after
-  document.querySelectorAll('.add-step-after').forEach(btn =>
-    btn.addEventListener('click', () => openAddStepModal(btn.dataset.afterStepId))
+  document.querySelectorAll('.btn-add').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const stepId = btn.dataset.beforeStepId;
+      const isLast = btn.dataset.afterLast === 'true';
+      if (isLast) {
+        openAddStepModal(stepsData[stepsData.length - 1]?.id);
+      } else {
+        // Insert before current stepId means insert after the step before it
+        const index = stepsData.findIndex(s => s.id === stepId);
+        const targetId = index > 0 ? stepsData[index - 1].id : null;
+        openAddStepModal(targetId);
+      }
+    })
   );
 
-  // Inline editing: auto-save on blur
-  document.querySelectorAll('.step-text-input').forEach(textarea => {
+  // Auto-resize textareas
+  document.querySelectorAll('.step-description-area').forEach(textarea => {
+    const resize = () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = (textarea.scrollHeight) + 'px';
+    };
+    textarea.addEventListener('input', resize);
+    resize(); // Initial
+
     textarea.addEventListener('blur', async (e) => {
       const stepId = e.target.dataset.stepId;
       const step = stepsData.find(s => s.id === stepId);
@@ -574,12 +588,12 @@ function attachStepEventListeners() {
     });
   });
 
-  // Drag and drop for reordering
-  document.querySelectorAll('.step-doc-line').forEach(line => {
-    line.addEventListener('dragstart', handleDragStart);
-    line.addEventListener('dragover', handleDragOver);
-    line.addEventListener('drop', handleDrop);
-    line.addEventListener('dragend', handleDragEnd);
+  document.querySelectorAll('.step-card').forEach(card => {
+    card.addEventListener('dragstart', handleDragStart);
+    card.addEventListener('dragover', handleDragOver);
+    card.addEventListener('drop', handleDrop);
+    card.addEventListener('dragend', handleDragEnd);
+    card.addEventListener('dragleave', handleDragLeave);
   });
 }
 
@@ -591,7 +605,7 @@ function openAddStepModal(afterStepId) {
   newStepAction.value = 'click';
   newStepScreenshotBlob = null;
   screenshotPreview.style.display = 'none';
-  screenshotUpload.classList.remove('has-image');
+  screenshotPreview.src = '';
   addStepModal.classList.add('active');
   newStepDescription.focus();
 }
@@ -687,37 +701,15 @@ async function handleConfirmAddStep() {
 
 // ==================== Step Actions ====================
 
-async function toggleScreenshot(stepId) {
-  const imgBlock = document.getElementById(`img-${stepId}`);
-  const btn = document.querySelector(`.toggle-img-btn[data-step-id="${stepId}"]`);
+// async function toggleScreenshot(stepId) { ... removed 
 
-  if (!imgBlock) return;
-
-  const isHidden = imgBlock.classList.contains('hidden');
-  if (isHidden) {
-    imgBlock.classList.remove('hidden');
-    if (btn) {
-      btn.textContent = '🙈';
-      btn.title = 'Hide Screenshot';
-    }
-  } else {
-    imgBlock.classList.add('hidden');
-    if (btn) {
-      btn.textContent = '📸';
-      btn.title = 'Show Screenshot';
-    }
-  }
-}
 
 async function handleDeleteStep(stepId) {
-  // if (!confirm('Delete this step?')) return;
-
   try {
-    await storage.deleteStep(stepId);
-
     // Save history BEFORE mutation
     saveToHistory('delete');
 
+    await storage.deleteStep(stepId);
     stepsData = stepsData.filter(s => s.id !== stepId);
 
     await resequenceAndPersist();
@@ -739,12 +731,12 @@ async function handleBulkDelete() {
   if (!confirm(`Delete ${selectedSteps.length} selected step(s)?`)) return;
 
   try {
+    // Save history BEFORE mutation
+    saveToHistory('bulk-delete');
+
     for (const step of selectedSteps) {
       await storage.deleteStep(step.id);
     }
-
-    // Save history BEFORE mutation
-    saveToHistory('bulk-delete');
 
     stepsData = stepsData.filter(s => !s.selected);
 
@@ -760,16 +752,19 @@ function handleCheckboxChange(e) {
   const stepId = e.target.dataset.stepId;
   const isChecked = e.target.checked;
   const step = stepsData.find(s => s.id === stepId);
-  if (step) step.selected = isChecked;
+  if (step) {
+    step.selected = isChecked;
+    console.log('Step checkbox changed:', stepId, isChecked);
+  }
   updateBulkDeleteButton();
 }
-
 function updateBulkDeleteButton() {
   const checkedCount = document.querySelectorAll('.step-checkbox:checked').length;
-  bulkDeleteBtn.disabled = checkedCount === 0;
-  bulkDeleteBtn.querySelector('span:last-child').textContent =
-    checkedCount > 0 ? `Delete Selected (${checkedCount})` : 'Delete Selected';
+  if (bulkDeleteBtn) {
+    bulkDeleteBtn.disabled = checkedCount === 0;
+  }
 }
+
 
 // ==================== Drag & Drop Reordering ====================
 
@@ -784,9 +779,16 @@ function handleDragStart(event) {
 
 function handleDragOver(event) {
   event.preventDefault();
-  const line = event.currentTarget;
-  if (!line.classList.contains('dragging')) {
-    line.classList.add('drag-over');
+  const card = event.currentTarget.closest('.step-card');
+  if (card && !card.classList.contains('dragging')) {
+    card.classList.add('drag-over');
+  }
+}
+
+function handleDragLeave(event) {
+  const card = event.currentTarget.closest('.step-card');
+  if (card) {
+    card.classList.remove('drag-over');
   }
 }
 
@@ -795,7 +797,7 @@ async function handleDrop(event) {
   const targetLine = event.currentTarget;
   const targetStepId = targetLine.dataset.stepId;
 
-  document.querySelectorAll('.step-doc-line.drag-over').forEach(el =>
+  document.querySelectorAll('.step-card.drag-over').forEach(el =>
     el.classList.remove('drag-over')
   );
 
@@ -816,10 +818,10 @@ async function handleDrop(event) {
 
 function handleDragEnd() {
   draggedStepId = null;
-  document.querySelectorAll('.step-doc-line.dragging').forEach(el =>
+  document.querySelectorAll('.step-card.dragging').forEach(el =>
     el.classList.remove('dragging')
   );
-  document.querySelectorAll('.step-doc-line.drag-over').forEach(el =>
+  document.querySelectorAll('.step-card.drag-over').forEach(el =>
     el.classList.remove('drag-over')
   );
 }
@@ -845,7 +847,8 @@ async function resequenceAndPersist() {
 function showProgressModal() {
   if (!progressModal) return;
   progressModal.classList.add('active');
-  if (progressFill) progressFill.style.width = '0%';
+  const circle = document.getElementById('progressCircle');
+  if (circle) circle.style.strokeDashoffset = '125.6';
   if (progressStatus) progressStatus.textContent = 'Starting export...';
   if (progressPercent) progressPercent.textContent = '0%';
 }
@@ -856,28 +859,36 @@ function hideProgressModal() {
 }
 
 function handleExportProgress(message) {
-  const { percent, status, error, done } = message;
-
-  if (typeof percent === 'number' && progressFill && progressPercent) {
-    progressFill.style.width = `${percent}%`;
-    progressPercent.textContent = `${percent}%`;
+  if (!progressModal.classList.contains('active')) {
+    progressModal.classList.add('active');
   }
 
-  if (status && progressStatus) {
-    progressStatus.textContent = status;
+  const percent = message.percent || 0;
+  const status = message.status || 'Exporting...';
+  const circle = document.getElementById('progressCircle');
+
+  if (progressPercent) progressPercent.textContent = `${percent}%`;
+  if (progressStatus) progressStatus.textContent = status;
+
+  if (circle) {
+    // Circumference is ~125.6 (2 * PI * 20)
+    const offset = 125.6 - (percent / 100) * 125.6;
+    circle.style.strokeDashoffset = offset;
   }
 
-  if (error) {
-    hideProgressModal();
-    showMessage('Export failed: ' + error, 'error');
-  }
-
-  // 🔑 THIS MUST EXIST
-  if (done) {
-    hideProgressModal();
+  if (message.done) {
+    setTimeout(() => {
+      hideProgressModal();
+      if (message.error) {
+        showMessage(`Export failed: ${message.error}`, 'error');
+      } else if (message.canceled) {
+        // Handled via cancel btn listener mostly, but just in case
+      } else {
+        showMessage('Export complete!', 'success');
+      }
+    }, 1000);
   }
 }
-
 async function handleSaveAndExport() {
   showProgressModal();
   try {
