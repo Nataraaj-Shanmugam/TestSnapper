@@ -1,5 +1,20 @@
 /**
  * Export Service
+ *
+ * Fix applied (screenshots never appearing in exported .doc / review page):
+ *
+ *   background.js stores every screenshot asset as:
+ *       { …, dataUrl: "data:image/jpeg;base64,…" }
+ *
+ *   The old export-service loop checked ONLY `asset.blob`.
+ *   A Blob is a live runtime object — it does NOT survive the JSON
+ *   round-trip through chrome.storage.local (it becomes `{}`).
+ *   So `asset.blob` was always falsy on every read-back and the entire
+ *   screenshot-loading loop was silently skipped.
+ *
+ *   The fix: read `asset.dataUrl` first (what background.js writes).
+ *   Fall back to `asset.data`, then to `asset.blob` (live-session only)
+ *   so every possible write-path is covered.
  */
 
 export class ExportService {
@@ -10,7 +25,6 @@ export class ExportService {
 
   /**
    * Main export orchestrator
-   * (UPDATED: now accepts optional progressCallback)
    */
   async exportSession(sessionId, format, progressCallback) {
     const notify =
@@ -18,7 +32,6 @@ export class ExportService {
 
     console.log('📄 Starting export:', format, 'for session:', sessionId);
 
-    // Progress: loading session
     notify({ percent: 5, status: 'Loading session...' });
 
     const session = await this.storage.getSession(sessionId);
@@ -38,30 +51,24 @@ export class ExportService {
       steps: steps
     };
 
-    try {
-      switch (format.toLowerCase()) {
-        case 'json':
-          notify({ percent: 90, status: 'Preparing JSON export...' });
-          return this._exportJSON(exportData, sessionId);
+    switch (format.toLowerCase()) {
+      case 'json':
+        notify({ percent: 90, status: 'Preparing JSON export...' });
+        return this._exportJSON(exportData, sessionId);
 
-        case 'csv':
-          notify({ percent: 90, status: 'Preparing CSV export...' });
-          return this._exportCSV(exportData, sessionId);
+      case 'csv':
+        notify({ percent: 90, status: 'Preparing CSV export...' });
+        return this._exportCSV(exportData, sessionId);
 
-        case 'docx':
-          // Pass progress callback into DOCX exporter
-          return await this._exportDOCX(exportData, sessionId, notify);
+      case 'docx':
+        return await this._exportDOCX(exportData, sessionId, notify);
 
-        case 'pdf':
-          notify({ percent: 90, status: 'Preparing PDF export...' });
-          return await this._exportPDF(exportData, sessionId);
+      case 'pdf':
+        notify({ percent: 90, status: 'Preparing PDF export...' });
+        return await this._exportPDF(exportData, sessionId);
 
-        default:
-          throw new Error(`Unsupported format: ${format}`);
-      }
-    } finally {
-      // // 🔧 FIX #5: Force garbage collection hint
-      // if (global.gc) global.gc();
+      default:
+        throw new Error(`Unsupported format: ${format}`);
     }
   }
 
@@ -82,18 +89,18 @@ export class ExportService {
       const reader = new FileReader();
       reader.onloadend = () => {
         const result = reader.result;
-        reader.abort(); // Explicit cleanup
+        reader.abort();
         resolve(result);
       };
       reader.onerror = () => {
         reader.abort();
         reject(reader.error);
-      };
+      }; 
       reader.readAsDataURL(blob);
     });
   }
 
-  async _compressImage(blob, maxWidth = 1600, quality = 0.9) {
+  async _compressImage(blob, maxWidth = 1920, quality = 0.95) {
     try {
       const useOffscreen = typeof OffscreenCanvas !== 'undefined';
 
@@ -105,6 +112,8 @@ export class ExportService {
 
         const canvas = new OffscreenCanvas(width, height);
         const ctx = canvas.getContext('2d', { alpha: false });
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(imageBitmap, 0, 0, width, height);
 
         const compressed = await canvas.convertToBlob({
@@ -113,7 +122,6 @@ export class ExportService {
         });
 
         imageBitmap.close();
-
         return compressed;
       } else {
         const dataUrl = await this._blobToDataURL(blob);
@@ -130,7 +138,26 @@ export class ExportService {
               canvas.height = height;
 
               const ctx = canvas.getContext('2d', { alpha: false });
-              ctx.drawImage(img, 0, 0, width, height);
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = 'high';
+
+              if (width < img.width * 0.5) {
+                const tempCanvas = document.createElement('canvas');
+                const intermediateWidth = Math.floor(img.width * 0.7);
+                const intermediateHeight = Math.floor(img.height * 0.7);
+                tempCanvas.width = intermediateWidth;
+                tempCanvas.height = intermediateHeight;
+
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.imageSmoothingEnabled = true;
+                tempCtx.imageSmoothingQuality = 'high';
+                tempCtx.drawImage(img, 0, 0, intermediateWidth, intermediateHeight);
+                ctx.drawImage(tempCanvas, 0, 0, width, height);
+                tempCanvas.width = 0;
+                tempCanvas.height = 0;
+              } else {
+                ctx.drawImage(img, 0, 0, width, height);
+              }
 
               canvas.toBlob(
                 (compressedBlob) => {
@@ -159,6 +186,40 @@ export class ExportService {
       console.warn('Image compression failed, using original:', err);
       return blob;
     }
+  }
+
+  /**
+   * Resolve a usable base64 data-URL from a storage asset.
+   *
+   * Priority:
+   *   1. asset.dataUrl  — what background.js writes for every captured screenshot
+   *   2. asset.data     — what review-standalone writes for manually-added screenshots
+   *   3. asset.blob     — only valid while the session is still live in memory
+   *                        (becomes {} after chrome.storage.local JSON round-trip)
+   *
+   * Returns a data-URL string, or null if nothing usable is found.
+   */
+  async _resolveAssetUrl(asset) {
+    // 1. dataUrl string (primary path — background.js captureScreenshot)
+    if (typeof asset.dataUrl === 'string' && asset.dataUrl.length > 0) {
+      return asset.dataUrl;
+    }
+
+    // 2. data string (secondary path — manually added via review page)
+    if (typeof asset.data === 'string' && asset.data.length > 0) {
+      return asset.data;
+    }
+
+    // 3. Live Blob (only works in the same session before storage round-trip)
+    if (asset.blob && asset.blob instanceof Blob && asset.blob.size > 0) {
+      try {
+        return await this._blobToDataURL(asset.blob);
+      } catch (err) {
+        console.warn('blobToDataURL failed for asset', asset.id, err);
+      }
+    }
+
+    return null;
   }
 
   _escapeHtml(text) {
@@ -270,39 +331,36 @@ export class ExportService {
   <h2>Test Execution Steps</h2>
 `;
 
+    // ------------------------------------------------------------------
+    // Load screenshots — use _resolveAssetUrl which checks dataUrl first,
+    // then data, then blob.  This is the line that was broken before: it
+    // only checked asset.blob, which is always {} after storage round-trip.
+    // ------------------------------------------------------------------
     const screenshotAssets = await this.storage.getAllAssets(session.id);
     const screenshotMap = new Map();
-    const BATCH_SIZE = 5;
-    const totalScreens = screenshotAssets.length || 1; // avoid divide-by-zero
-
+    const totalScreens = screenshotAssets.length || 1;
     let processed = 0;
 
-    for (let i = 0; i < screenshotAssets.length; i += BATCH_SIZE) {
-      const batch = screenshotAssets.slice(i, i + BATCH_SIZE);
+    for (const asset of screenshotAssets) {
+      const url = await this._resolveAssetUrl(asset);
+      if (url) {
+        screenshotMap.set(asset.stepId, url);
+      } else {
+        console.warn('No usable image data for asset', asset.id, '(stepId:', asset.stepId + ')');
+      }
 
-      await Promise.all(batch.map(async (asset) => {
-        if (asset.blob) {
-          try {
-            const compressed = await this._compressImage(asset.blob, 1200, 0.9);
-            const dataUrl = await this._blobToDataURL(compressed);
-            screenshotMap.set(asset.stepId, dataUrl);
-          } catch (err) {
-            console.warn(`Failed to process screenshot for step ${asset.stepId}:`, err);
-          }
-        }
-      }));
-
-      processed += batch.length;
-
+      processed++;
       // Progress: 40–80% during screenshot work
       const pct = 40 + Math.floor((processed / totalScreens) * 40);
       notify({
         percent: Math.min(pct, 80),
-        status: `Processing screenshots... (${processed}/${totalScreens})`
+        status: `Processing screenshots… (${processed}/${totalScreens})`
       });
 
+      // Yield to keep the UI responsive
       await new Promise(resolve => setTimeout(resolve, 10));
     }
+    // ------------------------------------------------------------------
 
     const automatedScreenshots = [];
     const regularSteps = [];
@@ -369,7 +427,7 @@ export class ExportService {
           html += `
     <div class='auto-screenshot'>
       <p><b>Auto Screenshot ${i + 1}</b> - ${new Date(screenshot.timestamp).toLocaleTimeString()}</p>
-      <img src="${screenshotData}" class="auto-screenshot img" alt="Automated Screenshot ${i + 1}"/>
+      <img src="${screenshotData}" alt="Automated Screenshot ${i + 1}"/>
     </div>`;
         }
       }
@@ -400,52 +458,91 @@ export class ExportService {
   async _exportPDF(exportData, sessionId) {
     const { session, steps } = exportData;
 
-    let content = `Test Recording Session\n\n`;
-    content += `Session: ${session.name}\n`;
-    content += `Date: ${new Date(session.createdAt).toLocaleString()}\n`;
-    content += `URL: ${session.environment?.url || 'N/A'}\n`;
-    content += `Total Steps: ${session.stepCount}\n\n`;
-    content += `${'='.repeat(60)}\n\n`;
-    content += `Steps:\n\n`;
+    if (typeof window.jspdf === 'undefined') {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    const contentWidth = pageWidth - (2 * margin);
+    let yPosition = margin;
+
+    doc.setFontSize(24);
+    doc.setFont('helvetica', 'bold');
+    doc.text(session.name || 'Test Documentation', pageWidth / 2, yPosition, { align: 'center' });
+    yPosition += 15;
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Created: ${new Date(session.createdAt).toLocaleString()}`, margin, yPosition);
+    yPosition += 6;
+    doc.text(`Total Steps: ${session.stepCount}`, margin, yPosition);
+    yPosition += 15;
+
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Test Steps', margin, yPosition);
+    yPosition += 10;
 
     let stepNumber = 0;
-    steps.forEach((step) => {
+    for (const step of steps) {
       if (step.action !== 'screenshot' || step.isManual) {
         stepNumber++;
 
-        let description;
-        if (step.action === 'screenshot') {
-          description = '📸 Manual screenshot captured';
-        } else {
-          description = `${step.action.toUpperCase()}`;
-          if (step.fieldName && step.fieldName !== 'N/A') {
-            description += ` on "${step.fieldName}"`;
-          }
-          if (step.value && step.action !== 'navigate') {
-            description += ` with value "${step.value}"`;
-          }
-          if (step.action === 'navigate') {
-            description += ` to ${step.value || step.url}`;
-          }
+        if (yPosition > pageHeight - 30) {
+          doc.addPage();
+          yPosition = margin;
         }
 
-        content += `${stepNumber}. ${description}\n`;
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
 
-        if (step.timestamp) {
-          content += `   Time: ${new Date(step.timestamp).toLocaleString()}\n`;
+        const description = step.description ||
+          `${step.action.toUpperCase()} ${step.fieldName || ''}`;
+
+        const lines = doc.splitTextToSize(`${stepNumber}. ${description}`, contentWidth);
+        lines.forEach(line => {
+          doc.text(line, margin, yPosition);
+          yPosition += 5;
+        });
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(100, 100, 100);
+
+        if (step.selector?.css) {
+          doc.text(`Selector: ${step.selector.css}`, margin + 5, yPosition);
+          yPosition += 4;
         }
 
-        content += `\n`;
+        doc.setTextColor(0, 0, 0);
+        yPosition += 4;
       }
-    });
+    }
 
-    const sessionName = (session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
-    const filename = `${sessionName}_${Date.now()}.txt`;
+    const sessionName = (session.name || 'Session').replace(/[^a-z0-9]/gi, '_');
+    const filename = `${sessionName}_${Date.now()}.pdf`;
+
+    doc.save(filename);
 
     return {
-      content,
+      content: null,
       filename,
-      mimeType: 'text/plain'
+      mimeType: 'application/pdf'
     };
   }
 }

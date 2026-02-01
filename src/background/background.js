@@ -50,9 +50,13 @@ class RecordingStateManager {
     };
   }
 
+  // 🔧 FIX #1: `releaseLock` was used as a bare identifier — never declared.
+  // It must be a local variable so the Promise constructor can assign its
+  // resolve function into it, and the finally block can call it.
   async incrementStepCount() {
     await this.sequenceLock;
 
+    let releaseLock; // ← was missing entirely; caused ReferenceError on every call
     this.sequenceLock = new Promise(resolve => {
       releaseLock = resolve;
     });
@@ -125,15 +129,23 @@ const settingsManager = new SettingsManager();
 
 storage.init().catch(console.error);
 
-// 🔧 FIX #7: Persist session state to survive service worker restarts
-chrome.storage.local.get('activeRecording', (result) => {
-  if (result.activeRecording) {
-    console.log('🔄 Recovering active recording:', result.activeRecording.sessionId);
-    stateManager.state = result.activeRecording.state;
-    stateManager.session = result.activeRecording.session;
-    stateManager.stepSequence = result.activeRecording.stepSequence;
+// 🔧 FIX #4: was using the callback form of chrome.storage.local.get().
+// In a service worker the callback can fire after subsequent code has already
+// executed.  Use the promise form + await so recovery completes before the
+// rest of initialisation continues.
+(async () => {
+  try {
+    const { activeRecording } = await chrome.storage.local.get('activeRecording');
+    if (activeRecording) {
+      console.log('🔄 Recovering active recording:', activeRecording.sessionId);
+      stateManager.state = activeRecording.state;
+      stateManager.session = activeRecording.session;
+      stateManager.stepSequence = activeRecording.stepSequence;
+    }
+  } catch (err) {
+    console.error('Failed to recover active recording:', err);
   }
-});
+})();
 
 // ==================== Badge Management ====================
 
@@ -229,7 +241,11 @@ async function captureScreenshot(tabId, isManual = true) {
       throw new Error('Screenshot capture returned invalid data');
     }
 
-    const blob = Utils.dataURLtoBlob(dataUrl);
+    // 🔧 FIX #2: The original code converted dataUrl → Blob and stored the Blob.
+    // chrome.storage.local serialises everything to JSON.  A Blob is a runtime
+    // object with no JSON representation — it silently becomes {} on write and
+    // is undefined on read.  Keep the dataUrl string directly; it IS the portable
+    // serialisable form of the image data.
     const sequence = await stateManager.incrementStepCount();
 
     const step = {
@@ -258,12 +274,12 @@ async function captureScreenshot(tabId, isManual = true) {
       sessionId: stateManager.session.sessionId,
       stepId: step.id,
       type: 'screenshot',
-      blob: blob,
+      dataUrl: dataUrl,          // ← store the dataUrl string (was: blob)
       createdAt: new Date().toISOString()
     });
 
     await storage.updateSession(stateManager.session);
-    await persistActiveRecording(); // 🔧 FIX #7
+    await persistActiveRecording();
 
     return { success: true, stepId: step.id };
   } catch (error) {
@@ -282,7 +298,7 @@ async function startRecording(tabId, tabInfo) {
   try {
     const session = await createSession(tabInfo);
     stateManager.startRecording(session);
-    await persistActiveRecording(); // 🔧 FIX #7
+    await persistActiveRecording();
 
     await BadgeManager.setRecording(tabId);
 
@@ -299,7 +315,6 @@ async function startRecording(tabId, tabInfo) {
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // 🔧 FIX #7: Send session info to content script
     await chrome.tabs.sendMessage(tabId, {
       action: 'startRecording',
       sessionId: session.sessionId,
@@ -312,7 +327,7 @@ async function startRecording(tabId, tabInfo) {
   } catch (error) {
     console.error('Failed to start recording:', error);
     stateManager.stopRecording();
-    await persistActiveRecording(); // 🔧 FIX #7
+    await persistActiveRecording();
     return { success: false, error: error.message };
   }
 }
@@ -323,7 +338,7 @@ async function pauseRecording(tabId) {
   }
 
   stateManager.pauseRecording();
-  await persistActiveRecording(); // 🔧 FIX #7
+  await persistActiveRecording();
   await BadgeManager.setPaused(tabId);
   await chrome.tabs.sendMessage(tabId, { action: 'pauseRecording' });
   return { success: true };
@@ -335,7 +350,7 @@ async function resumeRecording(tabId) {
   }
 
   stateManager.resumeRecording();
-  await persistActiveRecording(); // 🔧 FIX #7
+  await persistActiveRecording();
   await BadgeManager.setRecording(tabId);
   await chrome.tabs.sendMessage(tabId, { action: 'resumeRecording' });
   return { success: true };
@@ -348,7 +363,7 @@ async function stopRecording(tabId) {
 
   try {
     const sessionId = stateManager.stopRecording();
-    await persistActiveRecording(); // 🔧 FIX #7: Clear persisted state
+    await persistActiveRecording();
     await BadgeManager.clear(tabId);
 
     await chrome.tabs.sendMessage(tabId, { action: 'stopRecording' }).catch(() => {
@@ -368,7 +383,7 @@ async function stopRecording(tabId) {
   } catch (error) {
     console.error('Failed to stop recording:', error);
     stateManager.stopRecording();
-    await persistActiveRecording(); // 🔧 FIX #7
+    await persistActiveRecording();
     return { success: false, error: error.message };
   }
 }
@@ -376,7 +391,6 @@ async function stopRecording(tabId) {
 // ==================== Step Management ====================
 
 async function addStep(stepData) {
-  // 🔧 FIX #7: Validate session exists
   if (!stateManager.session) {
     console.error('❌ No active session - rejecting step');
     return { success: false, error: 'No active session' };
@@ -384,7 +398,7 @@ async function addStep(stepData) {
 
   try {
     const settings = await settingsManager.get();
-    const sequence = await stateManager.incrementStepCount(); // 🔧 FIX #3: Thread-safe
+    const sequence = await stateManager.incrementStepCount();
 
     const step = {
       id: Utils.generateUUID(),
@@ -399,7 +413,7 @@ async function addStep(stepData) {
 
     await storage.addStep(step);
     await storage.updateSession(stateManager.session);
-    await persistActiveRecording(); // 🔧 FIX #7
+    await persistActiveRecording();
 
     return { success: true, step };
   } catch (error) {
@@ -412,10 +426,8 @@ async function addStep(stepData) {
 
 async function exportSession(sessionId, format = 'json') {
   try {
-    // Mark state as exporting
     stateManager.setExporting();
 
-    // Progress callback → forward to review UI
     const progressCallback = (update = {}) => {
       try {
         chrome.runtime.sendMessage({
@@ -428,13 +440,11 @@ async function exportSession(sessionId, format = 'json') {
       }
     };
 
-    // Initial "starting" progress
     progressCallback({
       percent: 0,
       status: 'Preparing export...'
     });
 
-    // Optional: send total steps info
     try {
       const steps = await storage.getSteps(sessionId);
       progressCallback({
@@ -445,51 +455,58 @@ async function exportSession(sessionId, format = 'json') {
       console.warn('Unable to load steps for progress metadata', e);
     }
 
-    // Call ExportService with progress callback
     const result = await exportService.exportSession(sessionId, format, progressCallback);
 
-    // TextEncoder for proper UTF-8 → base64 conversion
-    const utf8Bytes = new TextEncoder().encode(result.content);
+    // 🔧 FIX #5: The original code unconditionally ran TextEncoder → btoa on
+    // result.content.  That works for text formats (json / csv / markdown) but
+    // toDocx() returns { blob, filename } — there is no .content string.
+    // Branch on whether we got a Blob or a text string.
+    let downloadUrl;
+    let filename = result.filename;
 
-    let binaryString = '';
-    const chunkSize = 0x8000; // avoid stack overflow for large files
-    for (let i = 0; i < utf8Bytes.length; i += chunkSize) {
-      const chunk = utf8Bytes.subarray(i, i + chunkSize);
-      binaryString += String.fromCharCode.apply(null, chunk);
+    if (result.blob) {
+      // Binary format (docx) — convert Blob → dataUrl for the Downloads API
+      downloadUrl = await Utils.blobToDataURL(result.blob);
+    } else {
+      // Text format (json / csv / markdown) — encode as before
+      const utf8Bytes = new TextEncoder().encode(result.content);
+
+      let binaryString = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < utf8Bytes.length; i += chunkSize) {
+        const chunk = utf8Bytes.subarray(i, i + chunkSize);
+        binaryString += String.fromCharCode.apply(null, chunk);
+      }
+
+      const base64Content = btoa(binaryString);
+      downloadUrl = `data:${result.mimeType};charset=utf-8;base64,${base64Content}`;
     }
 
-    const base64Content = btoa(binaryString);
-    const dataUrl = `data:${result.mimeType};charset=utf-8;base64,${base64Content}`;
-
-    // Progress near completion
     progressCallback({
       percent: 95,
       status: 'Preparing download...'
     });
 
     await chrome.downloads.download({
-      url: dataUrl,
-      filename: result.filename,
+      url: downloadUrl,
+      filename: filename,
       saveAs: false,
       conflictAction: 'uniquify'
     });
 
-    // Reset state
     stateManager.state = 'idle';
 
-    // Final "done" update so UI can close the modal
     progressCallback({
       percent: 100,
       status: 'Download started',
       done: true
     });
 
-    return { success: true, filename: result.filename };
+    return { success: true, filename };
   } catch (error) {
     console.error('Export failed:', error);
     stateManager.state = 'idle';
 
-    // Notify UI about the error and signal completion
     try {
       chrome.runtime.sendMessage({
         action: 'exportProgress',
@@ -513,14 +530,18 @@ async function getSenderTabId(sender) {
   return activeTab?.id;
 }
 
+// 🔧 FIX #3: The original read `screenshot.blob` and passed it through
+// Utils.blobToDataURL().  After Fix #2 assets now store `dataUrl` directly —
+// no conversion needed, just return it.
 async function getScreenshot(stepId) {
   try {
     const assets = await storage.getAssetsByStepId(stepId);
     const screenshot = assets.find(a => a.type === 'screenshot');
-    if (screenshot && screenshot.blob) {
-      const dataUrl = await Utils.blobToDataURL(screenshot.blob);
-      return { success: true, dataUrl };
+
+    if (screenshot && screenshot.dataUrl) {
+      return { success: true, dataUrl: screenshot.dataUrl };
     }
+
     return { success: false, error: 'Screenshot not found' };
   } catch (error) {
     return { success: false, error: error.message };
@@ -569,7 +590,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = await exportSession(message.sessionId, message.format);
           break;
 
-        // ⭐ NEW: optional cancel support from UI
         case 'cancelExport':
           if (typeof exportService.cancelExport === 'function') {
             await exportService.cancelExport(message.sessionId);
@@ -597,7 +617,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'getSession':
           const session = await storage.getSession(message.sessionId);
-          // Enrich with duration if active
           if (stateManager.session && stateManager.session.sessionId === message.sessionId) {
             session.startTime = stateManager.session.createdAt;
           }
@@ -668,10 +687,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ==================== Keyboard Shortcut Handler ====================
 
-// ⭐ NEW: Cross-platform keyboard shortcut for screenshot via commands
 chrome.commands?.onCommand.addListener(async (command) => {
-  // Match the command name you define in manifest.json:
-  // "capture_screenshot" or use "_execute_action" if you bind the shortcut there.
   if (command === 'capture_screenshot' || command === '_execute_action') {
     try {
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });

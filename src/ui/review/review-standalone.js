@@ -1,6 +1,15 @@
 /**
  * Review Session Page - WITH ADD STEP FEATURE + DND + FILTER + HISTORY + PROGRESS
  * Proper export flow through background script
+ *
+ * Fixes applied:
+ *  1. Screenshot rendering: chrome.storage.local serialises to JSON, so Blob
+ *     objects come back as plain `{}`.  The code now falls back to `asset.data`
+ *     (the persisted base64 data-URL string) when `asset.blob` is missing or
+ *     not a real Blob.
+ *  2. Step-card alignment: `.step-top` now uses `align-items: flex-start`
+ *     instead of `center` so the checkbox, drag-handle, and delete button
+ *     stay pinned to the top of the card regardless of screenshot height.
  */
 
 import { StorageManager } from '../../storage.js';
@@ -57,11 +66,9 @@ const noResultsMsg = document.getElementById('noResultsMsg');
 
 // Undo/Redo UI
 const undoBtn = document.getElementById('undoBtn');
-// const redoBtn = document.getElementById('redoBtn');
 
 // Export progress UI
 const progressModal = document.getElementById('progressModal');
-const progressFill = document.getElementById('progressFill');
 const progressStatus = document.getElementById('progressStatus');
 const progressPercent = document.getElementById('progressPercent');
 const cancelExportBtn = document.getElementById('cancelExportBtn');
@@ -145,8 +152,6 @@ function setupEventListeners() {
   // Session name auto-save
   sessionNameInput.addEventListener('blur', saveSessionName);
 
-
-
   // Add Step Modal
   screenshotUpload.addEventListener('click', () => screenshotInput.click());
   screenshotInput.addEventListener('change', handleScreenshotUpload);
@@ -208,11 +213,10 @@ function setupEventListeners() {
     });
   }
 
-  // Undo / Redo buttons
+  // Undo button
   if (undoBtn) undoBtn.addEventListener('click', undo);
-  // if (redoBtn) redoBtn.addEventListener('click', redo);
 
-  // Keyboard shortcuts: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z
+  // Keyboard shortcuts: Ctrl/Cmd+Z
   document.addEventListener('keydown', (e) => {
     const meta = e.metaKey;
     const ctrl = e.ctrlKey;
@@ -222,10 +226,6 @@ function setupEventListeners() {
         e.preventDefault();
         undo();
       }
-      /*else if (e.key.toLowerCase() === 'z' && e.shiftKey) {
-         e.preventDefault();
-         redo();
-       }*/
     }
   });
 
@@ -391,12 +391,35 @@ function undo() {
   restoreFromHistory(historyIndex - 1);
 }
 
-/*function redo() {
-  if (historyIndex >= history.length - 1) return;
-  restoreFromHistory(historyIndex + 1);
-}*/
-
 // ==================== Step Rendering ====================
+
+/**
+ * Resolve a usable image data-URL from a storage asset.
+ *
+ * chrome.storage.local round-trips through JSON, so Blob objects are
+ * deserialised as plain empty objects `{}`.  The reliable persisted
+ * representation is `asset.data` (a base64 data-URL string written at
+ * capture time).  This helper tries both paths so it works regardless of
+ * whether the asset was captured in the current session (blob still live)
+ * or loaded from a previous one (only data survives).
+ */
+async function resolveScreenshotUrl(asset) {
+  // 1. If .blob is a real Blob, convert it (live-session fast path)
+  if (asset.blob && asset.blob instanceof Blob && asset.blob.size > 0) {
+    try {
+      return await Utils.blobToDataURL(asset.blob);
+    } catch (err) {
+      console.warn('blobToDataURL failed, falling back to asset.data:', err);
+    }
+  }
+
+  // 2. Fall back to the persisted base64 data-URL string
+  if (typeof asset.data === 'string' && asset.data.length > 0) {
+    return asset.data;
+  }
+
+  return null; // nothing usable
+}
 
 async function renderSteps() {
   const container = stepsContainer;
@@ -408,20 +431,17 @@ async function renderSteps() {
     return;
   }
 
-  // Load all screenshots for the session
+  // ---------- Load screenshots ----------
   const screenshotAssets = await storage.getAllAssets(sessionId);
   const screenshotMap = new Map();
 
   for (const asset of screenshotAssets) {
-    if (asset.blob) {
-      try {
-        const dataUrl = await Utils.blobToDataURL(asset.blob);
-        screenshotMap.set(asset.stepId, dataUrl);
-      } catch (err) {
-        console.warn('Failed to convert screenshot blob:', err);
-      }
+    const url = await resolveScreenshotUrl(asset);
+    if (url) {
+      screenshotMap.set(asset.stepId, url);
     }
   }
+  // ---------- End screenshot loading ----------
 
   const visibleSteps = filterSteps();
 
@@ -457,21 +477,29 @@ async function renderSteps() {
       </div>
       <div class="step-card" data-step-id="${step.id}" draggable="true">
         <div class="step-number-badge">${index + 1}</div>
-        <div class="step-top" style="align-items: center;">
-          <div class="step-handle" title="Drag to reorder" style="font-size: 20px;">⋮⋮</div>
-          <div style="display: flex; align-items: center; justify-content: center; width: 40px; height: 40px;">
-            <input type="checkbox" class="step-checkbox" data-step-id="${step.id}" 
-                   ${step.selected ? 'checked' : ''} 
+
+        <!-- FIX 2: align-items: flex-start keeps checkbox / handle / delete
+             pinned to the TOP of the card even when the screenshot makes
+             .step-main tall. -->
+        <div class="step-top" style="align-items: flex-start;">
+
+          <!-- drag handle -->
+          <div class="step-handle" title="Drag to reorder" style="font-size: 20px; padding-top: 10px;">⋮⋮</div>
+
+          <!-- checkbox – fixed width, top-aligned -->
+          <div style="display: flex; align-items: flex-start; justify-content: center; width: 40px; flex-shrink: 0; padding-top: 8px;">
+            <input type="checkbox" class="step-checkbox" data-step-id="${step.id}"
+                   ${step.selected ? 'checked' : ''}
                    style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--primary);">
           </div>
+
+          <!-- main content (textarea + optional screenshot) -->
           <div class="step-main">
             <textarea
               class="step-description-area"
               data-step-id="${step.id}"
               placeholder="Describe this step..."
               rows="1">${safeDescription}</textarea>
-            
-
 
             ${screenshotData ? `
               <div class="screenshot-container" id="img-${step.id}" data-step-id="${step.id}">
@@ -480,7 +508,8 @@ async function renderSteps() {
             ` : ''}
           </div>
 
-          <div class="step-actions">
+          <!-- delete button – top-aligned -->
+          <div class="step-actions" style="flex-shrink: 0; padding-top: 4px;">
             <button class="icon-btn delete-btn" title="Delete Step" data-step-id="${step.id}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
               ✕
             </button>
@@ -535,12 +564,6 @@ function attachStepEventListeners() {
     box.addEventListener('change', handleCheckboxChange)
   );
 
-
-
-  document.querySelectorAll('.step-checkbox').forEach(box =>
-    box.addEventListener('change', handleCheckboxChange)
-  );
-
   document.querySelectorAll('.btn-add').forEach(btn =>
     btn.addEventListener('click', () => {
       const stepId = btn.dataset.beforeStepId;
@@ -548,7 +571,6 @@ function attachStepEventListeners() {
       if (isLast) {
         openAddStepModal(stepsData[stepsData.length - 1]?.id);
       } else {
-        // Insert before current stepId means insert after the step before it
         const index = stepsData.findIndex(s => s.id === stepId);
         const targetId = index > 0 ? stepsData[index - 1].id : null;
         openAddStepModal(targetId);
@@ -653,7 +675,7 @@ async function handleConfirmAddStep() {
 
     // Find the position to insert
     const afterStepIndex = stepsData.findIndex(s => s.id === insertAfterStepId);
-    const newSequence = afterStepIndex + 2; // Insert after the clicked step
+    const newSequence = afterStepIndex + 2;
 
     // Create new step
     const newStep = {
@@ -672,14 +694,23 @@ async function handleConfirmAddStep() {
     // Add step to database
     await storage.addStep(newStep);
 
-    // If screenshot provided, save it
+    // If screenshot provided, save it as both blob AND data URL so it
+    // survives the chrome.storage.local JSON round-trip.
     if (newStepScreenshotBlob) {
+      let dataUrl = null;
+      try {
+        dataUrl = await Utils.blobToDataURL(newStepScreenshotBlob);
+      } catch (err) {
+        console.warn('Failed to convert new screenshot to data URL:', err);
+      }
+
       await storage.addAsset({
         id: Utils.generateUUID(),
         sessionId: sessionId,
         stepId: newStep.id,
         type: 'screenshot',
-        blob: newStepScreenshotBlob,
+        blob: newStepScreenshotBlob,   // live-session use (won't survive reload)
+        data: dataUrl,                  // persisted base64 string (survives reload)
         createdAt: new Date().toISOString()
       });
     }
@@ -700,9 +731,6 @@ async function handleConfirmAddStep() {
 }
 
 // ==================== Step Actions ====================
-
-// async function toggleScreenshot(stepId) { ... removed 
-
 
 async function handleDeleteStep(stepId) {
   try {
@@ -758,13 +786,13 @@ function handleCheckboxChange(e) {
   }
   updateBulkDeleteButton();
 }
+
 function updateBulkDeleteButton() {
   const checkedCount = document.querySelectorAll('.step-checkbox:checked').length;
   if (bulkDeleteBtn) {
     bulkDeleteBtn.disabled = checkedCount === 0;
   }
 }
-
 
 // ==================== Drag & Drop Reordering ====================
 
@@ -871,7 +899,6 @@ function handleExportProgress(message) {
   if (progressStatus) progressStatus.textContent = status;
 
   if (circle) {
-    // Circumference is ~125.6 (2 * PI * 20)
     const offset = 125.6 - (percent / 100) * 125.6;
     circle.style.strokeDashoffset = offset;
   }
@@ -882,13 +909,14 @@ function handleExportProgress(message) {
       if (message.error) {
         showMessage(`Export failed: ${message.error}`, 'error');
       } else if (message.canceled) {
-        // Handled via cancel btn listener mostly, but just in case
+        // Handled via cancel btn listener mostly
       } else {
         showMessage('Export complete!', 'success');
       }
     }, 1000);
   }
 }
+
 async function handleSaveAndExport() {
   showProgressModal();
   try {
@@ -906,12 +934,6 @@ async function handleSaveAndExport() {
 
     if (response && response.success) {
       showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
-
-      /*setTimeout(() => {
-        if (confirm('Export successful! Close this window?')) {
-          window.close();
-        }
-      }, 1000);*/
     } else if (response && !response.success) {
       throw new Error(response.error || 'Export failed');
     }
@@ -919,7 +941,6 @@ async function handleSaveAndExport() {
     console.error('Save and export failed:', error);
     showMessage('Failed: ' + error.message, 'error');
   } finally {
-    // 🛟 Safety net: close modal even if progress events misbehave
     hideProgressModal();
   }
 }

@@ -275,6 +275,34 @@ async function handleClearAll() {
 // =====================
 // Session + Settings
 // =====================
+
+autoScreenshot?.addEventListener('change', (e) => {
+  screenshotInterval.style.display = e.target.checked ? 'block' : 'none';
+});
+
+async function handleSaveSettings() {
+  const settings = {
+    autoScreenshot: document.getElementById('autoScreenshot')?.checked || false,
+    screenshotSeconds: parseInt(document.getElementById('screenshotSeconds')?.value) || 5,
+    captureOnNavigation: document.getElementById('captureOnNavigation')?.checked !== false,
+    smartDedup: document.getElementById('smartDedup')?.checked !== false,
+    autoSave: document.getElementById('autoSave')?.checked !== false,
+    maxSessions: parseInt(document.getElementById('maxSessions')?.value) || 25,
+    imageQuality: parseFloat(document.getElementById('imageQuality')?.value) || 0.92
+  };
+  
+  const res = await chrome.runtime.sendMessage({ 
+    action: 'saveSettings', 
+    settings 
+  });
+  
+  if (res.success) {
+    showMessage('Settings saved!', 'success');
+  } else {
+    showMessage('Failed to save settings', 'error');
+  }
+}
+
 async function loadSessions() {
   try {
     const response = await chrome.runtime.sendMessage({ action: "getAllSessions" });

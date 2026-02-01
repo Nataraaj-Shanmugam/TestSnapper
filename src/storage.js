@@ -1,54 +1,56 @@
 /**
- * Storage Module - FIXED: Transaction deadlocks and error recovery
+ * Storage Module — chrome.storage.local (file-based, persistent)
+ *
+ * Replaces IndexedDB with chrome.storage.local, which persists data to a flat
+ * file on disk managed by Chrome. All public methods keep the same signatures
+ * so the rest of the extension needs zero changes.
+ *
+ * Data layout (single key):
+ *   testsnapper_data → {
+ *     sessions: [
+ *       {
+ *         sessionId, sessionName, createdAt, env, stepCount,
+ *         steps:  [{ id, sessionId, action, fieldName, selector, value, url, timestamp, sequence, ... }],
+ *         assets: [{ id, sessionId, stepId, type, data, ... }]
+ *       },
+ *       ...
+ *     ]
+ *   }
+ *
+ * Add "storage" permission and optionally "unlimitedStorage" (removes 10 MB
+ * quota) to manifest.json.
  */
+
+const STORAGE_KEY = 'testsnapper_data';
 
 class StorageManager {
   constructor() {
-    this.dbName = 'TestSnapperDB';
-    this.version = 2;
-    this.db = null;
-    // 🔧 FIX #6: Add retry configuration
     this.maxRetries = 3;
-    this.retryDelay = 100;
+    this.retryDelay = 100; // ms base; multiplied by attempt number
   }
 
-  async init() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, this.version);
+  // ────────────────────────────────────────────────────────────
+  // Internal helpers
+  // ────────────────────────────────────────────────────────────
 
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve(this.db);
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-
-        if (!db.objectStoreNames.contains('sessions')) {
-          const sessionStore = db.createObjectStore('sessions', { keyPath: 'sessionId' });
-          sessionStore.createIndex('createdAt', 'createdAt', { unique: false });
-        }
-
-        if (!db.objectStoreNames.contains('steps')) {
-          const stepStore = db.createObjectStore('steps', { keyPath: 'id' });
-          stepStore.createIndex('sessionId', 'sessionId', { unique: false });
-          stepStore.createIndex('timestamp', 'timestamp', { unique: false });
-          stepStore.createIndex('sequence', 'sequence', { unique: false });
-        }
-
-        if (!db.objectStoreNames.contains('assets')) {
-          const assetStore = db.createObjectStore('assets', { keyPath: 'id' });
-          assetStore.createIndex('sessionId', 'sessionId', { unique: false });
-          assetStore.createIndex('stepId', 'stepId', { unique: false });
-          assetStore.createIndex('type', 'type', { unique: false });
-        }
-      };
-    });
+  /**
+   * Read the entire data blob from chrome.storage.local.
+   * Returns { sessions: [...] }, never undefined.
+   */
+  async _read() {
+    const result = await chrome.storage.local.get(STORAGE_KEY);
+    return result[STORAGE_KEY] || { sessions: [] };
   }
 
   /**
-   * 🔧 FIX #6: Generic retry wrapper for operations
+   * Persist the entire data blob back to chrome.storage.local.
+   */
+  async _write(data) {
+    await chrome.storage.local.set({ [STORAGE_KEY]: data });
+  }
+
+  /**
+   * Generic retry wrapper — identical contract to the old IndexedDB version.
    */
   async _retryOperation(operation, operationName, retries = this.maxRetries) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -65,334 +67,252 @@ class StorageManager {
     }
   }
 
+  /**
+   * Find the index of a session by ID. Returns -1 if not found.
+   */
+  _findSessionIndex(sessions, sessionId) {
+    return sessions.findIndex(s => s.sessionId === sessionId);
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // Public API  (same signatures as the old IndexedDB version)
+  // ────────────────────────────────────────────────────────────
+
+  /**
+   * No-op for chrome.storage.local — kept so callers that do `await storage.init()`
+   * continue to work without changes.
+   */
+  async init() {
+    // Verify the API is available (fails fast in non-extension contexts)
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+      throw new Error('chrome.storage.local is not available. Are you running inside a Chrome extension?');
+    }
+    return true;
+  }
+
+  // ── Sessions ──────────────────────────────────────────────
+
   async createSession(sessionData) {
-    if (!this.db) await this.init();
+    return this._retryOperation(async () => {
+      const data = await this._read();
 
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['sessions'], 'readwrite');
-        const store = transaction.objectStore('sessions');
-        const request = store.add(sessionData);
+      // Duplicate guard
+      if (this._findSessionIndex(data.sessions, sessionData.sessionId) !== -1) {
+        throw new Error(`Session ${sessionData.sessionId} already exists`);
+      }
 
-        request.onsuccess = () => resolve(sessionData);
-        request.onerror = () => reject(request.error);
-
-        // 🔧 FIX #6: Handle transaction errors
-        transaction.onerror = () => reject(transaction.error);
-      });
+      // Ensure embedded arrays exist
+      const session = { ...sessionData, steps: [], assets: [] };
+      data.sessions.push(session);
+      await this._write(data);
+      return session;
     }, 'createSession');
   }
 
   async getSession(sessionId) {
-    if (!this.db) await this.init();
-
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['sessions'], 'readonly');
-        const store = transaction.objectStore('sessions');
-        const request = store.get(sessionId);
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      const session = data.sessions.find(s => s.sessionId === sessionId);
+      return session || null;
     }, 'getSession');
   }
 
   async updateSession(sessionData) {
-    if (!this.db) await this.init();
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      const idx = this._findSessionIndex(data.sessions, sessionData.sessionId);
 
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['sessions'], 'readwrite');
-        const store = transaction.objectStore('sessions');
-        const request = store.put(sessionData);
+      if (idx === -1) {
+        throw new Error(`Session ${sessionData.sessionId} not found`);
+      }
 
-        request.onsuccess = () => resolve(sessionData);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+      // Preserve steps and assets that live on the stored object
+      const existing = data.sessions[idx];
+      data.sessions[idx] = {
+        ...sessionData,
+        steps: sessionData.steps || existing.steps || [],
+        assets: sessionData.assets || existing.assets || []
+      };
+
+      await this._write(data);
+      return data.sessions[idx];
     }, 'updateSession');
   }
 
+  async getAllSessions() {
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      // Return sessions without the embedded steps/assets arrays for list views
+      return data.sessions.map(({ steps, assets, ...meta }) => ({
+        ...meta,
+        stepCount: steps ? steps.length : (meta.stepCount || 0)
+      }));
+    }, 'getAllSessions');
+  }
+
+  async updateSessionName(sessionId, sessionName) {
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      const idx = this._findSessionIndex(data.sessions, sessionId);
+
+      if (idx === -1) throw new Error('Session not found');
+
+      data.sessions[idx].sessionName = sessionName;
+      await this._write(data);
+      return data.sessions[idx];
+    }, 'updateSessionName');
+  }
+
+  // ── Steps ─────────────────────────────────────────────────
+
   async addStep(step) {
-    if (!this.db) await this.init();
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      const idx = this._findSessionIndex(data.sessions, step.sessionId);
 
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['steps'], 'readwrite');
-        const store = transaction.objectStore('steps');
-        const request = store.add(step);
+      if (idx === -1) throw new Error(`Session ${step.sessionId} not found`);
 
-        request.onsuccess = () => resolve(step);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+      data.sessions[idx].steps.push(step);
+      data.sessions[idx].stepCount = data.sessions[idx].steps.length;
+      await this._write(data);
+      return step;
     }, 'addStep');
   }
 
   async getSteps(sessionId) {
-    if (!this.db) await this.init();
-
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['steps'], 'readonly');
-        const store = transaction.objectStore('steps');
-        const index = store.index('sessionId');
-        const request = index.getAll(sessionId);
-
-        request.onsuccess = () => resolve(request.result || []);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      const session = data.sessions.find(s => s.sessionId === sessionId);
+      return session ? [...session.steps] : [];
     }, 'getSteps');
   }
 
   async deleteStep(stepId) {
-    if (!this.db) await this.init();
-    if (!stepId) throw new Error("Step ID is required");
+    return this._retryOperation(async () => {
+      if (!stepId) throw new Error('Step ID is required');
 
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['steps'], 'readwrite');
-        const store = transaction.objectStore('steps');
-        const request = store.delete(stepId);
+      const data = await this._read();
 
-        request.onsuccess = () => resolve(true);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+      for (const session of data.sessions) {
+        const beforeLen = session.steps.length;
+        session.steps = session.steps.filter(s => s.id !== stepId);
+
+        if (session.steps.length < beforeLen) {
+          session.stepCount = session.steps.length;
+          await this._write(data);
+          return true;
+        }
+      }
+
+      // Step not found in any session — not an error, just a no-op
+      return false;
     }, 'deleteStep');
   }
 
   async updateStep(step) {
-    if (!this.db) await this.init();
-    if (!step || !step.id) throw new Error("Valid step with ID is required");
+    return this._retryOperation(async () => {
+      if (!step || !step.id) throw new Error('Valid step with ID is required');
 
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['steps'], 'readwrite');
-        const store = transaction.objectStore('steps');
-        const request = store.put(step);
+      const data = await this._read();
 
-        request.onsuccess = () => resolve(step);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+      for (const session of data.sessions) {
+        const idx = session.steps.findIndex(s => s.id === step.id);
+        if (idx !== -1) {
+          session.steps[idx] = { ...session.steps[idx], ...step };
+          await this._write(data);
+          return session.steps[idx];
+        }
+      }
+
+      throw new Error(`Step ${step.id} not found`);
     }, 'updateStep');
   }
 
+  /**
+   * Replace ALL steps for a session in one atomic write.
+   * Also updates the session's stepCount.
+   */
+  async updateAllSteps(sessionId, steps) {
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      const idx = this._findSessionIndex(data.sessions, sessionId);
+
+      if (idx === -1) throw new Error(`Session ${sessionId} not found`);
+
+      data.sessions[idx].steps = steps;
+      data.sessions[idx].stepCount = steps.length;
+      await this._write(data);
+
+      console.log('✅ All steps updated successfully');
+      return true;
+    }, 'updateAllSteps');
+  }
+
+  // ── Assets ────────────────────────────────────────────────
+
   async addAsset(asset) {
-    if (!this.db) await this.init();
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      const idx = this._findSessionIndex(data.sessions, asset.sessionId);
 
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['assets'], 'readwrite');
-        const store = transaction.objectStore('assets');
-        const request = store.add(asset);
+      if (idx === -1) throw new Error(`Session ${asset.sessionId} not found`);
 
-        request.onsuccess = () => resolve(asset);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+      data.sessions[idx].assets.push(asset);
+      await this._write(data);
+      return asset;
     }, 'addAsset');
   }
 
   async getAllAssets(sessionId) {
-    if (!this.db) await this.init();
-
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['assets'], 'readonly');
-        const store = transaction.objectStore('assets');
-        const index = store.index('sessionId');
-        const request = index.getAll(sessionId);
-
-        request.onsuccess = () => resolve(request.result || []);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+    return this._retryOperation(async () => {
+      const data = await this._read();
+      const session = data.sessions.find(s => s.sessionId === sessionId);
+      return session ? [...session.assets] : [];
     }, 'getAllAssets');
   }
 
   async getAssetsByStepId(stepId) {
-    if (!this.db) await this.init();
+    return this._retryOperation(async () => {
+      const data = await this._read();
 
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['assets'], 'readonly');
-        const store = transaction.objectStore('assets');
-        const index = store.index('stepId');
-        const request = index.getAll(stepId);
-
-        request.onsuccess = () => resolve(request.result || []);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
+      for (const session of data.sessions) {
+        const matched = session.assets.filter(a => a.stepId === stepId);
+        if (matched.length > 0) return matched;
+      }
+      return [];
     }, 'getAssetsByStepId');
   }
 
   async deleteAssets(sessionId) {
-    if (!this.db) await this.init();
-
     return this._retryOperation(async () => {
-      const assets = await this.getAllAssets(sessionId);
+      const data = await this._read();
+      const idx = this._findSessionIndex(data.sessions, sessionId);
 
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['assets'], 'readwrite');
-        const store = transaction.objectStore('assets');
+      if (idx === -1) return true; // nothing to delete
 
-        for (const asset of assets) {
-          store.delete(asset.id);
-        }
-
-        transaction.oncomplete = () => resolve(true);
-        transaction.onerror = () => reject(transaction.error);
-      });
+      data.sessions[idx].assets = [];
+      await this._write(data);
+      return true;
     }, 'deleteAssets');
   }
 
-  async clearSession(sessionId) {
-    if (!this.db) await this.init();
-
-    // 🔧 FIX #6: Sequential operations with proper error handling
-    return this._retryOperation(async () => {
-      try {
-        // Step 1: Delete all steps
-        const steps = await this.getSteps(sessionId);
-        for (const step of steps) {
-          await this.deleteStep(step.id);
-        }
-
-        // Step 2: Delete all assets
-        await this.deleteAssets(sessionId);
-
-        // Step 3: Delete session
-        return new Promise((resolve, reject) => {
-          const transaction = this.db.transaction(['sessions'], 'readwrite');
-          const store = transaction.objectStore('sessions');
-          const request = store.delete(sessionId);
-
-          request.onsuccess = () => resolve(true);
-          request.onerror = () => reject(request.error);
-          transaction.onerror = () => reject(transaction.error);
-        });
-      } catch (error) {
-        console.error('clearSession partial failure:', error);
-        throw error;
-      }
-    }, 'clearSession');
-  }
-
-  async getAllSessions() {
-    if (!this.db) await this.init();
-
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['sessions'], 'readonly');
-        const store = transaction.objectStore('sessions');
-        const request = store.getAll();
-
-        request.onsuccess = () => resolve(request.result || []);
-        request.onerror = () => reject(request.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
-    }, 'getAllSessions');
-  }
+  // ── Session lifecycle ─────────────────────────────────────
 
   /**
-   * 🔧 FIX #6: Atomic update with rollback on failure
+   * Delete a session and all its steps + assets in one atomic write.
    */
-  async updateSessionName(sessionId, sessionName) {
-    if (!this.db) await this.init();
-
-    return this._retryOperation(() => {
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['sessions'], 'readwrite');
-        const store = transaction.objectStore('sessions');
-        const getRequest = store.get(sessionId);
-
-        getRequest.onsuccess = () => {
-          const session = getRequest.result;
-          if (session) {
-            session.sessionName = sessionName;
-            const putRequest = store.put(session);
-
-            putRequest.onsuccess = () => resolve(session);
-            putRequest.onerror = () => reject(putRequest.error);
-          } else {
-            reject(new Error('Session not found'));
-          }
-        };
-
-        getRequest.onerror = () => reject(getRequest.error);
-        transaction.onerror = () => reject(transaction.error);
-      });
-    }, 'updateSessionName');
-  }
-
-  async updateAllSteps(sessionId, steps) {
-    if (!this.db) await this.init();
-
+  async clearSession(sessionId) {
     return this._retryOperation(async () => {
-      // Use a single transaction for all operations
-      return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(['steps', 'sessions'], 'readwrite');
-        const stepStore = transaction.objectStore('steps');
-        const sessionStore = transaction.objectStore('sessions');
-        const stepIndex = stepStore.index('sessionId');
+      const data = await this._read();
+      const idx = this._findSessionIndex(data.sessions, sessionId);
 
-        // Step 1: Get all existing steps
-        const getExistingRequest = stepIndex.getAll(sessionId);
+      if (idx === -1) return true; // already gone
 
-        getExistingRequest.onsuccess = () => {
-          const existingSteps = getExistingRequest.result;
-
-          // Step 2: Delete existing steps
-          for (const step of existingSteps) {
-            stepStore.delete(step.id);
-          }
-
-          // Step 3: Add new steps
-          for (const step of steps) {
-            stepStore.put(step);
-          }
-
-          // Step 4: Update session count
-          const sessionRequest = sessionStore.get(sessionId);
-
-          sessionRequest.onsuccess = () => {
-            const session = sessionRequest.result;
-            if (session) {
-              session.stepCount = steps.length;
-              sessionStore.put(session);
-            }
-          };
-
-          sessionRequest.onerror = () => {
-            console.error('Failed to update session during step update');
-          };
-        };
-
-        getExistingRequest.onerror = () => reject(getExistingRequest.error);
-
-        // Transaction completes or aborts atomically
-        transaction.oncomplete = () => {
-          console.log('✅ All steps updated successfully in single transaction');
-          resolve(true);
-        };
-
-        transaction.onerror = () => {
-          console.error('❌ Transaction failed, rolling back all changes');
-          reject(transaction.error);
-        };
-
-        transaction.onabort = () => {
-          console.error('❌ Transaction aborted');
-          reject(new Error('Transaction aborted'));
-        };
-      });
-    }, 'updateAllSteps');
+      data.sessions.splice(idx, 1);
+      await this._write(data);
+      console.log(`✅ Session ${sessionId} cleared`);
+      return true;
+    }, 'clearSession');
   }
 }
 
