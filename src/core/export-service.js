@@ -95,7 +95,7 @@ export class ExportService {
       reader.onerror = () => {
         reader.abort();
         reject(reader.error);
-      }; 
+      };
       reader.readAsDataURL(blob);
     });
   }
@@ -274,6 +274,110 @@ export class ExportService {
     };
   }
 
+  /**
+   * 🔧 FIX: EXP-002 - Resize images for exports to reduce file size
+   */
+  async _resizeImageForExport(dataUrl, maxWidth = 800, maxHeight = 600) {
+    // Helper to check if we are in a Service Worker or similar context
+    const useOffscreen = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined';
+
+    if (useOffscreen) {
+      try {
+        // Service Worker implementation using OffscreenCanvas
+        const response = await fetch(dataUrl);
+        const blob = await response.blob();
+        const bitmap = await createImageBitmap(blob);
+
+        const { width: imgWidth, height: imgHeight } = bitmap;
+
+        // Calculate scale
+        const scale = Math.min(
+          maxWidth / imgWidth,
+          maxHeight / imgHeight,
+          1
+        );
+
+        if (scale >= 1) {
+          bitmap.close();
+          return { dataUrl, width: imgWidth, height: imgHeight };
+        }
+
+        const canvasWidth = Math.floor(imgWidth * scale);
+        const canvasHeight = Math.floor(imgHeight * scale);
+
+        const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bitmap, 0, 0, canvasWidth, canvasHeight);
+
+        // Convert back to blob -> dataUrl
+        // OffscreenCanvas.convertToBlob is standard
+        const resizedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+        const reader = new FileReader();
+        const resizedDataUrl = await new Promise((resolve) => {
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(resizedBlob);
+        });
+
+        bitmap.close();
+        console.log(`📐 Resized image (Offscreen): ${imgWidth}x${imgHeight} → ${canvasWidth}x${canvasHeight}`);
+        return { dataUrl: resizedDataUrl, width: canvasWidth, height: canvasHeight };
+
+      } catch (error) {
+        console.error('Offscreen image resize failed:', error);
+        // We might not know dimensions if bitmap creation failed, safe fallback
+        return { dataUrl, width: 800, height: 600 };
+      }
+    } else {
+      // Standard DOM implementation
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+
+        img.onload = () => {
+          try {
+            // Calculate scale to fit within max dimensions
+            const scale = Math.min(
+              maxWidth / img.width,
+              maxHeight / img.height,
+              1 // Don't upscale
+            );
+
+            if (scale >= 1) {
+              // No resize needed
+              resolve({ dataUrl: dataUrl, width: img.width, height: img.height });
+              return;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.floor(img.width * scale);
+            canvas.height = Math.floor(img.height * scale);
+
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            const resized = canvas.toDataURL('image/jpeg', 0.85);
+            console.log(`📐 Resized image: ${img.width}x${img.height} → ${canvas.width}x${canvas.height}`);
+
+            resolve({ dataUrl: resized, width: canvas.width, height: canvas.height });
+          } catch (error) {
+            console.error('Image resize failed:', error);
+            resolve({ dataUrl: dataUrl, width: 800, height: 600 }); // Fallback with safe defaults
+          }
+        };
+
+        img.onerror = () => {
+          console.error('Failed to load image for resizing');
+          resolve({ dataUrl: dataUrl, width: 800, height: 600 }); // Fallback
+        };
+
+        img.src = dataUrl;
+      });
+    }
+  }
+
   async _exportDOCX(exportData, sessionId, progressCallback) {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
@@ -342,9 +446,11 @@ export class ExportService {
     let processed = 0;
 
     for (const asset of screenshotAssets) {
-      const url = await this._resolveAssetUrl(asset);
+      let url = await this._resolveAssetUrl(asset);
       if (url) {
-        screenshotMap.set(asset.stepId, url);
+        // 🔧 FIX: EXP-002 - Resize before using
+        const imgObj = await this._resizeImageForExport(url, 1600, 1200);
+        screenshotMap.set(asset.stepId, imgObj);
       } else {
         console.warn('No usable image data for asset', asset.id, '(stepId:', asset.stepId + ')');
       }
@@ -377,39 +483,68 @@ export class ExportService {
 
     html += `<ol>`;
 
-    for (const step of regularSteps) {
-      let oneliner;
+    // 🔧 FIX: EXP-001 - Process in chunks to avoid memory issues
+    const CHUNK_SIZE = 50;
+    const totalSteps = regularSteps.length;
+    let processedCount = 0;
 
-      if (step.action === 'screenshot') {
-        oneliner = '📸 Manual screenshot captured';
-        html += `<li>${oneliner}`;
+    for (let chunkStart = 0; chunkStart < totalSteps; chunkStart += CHUNK_SIZE) {
+      const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalSteps);
+      const chunk = regularSteps.slice(chunkStart, chunkEnd);
 
-        const screenshotData = screenshotMap.get(step.id);
-        if (screenshotData) {
-          html += `<br><img src="${screenshotData}" class="screenshot-img" alt="Manual Screenshot"/>`;
-        }
+      console.log(`Processing chunk ${chunkStart}-${chunkEnd} of ${totalSteps}`);
 
-        html += `</li>`;
-      } else {
-        if (step.description) {
-          oneliner = this._escapeHtml(step.description);
+      for (const step of chunk) {
+        let oneliner;
+
+        if (step.action === 'screenshot') {
+          oneliner = '📸 Manual screenshot captured';
+          html += `<li>${oneliner}`;
+
+          const screenshotData = screenshotMap.get(step.id);
+          if (screenshotData && screenshotData.dataUrl) {
+            html += `<br><img src="${screenshotData.dataUrl}" width="${screenshotData.width}" height="${screenshotData.height}" class="screenshot-img" alt="Manual Screenshot"/>`;
+          }
+
+          html += `</li>`;
         } else {
-          oneliner = `${step.action.toUpperCase()}`;
+          if (step.description) {
+            oneliner = this._escapeHtml(step.description);
+          } else {
+            oneliner = `${step.action.toUpperCase()}`;
 
-          if (step.fieldName && step.fieldName !== 'N/A') {
-            oneliner += ` on "${this._escapeHtml(step.fieldName)}"`;
+            if (step.fieldName && step.fieldName !== 'N/A') {
+              oneliner += ` on "${this._escapeHtml(step.fieldName)}"`;
+            }
+
+            if (step.value && step.action !== 'navigate') {
+              oneliner += ` with value "${this._escapeHtml(step.value)}"`;
+            }
+
+            if (step.action === 'navigate') {
+              oneliner += ` to ${this._escapeHtml(step.value || step.url)}`;
+            }
           }
 
-          if (step.value && step.action !== 'navigate') {
-            oneliner += ` with value "${this._escapeHtml(step.value)}"`;
-          }
-
-          if (step.action === 'navigate') {
-            oneliner += ` to ${this._escapeHtml(step.value || step.url)}`;
-          }
+          html += `<li>${oneliner}</li>`;
         }
 
-        html += `<li>${oneliner}</li>`;
+        processedCount++;
+
+        if (processedCount % 10 === 0) {
+          notify({
+            percent: 30 + Math.floor((processedCount / totalSteps) * 60),
+            status: `Processing step ${processedCount}/${totalSteps}...`
+          });
+        }
+      }
+
+      // Release chunk memory
+      chunk.length = 0;
+
+      // Small delay to allow GC
+      if (chunkEnd < totalSteps) {
+        await new Promise(resolve => setTimeout(resolve, 10));
       }
     }
 
@@ -423,11 +558,11 @@ export class ExportService {
       for (let i = 0; i < automatedScreenshots.length; i++) {
         const screenshot = automatedScreenshots[i];
         const screenshotData = screenshotMap.get(screenshot.id);
-        if (screenshotData) {
+        if (screenshotData && screenshotData.dataUrl) {
           html += `
     <div class='auto-screenshot'>
       <p><b>Auto Screenshot ${i + 1}</b> - ${new Date(screenshot.timestamp).toLocaleTimeString()}</p>
-      <img src="${screenshotData}" alt="Automated Screenshot ${i + 1}"/>
+      <img src="${screenshotData.dataUrl}" width="${screenshotData.width}" height="${screenshotData.height}" alt="Automated Screenshot ${i + 1}"/>
     </div>`;
         }
       }

@@ -31,8 +31,8 @@ class Redactor {
 
     // PII detection patterns — stored WITHOUT /g to avoid lastIndex state.
     // /g is added inline only where .replace() needs global replacement.
-    this.emailPattern    = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
-    this.phonePattern    = /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/;
+    this.emailPattern = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
+    this.phonePattern = /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/;
     this.creditCardPattern = /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/;
   }
 
@@ -117,5 +117,7 @@ class Redactor {
 }
 
 if (typeof window !== 'undefined') {
-  window.Redactor = Redactor;
+  if (!window.Redactor) {
+    window.Redactor = Redactor;
+  }
 }

@@ -13,6 +13,7 @@ class SelectorEngine {
       'name',
       'aria-label',
       'placeholder',
+      'framework-attrs',
       'type-based',
       'class-based',
       'text-based',
@@ -21,22 +22,26 @@ class SelectorEngine {
       'xpath-relative',
       'parent-child'
     ];
+
+    this.selectorCache = new WeakMap();
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
   }
 
   /**
    * NEW: Check if this step is a duplicate of recent steps
    * Helps prevent duplicate entries from rapid interactions
    */
-  isStepDuplicate(newStep, existingSteps, timeWindow = 1000) {
+  isStepDuplicate(newStep, existingSteps, timeWindow = 3000) {
     if (!existingSteps || existingSteps.length === 0) return false;
 
     // Get recent steps within time window
-    const recentSteps = existingSteps.filter(step => 
+    const recentSteps = existingSteps.filter(step =>
       newStep.timestamp - step.timestamp < timeWindow
     );
 
     // Check for exact duplicate
-    return recentSteps.some(step => 
+    return recentSteps.some(step =>
       step.action === newStep.action &&
       step.selector?.css === newStep.selector?.css &&
       step.value === newStep.value &&
@@ -50,6 +55,13 @@ class SelectorEngine {
    */
   generateSelectors(element) {
     if (!element || !element.tagName) return null;
+
+    if (this.selectorCache.has(element)) {
+      this.cacheHits++;
+      return this.selectorCache.get(element);
+    }
+
+    this.cacheMisses++;
 
     const candidates = [];
 
@@ -67,6 +79,9 @@ class SelectorEngine {
 
     // Strategy 5: placeholder + type
     this._addPlaceholderSelectors(element, candidates);
+
+    // Strategy 5.5: Framework attributes (React/Vue/Angular)
+    this._addFrameworkSelectors(element, candidates);
 
     // Strategy 6: class-based
     this._addClassSelectors(element, candidates);
@@ -93,8 +108,8 @@ class SelectorEngine {
 
     candidates.sort((a, b) => b.score - a.score);
 
-    // Return top candidates with metadata
-    return {
+    // Cache result
+    const result = {
       primary: candidates[0] || this._getFallbackSelector(element),
       alternatives: candidates.slice(0, 5),
       all: candidates,
@@ -105,6 +120,9 @@ class SelectorEngine {
         path: this._getElementPath(element)
       }
     };
+
+    this.selectorCache.set(element, result);
+    return result;
   }
 
   /**
@@ -177,9 +195,9 @@ class SelectorEngine {
   }
 
   _addTestIdSelectors(element, candidates) {
-    const testId = element.dataset.testid || element.getAttribute('data-test-id') || 
-                   element.getAttribute('data-cy') || element.getAttribute('data-testid');
-    
+    const testId = element.dataset.testid || element.getAttribute('data-test-id') ||
+      element.getAttribute('data-cy') || element.getAttribute('data-testid');
+
     if (testId) {
       candidates.push({
         selector: `[data-testid="${testId}"]`,
@@ -272,6 +290,91 @@ class SelectorEngine {
     }
   }
 
+  /**
+   * 🔧 FIX: SEL-001 - Framework attribute support
+   */
+  _addFrameworkSelectors(element, candidates) {
+    // React detection
+    const hasReactProps = Object.keys(element).some(k => k.startsWith('__react'));
+    if (hasReactProps) {
+      // Check for React-specific attributes
+      ['data-reactid', 'data-react-checksum', 'data-reactroot'].forEach(attr => {
+        if (element.hasAttribute(attr)) {
+          candidates.push({
+            selector: `[${attr}="${element.getAttribute(attr)}"]`,
+            type: 'react-attr',
+            strategy: 'React',
+            isUnique: this._isUnique(`[${attr}="${element.getAttribute(attr)}"]`, element),
+            length: attr.length + element.getAttribute(attr).length + 4
+          });
+        }
+      });
+    }
+
+    // Vue detection
+    const hasVue = element.__vue__ || element.hasAttribute('v-bind') ||
+      element.hasAttribute('v-model') || element.hasAttribute('v-for');
+    if (hasVue) {
+      // v-model is most stable
+      if (element.hasAttribute('v-model')) {
+        const vModel = element.getAttribute('v-model');
+        candidates.push({
+          selector: `[v-model="${vModel}"]`,
+          type: 'vue-model',
+          strategy: 'Vue',
+          isUnique: this._isUnique(`[v-model="${vModel}"]`, element),
+          length: vModel.length + 12
+        });
+      }
+
+      // Other v- attributes
+      Array.from(element.attributes).forEach(attr => {
+        if (attr.name.startsWith('v-') || attr.name.startsWith(':')) {
+          candidates.push({
+            selector: `[${attr.name}="${attr.value}"]`,
+            type: 'vue-attr',
+            strategy: 'Vue',
+            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
+            length: attr.name.length + attr.value.length + 4
+          });
+        }
+      });
+    }
+
+    // Angular detection
+    const hasAngular = element.hasAttribute('ng-model') ||
+      element.hasAttribute('[ngModel]') ||
+      element.hasAttribute('ng-click') ||
+      element.hasAttribute('(click)');
+    if (hasAngular) {
+      // ng-model / [ngModel] is most stable
+      const ngModel = element.getAttribute('ng-model') || element.getAttribute('[ngModel]');
+      if (ngModel) {
+        candidates.push({
+          selector: `[ng-model="${ngModel}"], [[ngModel]="${ngModel}"]`,
+          type: 'angular-model',
+          strategy: 'Angular',
+          isUnique: true, // ng-model is usually unique
+          length: ngModel.length + 14
+        });
+      }
+
+      // Other ng- attributes
+      Array.from(element.attributes).forEach(attr => {
+        if (attr.name.startsWith('ng-') || attr.name.startsWith('[ng') ||
+          attr.name.startsWith('(') || attr.name.startsWith('*ng')) {
+          candidates.push({
+            selector: `[${attr.name}="${attr.value}"]`,
+            type: 'angular-attr',
+            strategy: 'Angular',
+            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
+            length: attr.name.length + attr.value.length + 4
+          });
+        }
+      });
+    }
+  }
+
   _addClassSelectors(element, candidates) {
     if (!element.className || typeof element.className !== 'string') return;
 
@@ -347,7 +450,7 @@ class SelectorEngine {
       if (parent.id && !this._isGeneratedId(parent.id)) {
         const childPath = this._getChildPath(parent, element);
         const selector = `#${CSS.escape(parent.id)} ${childPath}`;
-        
+
         candidates.push({
           selector: selector,
           type: 'css-relative-id',
@@ -358,12 +461,20 @@ class SelectorEngine {
         break;
       }
 
-      if (parent.className) {
-        const firstClass = parent.className.trim().split(/\s+/)[0];
+      let className = '';
+      if (typeof parent.className === 'string') {
+        className = parent.className;
+      } else if (parent.className && typeof parent.className.baseVal === 'string') {
+        // Handle SVGAnimatedString
+        className = parent.className.baseVal;
+      }
+
+      if (className) {
+        const firstClass = className.trim().split(/\s+/)[0];
         if (firstClass && !firstClass.match(/^(ng-|is-|has-)/)) {
           const childPath = this._getChildPath(parent, element);
           const selector = `.${CSS.escape(firstClass)} ${childPath}`;
-          
+
           if (this._isUnique(selector, element)) {
             candidates.push({
               selector: selector,
@@ -393,46 +504,101 @@ class SelectorEngine {
     });
   }
 
+  /**
+   * 🔧 FIX: SEL-003 - Semantic XPath with attributes over positions
+   */
   _addXPathRelative(element, candidates) {
-    let parent = element.parentElement;
+    const parts = [];
+    let current = element;
     let depth = 0;
-    const maxDepth = 3;
+    const maxDepth = 5;
 
-    while (parent && depth < maxDepth) {
-      if (parent.id && !this._isGeneratedId(parent.id)) {
-        const childPath = this._getRelativeXPath(parent, element);
-        const selector = `//*[@id="${parent.id}"]${childPath}`;
-        
-        candidates.push({
-          selector: selector,
-          type: 'xpath-relative-id',
-          strategy: 'relative-xpath (id)',
-          isUnique: this._isUniqueXPath(selector, element),
-          length: selector.length
-        });
-        break;
-      }
+    while (current && current !== document.body && depth < maxDepth) {
+      const tag = current.tagName.toLowerCase();
+      let part = tag;
 
-      const role = parent.getAttribute('role');
-      if (role && ['main', 'navigation', 'complementary', 'form'].includes(role)) {
-        const childPath = this._getRelativeXPath(parent, element);
-        const selector = `//*[@role="${role}"]${childPath}`;
-        
-        if (this._isUniqueXPath(selector, element)) {
-          candidates.push({
-            selector: selector,
-            type: 'xpath-relative-role',
-            strategy: 'relative-xpath (role)',
-            isUnique: true,
-            length: selector.length
-          });
-          break;
+      // Prefer stable attributes over positional indexes
+      if (current.id && !this._isGeneratedId(current.id)) {
+        // Found ID - use as anchor point
+        part = `${tag}[@id='${current.id}']`;
+        parts.unshift('//' + part);
+        break; // Stop here, ID is stable anchor
+      } else if (current.name && current.tagName.toLowerCase() === 'input') {
+        part = `${tag}[@name='${current.name}']`;
+      } else if (current.getAttribute('data-testid')) {
+        part = `${tag}[@data-testid='${current.getAttribute('data-testid')}']`;
+      } else if (current.className && !this._isGeneratedClass(current.className)) {
+        const firstClass = current.className.trim().split(' ')[0];
+        part = `${tag}[contains(@class, '${firstClass}')]`;
+      } else if (current.getAttribute('type')) {
+        part = `${tag}[@type='${current.getAttribute('type')}']`;
+      } else if (current.getAttribute('role')) {
+        part = `${tag}[@role='${current.getAttribute('role')}']`;
+      } else {
+        // Fallback to position, but make it more resilient
+        const parent = current.parentElement;
+        if (parent) {
+          const siblings = Array.from(parent.children)
+            .filter(el => el.tagName === current.tagName);
+          if (siblings.length === 1) {
+            // Only child of this type - no index needed
+            part = tag;
+          } else {
+            const index = siblings.indexOf(current) + 1;
+            part = `${tag}[${index}]`;
+          }
         }
       }
 
-      parent = parent.parentElement;
+      parts.unshift(part);
+      current = current.parentElement;
       depth++;
     }
+
+    const xpath = parts.length > 0 ? '/' + parts.join('/') : null;
+    if (xpath) {
+      candidates.push({
+        selector: xpath,
+        type: 'xpath-relative',
+        strategy: 'XPath (Semantic)',
+        isUnique: this._testXPath(xpath, element),
+        length: xpath.length
+      });
+    }
+  }
+
+  /**
+   * Test if XPath is unique and finds the element
+   */
+  _testXPath(xpath, element) {
+    try {
+      const result = document.evaluate(
+        xpath,
+        document,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null
+      );
+      return result.singleNodeValue === element;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if ID looks auto-generated
+   */
+  _isGeneratedId(id) {
+    // Check for common auto-generated patterns
+    return /^(react-|vue-|ng-|\d{10,}|[a-f0-9]{8,}$)/.test(id);
+  }
+
+  /**
+   * Check if class looks generated/dynamic
+   */
+  _isGeneratedClass(className) {
+    // Check for CSS modules, emotion, styled-components patterns
+    return /^(_|css-|sc-|makeStyles|jss\d)/.test(className);
   }
 
   _addNthSelectors(element, candidates) {
@@ -473,7 +639,7 @@ class SelectorEngine {
       const tag = current.tagName.toLowerCase();
       const siblings = Array.from((current.parentElement || parent).children)
         .filter(c => c.tagName.toLowerCase() === tag);
-      
+
       if (siblings.length > 1) {
         const index = siblings.indexOf(current) + 1;
         path.unshift(`${tag}:nth-of-type(${index})`);
@@ -495,7 +661,7 @@ class SelectorEngine {
       const tag = current.tagName.toLowerCase();
       const siblings = Array.from((current.parentElement || parent).children)
         .filter(c => c.tagName.toLowerCase() === tag);
-      
+
       if (siblings.length > 1) {
         const index = siblings.indexOf(current) + 1;
         path.unshift(`/${tag}[${index}]`);
@@ -542,10 +708,10 @@ class SelectorEngine {
     while (current && current.tagName && depth < 5) {
       const tag = current.tagName.toLowerCase();
       const id = current.id ? `#${current.id}` : '';
-      const classes = current.className && typeof current.className === 'string' 
-        ? `.${current.className.trim().split(/\s+/)[0]}` 
+      const classes = current.className && typeof current.className === 'string'
+        ? `.${current.className.trim().split(/\s+/)[0]}`
         : '';
-      
+
       path.unshift(`${tag}${id}${classes}`);
       current = current.parentElement;
       depth++;
@@ -742,11 +908,35 @@ class SelectorEngine {
 
     return false;
   }
+
+  /**
+   * 🔧 FIX: SEL-002 - Cache management
+   */
+  clearCache() {
+    const stats = this.getCacheStats();
+    this.selectorCache = new WeakMap();
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
+    console.log('Selector cache cleared:', stats);
+  }
+
+  getCacheStats() {
+    const total = this.cacheHits + this.cacheMisses;
+    const hitRate = total > 0 ? ((this.cacheHits / total) * 100).toFixed(1) : 0;
+    return {
+      hits: this.cacheHits,
+      misses: this.cacheMisses,
+      total: total,
+      hitRate: hitRate + '%'
+    };
+  }
 }
 
 // Make globally available for content script
 if (typeof window !== 'undefined') {
-  window.SelectorEngine = SelectorEngine;
+  if (!window.SelectorEngine) {
+    window.SelectorEngine = SelectorEngine;
+  }
 }
 
 if (typeof module !== 'undefined' && module.exports) {

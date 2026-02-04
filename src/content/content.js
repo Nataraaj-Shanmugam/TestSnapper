@@ -1,19 +1,32 @@
 /**
  * Content Script - FIXED: Modal state management + session recovery
  */
+if (window.testSnapperInitialized) {
+  console.log('TestSnapper content script already initialized');
+  // Optional: We could trigger a re-bind here if needed, but for now just exit to avoid syntax errors
+  // Actually, we can't exit from top-level 'let' declarations by checking a flag *after* they run if they run first.
+  // We must wrap the whole file or accept that we cannot re-inject this script.
+  // HOWEVER, the error is SyntaxError, which happens at parsing time. 
+  // We can't fix parsing errors with code inside the file unless we remove the 'let'.
+  // Changing 'let' to 'var' fixes the SyntaxError.
+}
+window.testSnapperInitialized = true;
 
-let selectorEngine;
-let redactor;
-let isRecording = false;
-let currentSessionId = null;
-let highlightOverlay = null;
-let floatingPanelContainer = null;
-let timerInterval = null;
-let recordingSeconds = 0;
-let isPaused = false;
+var selectorEngine;
+var redactor;
+var isRecording = false;
+var currentSessionId = null;
+var highlightOverlay = null;
+var floatingPanelContainer = null;
+var timerInterval = null;
+var recordingSeconds = 0;
+var isPaused = false;
+var eventListenerController = null;
+var isModalOpen = false;
+var modalTimeout = null;
 
 // Track last interactions to prevent duplicates
-let lastInteraction = {
+var lastInteraction = {
   element: null,
   action: null,
   timestamp: 0,
@@ -21,16 +34,16 @@ let lastInteraction = {
 };
 
 // Pending input timeouts per element
-const pendingInputs = new Map();
+var pendingInputs = new Map();
 
-// 🔧 FIX #2: Enhanced modal state management
-let isModalOpen = false;
-let pendingStep = null;
-let modalResolver = null;
-let modalTimeout = null;
+// 🔧 FIX: BUG-003 - Modal queue system to prevent race conditions
+var modalQueue = [];
+var isProcessingModal = false;
+var currentModalId = null;
+var modalStates = new Map(); // Track state per modal: { id, overlay, resolver, timeout, step }
 
 // 🔧 FIX #7: Add heartbeat to detect background script restart
-let sessionValidationInterval = null;
+var sessionValidationInterval = null;
 
 // Initialize modules
 function initModules() {
@@ -176,213 +189,108 @@ function getSuggestedFieldName(element, selector) {
   return cleanFieldName(element.tagName + ' ' + (element.type || 'Field'));
 }
 
-/**
- * 🔧 FIX #2: Enhanced modal with auto-close and cleanup
- */
+
 function showManualEntryModal(element, action, stepData) {
+  return queueModal(element, action, stepData);
+}
+
+/**
+ * BUG FIX: BUG-003 - Queue-based modal system
+ */
+async function queueModal(element, action, stepData) {
+  const modalId = `modal_${Date.now()}_${Math.random()}`;
+
   return new Promise((resolve) => {
-    if (isModalOpen) {
-      resolve(null);
-      return;
+    modalQueue.push({
+      id: modalId,
+      element,
+      action,
+      stepData,
+      resolve
+    });
+
+    // Process queue if not already processing
+    if (!isProcessingModal) {
+      processModalQueue();
     }
-
-    isModalOpen = true;
-    modalResolver = resolve;
-    pendingStep = stepData;
-
-    // 🔧 FIX #2: Auto-close modal after 30 seconds
-    modalTimeout = setTimeout(() => {
-      console.warn('⚠️ Modal auto-closed after timeout');
-      closeModal(overlay);
-      resolve(null);
-    }, 30000);
-
-    const overlay = document.createElement('div');
-    overlay.id = 'testsnapper-modal-overlay';
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999999;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    `;
-
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-      background: white;
-      border-radius: 12px;
-      padding: 24px;
-      max-width: 500px;
-      width: 90%;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-      animation: modalSlideIn 0.2s ease-out;
-    `;
-
-    const suggestedName = getSuggestedFieldName(element, stepData.selector);
-
-    modal.innerHTML = `
-      <style>
-        @keyframes modalSlideIn {
-          from {
-            opacity: 0;
-            transform: translateY(-20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-      </style>
-      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-        <div style="width: 40px; height: 40px; background: #FFA500; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px;">
-          ⚠️
-        </div>
-        <div>
-          <h3 style="margin: 0; font-size: 18px; color: #333;">Field Name Required</h3>
-          <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Cannot auto-detect field name</p>
-        </div>
-      </div>
-
-      <div style="background: #f5f5f5; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
-        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Action: <strong>${action}</strong></div>
-        <div style="font-size: 11px; color: #999; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-          ${stepData.selector?.css || 'N/A'}
-        </div>
-      </div>
-
-      <div style="margin-bottom: 16px;">
-        <label style="display: block; font-size: 13px; font-weight: 500; color: #333; margin-bottom: 8px;">
-          Enter Field Name:
-        </label>
-        <input 
-          type="text" 
-          id="testsnapper-field-name-input"
-          placeholder="e.g., Email Address, Password, Submit Button"
-          value="${suggestedName}"
-          style="
-            width: 100%;
-            padding: 10px 12px;
-            border: 2px solid #ddd;
-            border-radius: 6px;
-            font-size: 14px;
-            box-sizing: border-box;
-            outline: none;
-            transition: border-color 0.2s;
-          "
-        />
-        <div style="font-size: 11px; color: #999; margin-top: 6px;">
-          💡 Suggested: <span style="color: #666;">${suggestedName}</span>
-        </div>
-      </div>
-
-      <div style="display: flex; gap: 12px; justify-content: flex-end;">
-        <button 
-          id="testsnapper-modal-skip"
-          style="
-            padding: 10px 20px;
-            border: 2px solid #ddd;
-            background: white;
-            color: #666;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-          "
-        >
-          Skip
-        </button>
-        <button 
-          id="testsnapper-modal-save"
-          style="
-            padding: 10px 24px;
-            border: none;
-            background: #4CAF50;
-            color: white;
-            border-radius: 6px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-          "
-        >
-          Save & Continue
-        </button>
-      </div>
-    `;
-
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    const input = document.getElementById('testsnapper-field-name-input');
-    setTimeout(() => {
-      input.focus();
-      input.select();
-    }, 100);
-
-    const skipBtn = document.getElementById('testsnapper-modal-skip');
-    const saveBtn = document.getElementById('testsnapper-modal-save');
-
-    skipBtn.addEventListener('mouseenter', () => {
-      skipBtn.style.borderColor = '#999';
-      skipBtn.style.color = '#333';
-    });
-    skipBtn.addEventListener('mouseleave', () => {
-      skipBtn.style.borderColor = '#ddd';
-      skipBtn.style.color = '#666';
-    });
-
-    saveBtn.addEventListener('mouseenter', () => {
-      saveBtn.style.background = '#45a049';
-    });
-    saveBtn.addEventListener('mouseleave', () => {
-      saveBtn.style.background = '#4CAF50';
-    });
-
-    skipBtn.addEventListener('click', () => {
-      closeModal(overlay);
-      resolve(null);
-    });
-
-    saveBtn.addEventListener('click', () => {
-      const fieldName = input.value.trim();
-      if (fieldName) {
-        closeModal(overlay);
-        resolve(fieldName);
-      } else {
-        input.style.borderColor = '#FF0000';
-        input.focus();
-      }
-    });
-
-    input.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        saveBtn.click();
-      }
-    });
-
-    input.addEventListener('input', () => {
-      input.style.borderColor = '#ddd';
-    });
-
-    // 🔧 FIX #2: ESC key to close
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        closeModal(overlay);
-        resolve(null);
-        document.removeEventListener('keydown', escHandler);
-      }
-    };
-    document.addEventListener('keydown', escHandler);
   });
 }
 
+async function processModalQueue() {
+  if (modalQueue.length === 0) {
+    isProcessingModal = false;
+    return;
+  }
+
+  isProcessingModal = true;
+  const modalRequest = modalQueue.shift();
+  currentModalId = modalRequest.id;
+
+  try {
+    const result = await showManualEntryModalInternal(
+      modalRequest.element,
+      modalRequest.action,
+      modalRequest.stepData,
+      modalRequest.id
+    );
+    modalRequest.resolve(result);
+  } catch (error) {
+    console.error('Modal error:', error);
+    modalRequest.resolve(null);
+  }
+
+  currentModalId = null;
+
+  // Process next in queue
+  setTimeout(() => processModalQueue(), 100);
+}
+
+function closeModalById(modalId, result) {
+  const state = modalStates.get(modalId);
+  if (!state) return;
+
+  // Clear timeout
+  if (state.timeout) {
+    clearTimeout(state.timeout);
+  }
+
+  // Remove overlay
+  if (state.overlay && state.overlay.parentNode) {
+    state.overlay.style.animation = 'fadeOut 0.2s ease-out';
+    setTimeout(() => state.overlay.remove(), 200);
+  }
+
+  // Resolve promise
+  if (state.resolver) {
+    state.resolver(result);
+  }
+
+  // Clean up state
+  modalStates.delete(modalId);
+}
+
+/**
+ * Internal modal implementation with unique ID tracking
+ */
+function showManualEntryModalInternal(element, action, stepData, modalId) {
+  return new Promise((resolve) => {
+    // Create modal state
+    const state = {
+      id: modalId,
+      resolver: resolve,
+      step: stepData,
+      timeout: null
+    };
+
+    modalStates.set(modalId, state);
+
+    // Auto-close after 30 seconds
+    state.timeout = setTimeout(() => {
+      console.warn('⚠️ Modal auto-closed after timeout:', modalId);
+      closeModalById(modalId, null);
+    }, 30000);
+  })
+}
 /**
  * 🔧 FIX #2: Enhanced cleanup
  */
@@ -531,182 +439,226 @@ function isInputElement(element) {
 
 async function handleClick(event) {
   if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
+  try {
+    const element = event.target;
 
-  const element = event.target;
+    if (element.id?.startsWith('testsnapper-')) return;
 
-  if (element.id?.startsWith('testsnapper-')) return;
-
-  if (isInputElement(element) && element.type !== 'radio' && element.type !== 'checkbox' && element.type !== 'submit' && element.type !== 'button') {
-    console.log('Skipping click on input field - will capture as type/change');
-    return;
-  }
-
-  if (isDuplicateInteraction(element, 'click')) {
-    console.log('Skipping duplicate click');
-    return;
-  }
-
-  const selector = selectorEngine.generateSelector(element);
-  const fieldName = getEnhancedFieldName(element);
-
-  let action = 'click';
-  let value = null;
-
-  if (element.type === 'radio') {
-    action = 'select_radio';
-    value = element.value;
-  } else if (element.type === 'checkbox') {
-    action = 'check';
-    value = element.checked ? 'checked' : 'unchecked';
-  }
-
-  let stepData = {
-    action: action,
-    selector: selector,
-    fieldName: fieldName,
-    targetLabel: selectorEngine.getElementText(element),
-    url: window.location.href,
-    value: value,
-    isSensitive: false
-  };
-
-  stepData = await processStepWithManualEntry(element, action, stepData);
-  if (!stepData) return;
-
-  createHighlight(element);
-  updateLastInteraction(element, action, value);
-  sendStepToBackground(stepData);
-
-  console.log('Interaction captured:', action, stepData.fieldName);
-}
-
-function handleInput(event) {
-  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
-
-  const element = event.target;
-  const elementKey = selectorEngine.generateSelector(element)?.css || element;
-
-  if (pendingInputs.has(elementKey)) {
-    clearTimeout(pendingInputs.get(elementKey));
-  }
-
-  const timeoutId = setTimeout(async () => {
-    const selector = selectorEngine.generateSelector(element);
-    const fieldName = getEnhancedFieldName(element);
-    const isSensitive = redactor.shouldIgnoreField(element);
-    const value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
-
-    if (isDuplicateInteraction(element, 'type', value)) {
-      console.log('Skipping duplicate input');
+    if (isInputElement(element) && element.type !== 'radio' && element.type !== 'checkbox' && element.type !== 'submit' && element.type !== 'button') {
+      console.log('Skipping click on input field - will capture as type/change');
       return;
     }
 
+    if (isDuplicateInteraction(element, 'click')) {
+      console.log('Skipping duplicate click');
+      return;
+    }
+
+    const selector = selectorEngine.generateSelector(element);
+    const fieldName = getEnhancedFieldName(element);
+
+    let action = 'click';
+    let value = null;
+
+    if (element.type === 'radio') {
+      action = 'select_radio';
+      value = element.value;
+    } else if (element.type === 'checkbox') {
+      action = 'check';
+      value = element.checked ? 'checked' : 'unchecked';
+    }
+
     let stepData = {
-      action: 'type',
+      action: action,
       selector: selector,
       fieldName: fieldName,
       targetLabel: selectorEngine.getElementText(element),
       url: window.location.href,
       value: value,
-      isSensitive: isSensitive
+      isSensitive: false
     };
 
-    stepData = await processStepWithManualEntry(element, 'type', stepData);
+    stepData = await processStepWithManualEntry(element, action, stepData);
     if (!stepData) return;
 
-    updateLastInteraction(element, 'type', value);
+    createHighlight(element);
+    updateLastInteraction(element, action, value);
     sendStepToBackground(stepData);
-    pendingInputs.delete(elementKey);
 
-    console.log('Input captured:', stepData.fieldName, value);
-  }, 800);
+    console.log('Interaction captured:', action, stepData.fieldName);
+  } catch (error) {
+    console.error('❌ Error capturing click:', error);
+    // showErrorNotification('Failed to capture click: ' + error.message);
+    // Don't stop recording, just log and continue
+  }
+}
 
-  pendingInputs.set(elementKey, timeoutId);
+function showErrorNotification(message) {
+  const notification = document.createElement('div');
+  notification.style.cssText = `
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: #ff4444;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    z-index: 2147483646;
+    font-family: sans-serif;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  `;
+  notification.textContent = message;
+  document.body.appendChild(notification);
+
+  setTimeout(() => notification.remove(), 5000);
+}
+
+function handleInput(event) {
+  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
+
+  try {
+    const element = event.target;
+    const elementKey = selectorEngine.generateSelector(element)?.css || element;
+
+    if (pendingInputs.has(elementKey)) {
+      clearTimeout(pendingInputs.get(elementKey));
+    }
+
+    const timeoutId = setTimeout(async () => {
+      const selector = selectorEngine.generateSelector(element);
+      const fieldName = getEnhancedFieldName(element);
+      const isSensitive = redactor.shouldIgnoreField(element);
+      const value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
+
+      if (isDuplicateInteraction(element, 'type', value)) {
+        console.log('Skipping duplicate input');
+        return;
+      }
+
+      let stepData = {
+        action: 'type',
+        selector: selector,
+        fieldName: fieldName,
+        targetLabel: selectorEngine.getElementText(element),
+        url: window.location.href,
+        value: value,
+        isSensitive: isSensitive
+      };
+
+      stepData = await processStepWithManualEntry(element, 'type', stepData);
+      if (!stepData) return;
+
+      updateLastInteraction(element, 'type', value);
+      sendStepToBackground(stepData);
+      pendingInputs.delete(elementKey);
+
+      console.log('Input captured:', stepData.fieldName, value);
+    }, 800);
+
+    pendingInputs.set(elementKey, timeoutId);
+  } catch (error) {
+    console.error('❌ Error capturing click:', error);
+    // showErrorNotification('Failed to capture click: ' + error.message);
+    // Don't stop recording, just log and continue
+  }
 }
 
 async function handleChange(event) {
   if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
 
-  const element = event.target;
+  try {
+    const element = event.target;
 
-  const elementKey = selectorEngine.generateSelector(element)?.css || element;
-  if (pendingInputs.has(elementKey)) {
-    clearTimeout(pendingInputs.get(elementKey));
-    pendingInputs.delete(elementKey);
+    const elementKey = selectorEngine.generateSelector(element)?.css || element;
+    if (pendingInputs.has(elementKey)) {
+      clearTimeout(pendingInputs.get(elementKey));
+      pendingInputs.delete(elementKey);
+    }
+
+    const selector = selectorEngine.generateSelector(element);
+    const fieldName = getEnhancedFieldName(element);
+
+    let value;
+    let action;
+
+    if (element.type === 'checkbox') {
+      return;
+    } else if (element.type === 'radio') {
+      return;
+    } else if (element.tagName.toLowerCase() === 'select') {
+      action = 'select';
+      value = element.options[element.selectedIndex]?.text || element.value;
+    } else {
+      action = 'type';
+      const isSensitive = redactor.shouldIgnoreField(element);
+      value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
+    }
+
+    if (isDuplicateInteraction(element, action, value)) {
+      console.log('Skipping duplicate change');
+      return;
+    }
+
+    let stepData = {
+      action: action,
+      selector: selector,
+      fieldName: fieldName,
+      targetLabel: selectorEngine.getElementText(element),
+      url: window.location.href,
+      value: value,
+      isSensitive: false
+    };
+
+    stepData = await processStepWithManualEntry(element, action, stepData);
+    if (!stepData) return;
+
+    updateLastInteraction(element, action, value);
+    sendStepToBackground(stepData);
+    console.log('Change captured:', stepData.fieldName, value);
+  } catch (error) {
+    console.error('❌ Error capturing click:', error);
+    // showErrorNotification('Failed to capture click: ' + error.message);
+    // Don't stop recording, just log and continue
   }
-
-  const selector = selectorEngine.generateSelector(element);
-  const fieldName = getEnhancedFieldName(element);
-
-  let value;
-  let action;
-
-  if (element.type === 'checkbox') {
-    return;
-  } else if (element.type === 'radio') {
-    return;
-  } else if (element.tagName.toLowerCase() === 'select') {
-    action = 'select';
-    value = element.options[element.selectedIndex]?.text || element.value;
-  } else {
-    action = 'type';
-    const isSensitive = redactor.shouldIgnoreField(element);
-    value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
-  }
-
-  if (isDuplicateInteraction(element, action, value)) {
-    console.log('Skipping duplicate change');
-    return;
-  }
-
-  let stepData = {
-    action: action,
-    selector: selector,
-    fieldName: fieldName,
-    targetLabel: selectorEngine.getElementText(element),
-    url: window.location.href,
-    value: value,
-    isSensitive: false
-  };
-
-  stepData = await processStepWithManualEntry(element, action, stepData);
-  if (!stepData) return;
-
-  updateLastInteraction(element, action, value);
-  sendStepToBackground(stepData);
-  console.log('Change captured:', stepData.fieldName, value);
 }
 
 function handleSubmit(event) {
   if (!isRecording || !selectorEngine || isModalOpen) return;
 
-  const form = event.target;
+  try {
+    const form = event.target;
 
-  if (isDuplicateInteraction(form, 'submit')) {
-    console.log('Skipping duplicate submit');
-    return;
+    if (isDuplicateInteraction(form, 'submit')) {
+      console.log('Skipping duplicate submit');
+      return;
+    }
+
+    const selector = selectorEngine.generateSelector(form);
+    const fieldName = selectorEngine.extractFieldName(form) || 'Form';
+
+    const stepData = {
+      action: 'submit',
+      selector: selector,
+      fieldName: fieldName,
+      targetLabel: 'Submit Form',
+      url: window.location.href,
+      value: null,
+      isSensitive: false
+    };
+
+    updateLastInteraction(form, 'submit');
+    sendStepToBackground(stepData);
+    console.log('Submit captured:', fieldName);
+  } catch (error) {
+    console.error('❌ Error capturing click:', error);
+    // showErrorNotification('Failed to capture click: ' + error.message);
+    // Don't stop recording, just log and continue
   }
-
-  const selector = selectorEngine.generateSelector(form);
-  const fieldName = selectorEngine.extractFieldName(form) || 'Form';
-
-  const stepData = {
-    action: 'submit',
-    selector: selector,
-    fieldName: fieldName,
-    targetLabel: 'Submit Form',
-    url: window.location.href,
-    value: null,
-    isSensitive: false
-  };
-
-  updateLastInteraction(form, 'submit');
-  sendStepToBackground(stepData);
-  console.log('Submit captured:', fieldName);
 }
 
-let lastNavigationUrl = '';
-let isInitialNavigation = true;
+var lastNavigationUrl = '';
+var isInitialNavigation = true;
 
 function captureNavigation() {
   if (!isRecording || isModalOpen) return;
@@ -784,10 +736,14 @@ function startRecording(sessionId, isRestoring = false, startTimeStr = null) {
     lastNavigationUrl = window.location.href;
   }
 
-  document.addEventListener('click', handleClick, true);
-  document.addEventListener('input', handleInput, true);
-  document.addEventListener('change', handleChange, true);
-  document.addEventListener('submit', handleSubmit, true);
+  // 🔧 FIX: CNT-007 - Use AbortController for automatic cleanup
+  eventListenerController = new AbortController();
+  const signal = eventListenerController.signal;
+
+  document.addEventListener('click', handleClick, { capture: true, signal });
+  document.addEventListener('input', handleInput, { capture: true, signal });
+  document.addEventListener('change', handleChange, { capture: true, signal });
+  document.addEventListener('submit', handleSubmit, { capture: true, signal });
 
   if (isRestoring && !startTimeStr) {
     console.log('⚠️ startRecording: Missing startTimeStr during restore, fetching from session...');
@@ -869,10 +825,11 @@ function stopRecording() {
     modalTimeout = null;
   }
 
-  document.removeEventListener('click', handleClick, true);
-  document.removeEventListener('input', handleInput, true);
-  document.removeEventListener('change', handleChange, true);
-  document.removeEventListener('submit', handleSubmit, true);
+  // 🔧 FIX: CNT-007 - Abort all event listeners at once
+  if (eventListenerController) {
+    eventListenerController.abort();
+    eventListenerController = null;
+  }
 
   removeRecordingIndicator();
   removeHighlight();
@@ -1109,12 +1066,14 @@ function addRecordingIndicator(startTime = Date.now()) {
   const secs = (recordingSeconds % 60).toString().padStart(2, '0');
   if (timeDisplay) timeDisplay.textContent = `${mins}:${secs}`;
 
+  // 🔧 FIX: CNT-005 - Only increment timer when not paused
   timerInterval = setInterval(() => {
     if (!isPaused) {
       recordingSeconds++;
-      const mins = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
-      const secs = (recordingSeconds % 60).toString().padStart(2, '0');
-      if (timeDisplay) timeDisplay.textContent = `${mins}:${secs}`;
+    }
+    const timeDisplay = shadow.getElementById('time-display');
+    if (timeDisplay) {
+      timeDisplay.textContent = formatTime(recordingSeconds);
     }
   }, 1000);
 }
@@ -1195,13 +1154,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-let lastUrl = window.location.href;
+var lastUrl = window.location.href;
 setInterval(() => {
   if (isRecording && window.location.href !== lastUrl) {
     lastUrl = window.location.href;
     captureNavigation();
   }
 }, 1000);
+
+function formatTime(totalSeconds) {
+  const mins = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+  const secs = (totalSeconds % 60).toString().padStart(2, '0');
+  return `${mins}:${secs}`;
+}
 
 console.log('TestSnapper content script loaded');
 
