@@ -163,13 +163,11 @@ body::before {
 }
 
 [data-theme="dark"] body::before {
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(255, 255, 255, 0.015) 0px,
-    transparent 1px,
-    transparent 2px,
-    rgba(255, 255, 255, 0.015) 3px
-  );
+  background: repeating-linear-gradient(0deg,
+      rgba(255, 255, 255, 0.015) 0px,
+      transparent 1px,
+      transparent 2px,
+      rgba(255, 255, 255, 0.015) 3px);
   opacity: 0.5;
 }
 
@@ -218,8 +216,15 @@ header {
 }
 
 @keyframes cornerPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .header-left {
@@ -237,15 +242,20 @@ header {
 header h1 {
   font-family: var(--font-mono);
   font-size: var(--text-lg);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--accent);
   letter-spacing: -0.3px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  white-space: nowrap;
 }
 
 /* Dark theme: Terminal-style title */
 [data-theme="dark"] header h1 {
   font-family: var(--font-display);
-  font-weight: 400;
+  font-weight: 600;
   letter-spacing: 2px;
   text-transform: uppercase;
   text-shadow: 0 0 8px var(--accent-glow);
@@ -385,8 +395,17 @@ header h1 {
 }
 
 @keyframes tabBlink {
-  0%, 49%, 100% { opacity: 1; }
-  50%, 99% { opacity: 0.2; }
+
+  0%,
+  49%,
+  100% {
+    opacity: 1;
+  }
+
+  50%,
+  99% {
+    opacity: 0.2;
+  }
 }
 
 /* ==================== TAB CONTENT ==================== */
@@ -535,10 +554,13 @@ header h1 {
 }
 
 @keyframes recordingPulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
     opacity: 1;
   }
+
   50% {
     transform: scale(1.1);
     opacity: 0.8;
@@ -550,6 +572,7 @@ header h1 {
     transform: scale(0.8);
     opacity: 0.8;
   }
+
   100% {
     transform: scale(1.5);
     opacity: 0;
@@ -557,8 +580,15 @@ header h1 {
 }
 
 @keyframes pausePulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
 }
 
 #stateText {
@@ -586,8 +616,15 @@ header h1 {
 }
 
 @keyframes gradientShift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
 }
 
 /* ==================== STATS ==================== */
@@ -683,8 +720,13 @@ header h1 {
 }
 
 @keyframes statScan {
-  0% { left: -100%; }
-  100% { left: 100%; }
+  0% {
+    left: -100%;
+  }
+
+  100% {
+    left: 100%;
+  }
 }
 
 [data-theme="dark"] .stat-label {
@@ -1165,13 +1207,11 @@ header h1 {
   content: '';
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(
-    90deg,
-    transparent,
-    transparent 8px,
-    rgba(0, 0, 0, 0.1) 8px,
-    rgba(0, 0, 0, 0.1) 10px
-  );
+  background: repeating-linear-gradient(90deg,
+      transparent,
+      transparent 8px,
+      rgba(0, 0, 0, 0.1) 8px,
+      rgba(0, 0, 0, 0.1) 10px);
   pointer-events: none;
 }
 
@@ -1194,8 +1234,15 @@ header h1 {
 }
 
 @keyframes storageShine {
-  0%, 100% { opacity: 0; }
-  50% { opacity: 1; }
+
+  0%,
+  100% {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 .storage-usage-bar.storage-ok {
@@ -1215,8 +1262,15 @@ header h1 {
 }
 
 @keyframes storageCritical {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.6;
+  }
 }
 
 .storage-usage-text {
@@ -1261,13 +1315,11 @@ header h1 {
   content: '';
   position: absolute;
   inset: 0;
-  background: repeating-linear-gradient(
-    45deg,
-    transparent,
-    transparent 10px,
-    rgba(0, 0, 0, 0.05) 10px,
-    rgba(0, 0, 0, 0.05) 20px
-  );
+  background: repeating-linear-gradient(45deg,
+      transparent,
+      transparent 10px,
+      rgba(0, 0, 0, 0.05) 10px,
+      rgba(0, 0, 0, 0.05) 20px);
   pointer-events: none;
 }
 
@@ -1301,9 +1353,19 @@ header h1 {
 }
 
 @keyframes messageAlert {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-4px); }
-  75% { transform: translateX(4px); }
+
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  25% {
+    transform: translateX(-4px);
+  }
+
+  75% {
+    transform: translateX(4px);
+  }
 }
 
 /* ==================== SETTINGS ==================== */
@@ -1444,25 +1506,39 @@ input[type="number"]:focus {
 }
 
 @keyframes cursorBlink {
-  0%, 50% { border-right-color: var(--accent); }
-  51%, 100% { border-right-color: transparent; }
+
+  0%,
+  50% {
+    border-right-color: var(--accent);
+  }
+
+  51%,
+  100% {
+    border-right-color: transparent;
+  }
 }
 
 /* Glitch effect for state text when recording */
-.state-dot.recording ~ #stateText {
+.state-dot.recording~#stateText {
   animation: gradientShift 3s ease infinite, glitchText 5s ease-in-out infinite;
 }
 
 @keyframes glitchText {
-  0%, 90%, 100% {
+
+  0%,
+  90%,
+  100% {
     transform: translate(0);
   }
+
   91% {
     transform: translate(-2px, 1px);
   }
+
   92% {
     transform: translate(2px, -1px);
   }
+
   93% {
     transform: translate(0);
   }
@@ -1509,9 +1585,23 @@ input[type="number"]:focus {
 
 /* ASCII art loading indicator */
 @keyframes rotate {
-  0% { content: '|'; }
-  25% { content: '/'; }
-  50% { content: '—'; }
-  75% { content: '\\'; }
-  100% { content: '|'; }
+  0% {
+    content: '|';
+  }
+
+  25% {
+    content: '/';
+  }
+
+  50% {
+    content: '—';
+  }
+
+  75% {
+    content: '\\';
+  }
+
+  100% {
+    content: '|';
+  }
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TestSnapper",
-  "description": "Record UI test sessions with automated field detection, locator extraction, and export to DOCX/PDF/JSON. Perfect for QA testing and documentation.",
+  "description": "Record UI test sessions with smart field detection, locator extraction, and export to DOCX, PDF, and JSON.",
   "version": "1.1.3",
   "author": "TestSnapper Team",
   "homepage_url": "https://github.com/yourusername/testsnapper",
