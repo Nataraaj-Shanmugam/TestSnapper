@@ -1,18 +1,24 @@
 {
   "name": "testsnapper-extension",
-  "version": "1.1.0",
+  "version": "1.1.3",
   "description": "TestSnapper Browser Extension with AI-powered step enrichment",
   "scripts": {
-    "build": "webpack --mode=production",
-    "dev": "webpack --mode=development --watch",
-    "install-webllm": "npm install @mlc-ai/web-llm",
-    "setup": "npm run install-webllm && npm run build"
+    "build": "cross-env NODE_ENV=production webpack --mode=production",
+    "build:dev": "cross-env NODE_ENV=development webpack --mode=development",
+    "dev": "cross-env NODE_ENV=development webpack --mode=development --watch",
+    "clean": "node -e \"require('fs').rmSync('dist', {recursive: true, force: true})\"",
+    "setup-libs": "node scripts/download-libs.js",
+    "setup": "npm install && npm run setup-libs && npm run build"
   },
   "dependencies": {
     "@mlc-ai/web-llm": "^0.2.79"
   },
   "devDependencies": {
+    "@babel/core": "^7.23.0",
+    "@babel/preset-env": "^7.23.0",
+    "babel-loader": "^9.1.3",
     "copy-webpack-plugin": "^11.0.0",
+    "cross-env": "^10.1.0",
     "webpack": "^5.89.0",
     "webpack-cli": "^5.1.4"
   },

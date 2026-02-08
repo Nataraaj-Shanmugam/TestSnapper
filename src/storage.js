@@ -247,9 +247,21 @@ class StorageManager {
     try {
       const bytesInUse = await chrome.storage.local.getBytesInUse();
 
-      // chrome.storage.local quota is QUOTA_BYTES (typically 10MB without unlimitedStorage)
-      // With unlimitedStorage permission, this becomes much larger
-      const QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 10485760; // 10MB default
+      // BUG FIX: STR-CRIT-001 - Check if unlimitedStorage permission is granted
+      let QUOTA_BYTES;
+      try {
+        const hasUnlimited = await chrome.permissions.contains({ permissions: ['unlimitedStorage'] });
+        if (hasUnlimited) {
+          // With unlimitedStorage, quota is much larger (typically 1GB+)
+          QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 1073741824; // 1GB
+        } else {
+          // Without unlimitedStorage, limited to 10MB
+          QUOTA_BYTES = 10485760; // 10MB
+        }
+      } catch (err) {
+        // Fallback if permissions API fails
+        QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 10485760;
+      }
 
       const percentage = bytesInUse / QUOTA_BYTES;
 
@@ -516,21 +528,44 @@ class StorageManager {
         const oldKey = 'testsnapper_data';
         const oldData = await chrome.storage.local.get(oldKey);
 
+        // BUG FIX: STR-HIGH-001 - Validate data before migration
         if (oldData[oldKey] && oldData[oldKey].sessions) {
           const sessions = oldData[oldKey].sessions;
 
-          // Write new format
-          const sessionMeta = sessions.map(({ steps, assets, ...meta }) => meta);
-          await this._writeSessions(sessionMeta);
+          // Validate sessions array
+          if (!Array.isArray(sessions)) {
+            console.error('Migration failed: sessions is not an array');
+            throw new Error('Invalid data format for migration');
+          }
 
-          for (const session of sessions) {
-            await this._writeSteps(session.sessionId, session.steps || []);
-            await this._writeAssets(session.sessionId, session.assets || []);
+          // Validate each session has required fields
+          const validSessions = sessions.filter(s => {
+            if (!s || !s.sessionId) {
+              console.warn('Skipping invalid session during migration:', s);
+              return false;
+            }
+            return true;
+          });
+
+          if (validSessions.length === 0) {
+            console.warn('No valid sessions to migrate');
+          } else {
+            // Write new format
+            const sessionMeta = validSessions.map(({ steps, assets, ...meta }) => meta);
+            await this._writeSessions(sessionMeta);
+
+            for (const session of validSessions) {
+              const steps = Array.isArray(session.steps) ? session.steps : [];
+              const assets = Array.isArray(session.assets) ? session.assets : [];
+              await this._writeSteps(session.sessionId, steps);
+              await this._writeAssets(session.sessionId, assets);
+            }
+
+            console.log(`✅ Migration v1→v2 complete: ${validSessions.length} sessions migrated`);
           }
 
           // Remove old key
           await chrome.storage.local.remove(oldKey);
-          console.log('✅ Migration v1→v2 complete');
         }
       }
 

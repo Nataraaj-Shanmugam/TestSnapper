@@ -15,6 +15,7 @@
 class Redactor {
   constructor() {
     // Keywords that flag a field as sensitive (no /g needed — used with .some/.test on short strings)
+    // RED-MED-001: Enhanced with PIN, routing, account, DOB patterns
     this.sensitivePatterns = [
       /password/i,
       /passwd/i,
@@ -26,7 +27,18 @@ class Redactor {
       /credit[_-]?card/i,
       /cvv/i,
       /ssn/i,
-      /social[_-]?security/i
+      /social[_-]?security/i,
+      /\bpin\b/i,
+      /routing[_-]?number/i,
+      /account[_-]?number/i,
+      /bank[_-]?account/i,
+      /dob/i,
+      /date[_-]?of[_-]?birth/i,
+      /birthdate/i,
+      /tax[_-]?id/i,
+      /ein/i,
+      /driver[_-]?license/i,
+      /passport/i
     ];
 
     // PII detection patterns — stored WITHOUT /g to avoid lastIndex state.
@@ -34,6 +46,10 @@ class Redactor {
     this.emailPattern = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
     this.phonePattern = /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/;
     this.creditCardPattern = /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/;
+    this.ssnPattern = /\b\d{3}-\d{2}-\d{4}\b/;
+    this.pinPattern = /\b\d{4,6}\b/; // 4-6 digit PINs
+    this.routingPattern = /\b\d{9}\b/; // 9 digit routing numbers
+    this.dobPattern = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/; // MM/DD/YYYY or MM-DD-YY
   }
 
   /**
@@ -76,10 +92,18 @@ class Redactor {
 
     let result = value;
 
-    // Mask emails: keep first 2 chars of local part
+    // RED-MED-002: Mask emails - full masking for email fields, partial for others
     result = result.replace(
       new RegExp(this.emailPattern.source, 'g'),
       (email) => {
+        // Check if element is an email input field - use full masking
+        if (element && (element.type === 'email' ||
+            /email|e-mail|mail/i.test(element.name || '') ||
+            /email|e-mail|mail/i.test(element.id || '') ||
+            /email|e-mail|mail/i.test(element.placeholder || ''))) {
+          return '***@***.com'; // Full masking for email fields
+        }
+        // Partial masking for other contexts
         const [name, domain] = email.split('@');
         return `${name.substring(0, 2)}***@${domain}`;
       }
@@ -96,6 +120,32 @@ class Redactor {
       new RegExp(this.creditCardPattern.source, 'g'),
       '**** **** **** ****'
     );
+
+    // RED-MED-001: Mask SSN
+    result = result.replace(
+      new RegExp(this.ssnPattern.source, 'g'),
+      '***-**-****'
+    );
+
+    // Mask routing numbers (9 digits)
+    result = result.replace(
+      new RegExp(this.routingPattern.source, 'g'),
+      '*********'
+    );
+
+    // Mask dates of birth
+    result = result.replace(
+      new RegExp(this.dobPattern.source, 'g'),
+      '**/**/****'
+    );
+
+    // Mask PINs (4-6 digit numbers) - only if in sensitive context
+    if (this.shouldIgnoreField(element)) {
+      result = result.replace(
+        new RegExp(this.pinPattern.source, 'g'),
+        (match) => '\u2022'.repeat(match.length)
+      );
+    }
 
     return result;
   }

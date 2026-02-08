@@ -180,16 +180,33 @@ class SelectorEngine {
   /**
    * NEW: Detect if ID looks auto-generated
    */
+  /**
+   * SEL-HIGH-001: Refined auto-generated ID detection
+   * Less aggressive - only matches clearly generated patterns.
+   * Short IDs (< 4 chars) are never considered generated.
+   * Human-readable IDs with hyphens/underscores are allowed.
+   */
   _isGeneratedId(id) {
+    // Short IDs are almost always human-authored
+    if (id.length < 4) return false;
+
+    // IDs with meaningful words are likely human-authored
+    if (/^(header|footer|nav|main|sidebar|content|menu|form|login|search|modal|dialog|btn|button|input|container|wrapper)[-_]/i.test(id)) {
+      return false;
+    }
+
     const patterns = [
-      /^[a-f0-9]{8,}$/i,           // Long hex strings
-      /^ember\d+/,                  // Ember.js
-      /^react-[a-z0-9-]+/,         // React
-      /^__next/,                    // Next.js
-      /^\d+$/,                      // Just numbers
-      /^[a-z]-\d+-\d+/,            // Framework patterns
-      /^:r[a-z0-9]+:/,             // React 18+
-      /^mui-\d+/                    // Material-UI
+      /^[a-f0-9]{12,}$/i,          // Long hex strings (12+ chars, was 8)
+      /^ember\d+$/,                 // Ember.js (exact match)
+      /^react-[a-z0-9]{6,}$/,      // React (6+ random chars after prefix)
+      /^__next[-_]/,                // Next.js internal
+      /^\d{4,}$/,                   // 4+ digit numbers only
+      /^[a-z]{1,2}-\d+-\d+$/,      // Short prefix + two number groups
+      /^:r[a-z0-9]+:$/,            // React 18+ useId
+      /^mui-\d+$/,                  // Material-UI
+      /^[a-z]{1,3}\d{6,}$/i,       // 1-3 letter prefix + 6+ digits
+      /^_[a-f0-9]{8,}$/i,          // Underscore + hex (CSS modules)
+      /^css-[a-z0-9]{6,}$/         // Emotion/styled-components
     ];
     return patterns.some(pattern => pattern.test(id));
   }
@@ -373,12 +390,60 @@ class SelectorEngine {
         }
       });
     }
+
+    // SEL-MED-002: Svelte detection
+    const hasSvelte = element.__svelte_meta ||
+      element.hasAttribute('bind:value') ||
+      element.hasAttribute('on:click') ||
+      element.hasAttribute('use:');
+    if (hasSvelte) {
+      Array.from(element.attributes).forEach(attr => {
+        if (attr.name.startsWith('bind:') || attr.name.startsWith('on:') ||
+            attr.name.startsWith('use:') || attr.name.startsWith('class:')) {
+          candidates.push({
+            selector: `[${attr.name}="${attr.value}"]`,
+            type: 'svelte-attr',
+            strategy: 'Svelte',
+            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
+            length: attr.name.length + attr.value.length + 4
+          });
+        }
+      });
+    }
+
+    // SEL-MED-002: Solid.js detection
+    const hasSolid = element._$owner || // Solid's internal marker
+      element.hasAttribute('use:') ||
+      Array.from(element.attributes).some(attr => attr.name.startsWith('prop:'));
+    if (hasSolid) {
+      Array.from(element.attributes).forEach(attr => {
+        if (attr.name.startsWith('use:') || attr.name.startsWith('prop:') ||
+            attr.name.startsWith('on:') || attr.name.startsWith('attr:')) {
+          candidates.push({
+            selector: `[${attr.name}="${attr.value}"]`,
+            type: 'solid-attr',
+            strategy: 'Solid',
+            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
+            length: attr.name.length + attr.value.length + 4
+          });
+        }
+      });
+    }
   }
 
   _addClassSelectors(element, candidates) {
-    if (!element.className || typeof element.className !== 'string') return;
+    // SEL-MED-003: Handle both regular elements and SVG elements
+    let className = '';
+    if (typeof element.className === 'string') {
+      className = element.className;
+    } else if (element.className && typeof element.className.baseVal === 'string') {
+      // SVG elements use SVGAnimatedString for className
+      className = element.className.baseVal;
+    }
 
-    const classes = element.className.trim().split(/\s+/)
+    if (!className) return;
+
+    const classes = className.trim().split(/\s+/)
       .filter(c => c && !c.match(/^(ng-|is-|has-|active|selected|focus|hover|disabled)/));
 
     if (classes.length === 0) return;
@@ -585,13 +650,7 @@ class SelectorEngine {
     }
   }
 
-  /**
-   * Check if ID looks auto-generated
-   */
-  _isGeneratedId(id) {
-    // Check for common auto-generated patterns
-    return /^(react-|vue-|ng-|\d{10,}|[a-f0-9]{8,}$)/.test(id);
-  }
+  // _isGeneratedId: single definition at line 183 (SEL-HIGH-001 fix - removed duplicate)
 
   /**
    * Check if class looks generated/dynamic
@@ -750,25 +809,35 @@ class SelectorEngine {
     // Uniqueness is most important
     if (candidate.isUnique) score += 100;
 
-    // Strategy priority
+    // SEL-MED-001: Comprehensive strategy priority scores
     const strategyScores = {
       'ID': 95,
       'data-testid': 90,
       'name': 85,
       'aria-label': 80,
+      'aria-labelledby': 78,
       'type+placeholder': 75,
       'placeholder': 70,
+      'Vue': 68,
+      'Angular': 67,
+      'React': 66,
+      'Svelte': 65,
+      'Solid': 64,
       'single-class': 60,
       'parent-id + child': 55,
       'text-exact': 50,
+      'XPath (Semantic)': 48,
       'relative-xpath (id)': 50,
       'parent-class + child': 45,
       'text-content': 40,
+      'ID (auto-generated)': 40,
+      'ID (XPath)': 38,
       'multi-class': 35,
       'relative-xpath (role)': 30,
+      'tag-only': 25,
       'nth-of-type': 20,
       'absolute-xpath': 10,
-      'ID (auto-generated)': 40  // Lower score for generated IDs
+      'fallback': 1
     };
 
     score += strategyScores[candidate.strategy] || 0;

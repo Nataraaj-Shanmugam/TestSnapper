@@ -15,11 +15,12 @@ console.log("✅ TestSnapper Popup loaded");
 
 document.addEventListener("DOMContentLoaded", async () => {
   await init();
+  // POP-MED-002: Reduced from 2s to 3s for better performance
   setInterval(() => {
     if (currentState === "recording" || currentState === "paused") {
       updateState();
     }
-  }, 2000);
+  }, 3000);
 });
 
 // =====================
@@ -47,6 +48,9 @@ const liveStepsList = document.getElementById("liveStepsList");
 
 // Settings section
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
+const backupAllBtn = document.getElementById("backupAllBtn"); // STR-MED-003
+const restoreAllBtn = document.getElementById("restoreAllBtn"); // STR-MED-003
+const restoreFileInput = document.getElementById("restoreFileInput"); // STR-MED-003
 const captureApiCalls = document.getElementById("captureApiCalls");
 const apiCallsOptions = document.getElementById("apiCallsOptions");
 const captureFailedCalls = document.getElementById("captureFailedCalls");
@@ -71,6 +75,7 @@ async function init() {
   await updateState();
   await loadSessions();
   await loadSettings();
+  await loadExportFormat(); // POP-MED-003: Load saved export format
   await updateStorageUsage(); // BUG FIX: POP-003
   setupKeyboardShortcuts(); // BUG FIX: POP-006
 }
@@ -83,46 +88,34 @@ function setupTheme() {
   const themeToggle = document.getElementById('themeToggle');
   if (!themeToggle) return;
 
-  const icon = themeToggle.querySelector('.icon');
-
-  // 1. Check for manual override in localStorage
+  // Detect initial theme: saved > system preference
   const savedTheme = localStorage.getItem('theme');
-
   if (savedTheme) {
     applyTheme(savedTheme);
   } else {
-    // 2. Default to time-based logic (Dark: 6 PM - 6 AM)
-    const hour = new Date().getHours();
-    const isDarkTime = hour >= 18 || hour < 6;
-    applyTheme(isDarkTime ? 'dark' : 'light');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    applyTheme(prefersDark ? 'dark' : 'light');
   }
 
   // Toggle Listener
   themeToggle.addEventListener('click', () => {
-    // Check current theme from data attribute for reliability
-    const currentTheme = document.body.dataset.theme || 'dark';
+    const currentTheme = document.body.dataset.theme || 'light';
     const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-
     applyTheme(newTheme);
     localStorage.setItem('theme', newTheme);
   });
 }
 
-/**
- * BUG FIX: BUG-002 - Theme application with explicit state tracking
- */
 function applyTheme(theme) {
-  const icon = document.querySelector('#themeToggle .icon');
-
-  // Set data attribute for reliable state tracking
+  const iconEl = document.querySelector('#themeToggle .icon');
   document.body.dataset.theme = theme;
 
-  if (theme === 'light') {
-    document.body.classList.add('light-mode');
-    if (icon) icon.textContent = '☀️';
-  } else {
-    document.body.classList.remove('light-mode');
-    if (icon) icon.textContent = '🌙';
+  if (iconEl) {
+    if (theme === 'light') {
+      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+    } else {
+      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+    }
   }
 }
 
@@ -186,6 +179,11 @@ function setupEventListeners() {
   sessionDropdown.addEventListener("change", handleSessionSelect);
   saveSettingsBtn?.addEventListener("click", handleSaveSettings);
 
+  // STR-MED-003: Backup/Restore
+  backupAllBtn?.addEventListener("click", handleBackupAll);
+  restoreAllBtn?.addEventListener("click", () => restoreFileInput.click());
+  restoreFileInput?.addEventListener("change", handleRestoreAll);
+
   // Settings interactivity
   captureApiCalls?.addEventListener("change", (e) => {
     apiCallsOptions.style.display = e.target.checked ? "block" : "none";
@@ -204,6 +202,78 @@ function setupEventListeners() {
   });
   captureAllCalls?.addEventListener("change", (e) => {
     if (e.target.checked) captureFailedCalls.checked = false;
+  });
+
+  // POP-MED-003: Save export format when changed
+  document.querySelectorAll('input[name="format"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        saveExportFormat(e.target.value);
+      }
+    });
+  });
+
+  // POP-MED-001: Keyboard navigation
+  setupKeyboardNavigation();
+}
+
+// =====================
+// POP-MED-001: Keyboard Navigation
+// =====================
+function setupKeyboardNavigation() {
+  // Global keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+Enter or Cmd+Enter: Export
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (!exportBtn.disabled) {
+        handleExport();
+      }
+    }
+
+    // Escape: Close modals or steps viewer
+    if (e.key === 'Escape') {
+      if (stepsViewer.style.display !== 'none') {
+        stepsViewer.style.display = 'none';
+      }
+    }
+
+    // Tab navigation enhancement - ensure focusable elements
+    if (e.key === 'Tab') {
+      // Let browser handle default tab behavior
+      // Just ensure our buttons are focusable
+    }
+  });
+
+  // Make all buttons keyboard accessible
+  const makeButtonAccessible = (button) => {
+    if (!button) return;
+
+    // Ensure button has tabindex
+    if (!button.hasAttribute('tabindex')) {
+      button.setAttribute('tabindex', '0');
+    }
+
+    // Add Enter/Space key support if not already present
+    button.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        button.click();
+      }
+    });
+  };
+
+  // Make all control buttons accessible
+  [startBtn, pauseBtn, resumeBtn, stopBtn, screenshotBtn,
+    exportBtn, viewStepsBtn, deleteSessionBtn, clearAllBtn,
+    saveSettingsBtn, closeStepsBtn].forEach(makeButtonAccessible);
+
+  // Session dropdown - arrow key navigation
+  sessionDropdown?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSessionSelect();
+    }
   });
 }
 
@@ -353,6 +423,8 @@ async function handleExport() {
 
     if (response.success) {
       showMessage(`Exported as ${response.filename}`, "success");
+      // BUG FIX: POP-HIGH-001 - Update storage usage after export
+      await updateStorageUsage();
     } else {
       showMessage("Export failed: " + (response.error || "Unknown error"), "error");
     }
@@ -411,6 +483,84 @@ async function handleClearAll() {
   } catch (err) {
     console.error("Clear all failed:", err);
     showMessage("Error clearing sessions", "error");
+  }
+}
+
+// =====================
+// STR-MED-003: Backup/Restore
+// =====================
+async function handleBackupAll() {
+  try {
+    showMessage("Preparing backup...", "info");
+
+    const response = await chrome.runtime.sendMessage({ action: "exportAllData" });
+
+    if (response.success) {
+      const backupData = response.data;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+      const filename = `testsnapper-backup-${timestamp}.json`;
+
+      // Create download
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      showMessage(`Backup saved: ${filename}`, "success");
+    } else {
+      showMessage("Backup failed: " + (response.error || "Unknown error"), "error");
+    }
+  } catch (err) {
+    console.error("Backup failed:", err);
+    showMessage("Error creating backup", "error");
+  }
+}
+
+async function handleRestoreAll(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  if (!file.name.endsWith('.json')) {
+    showMessage("Invalid file type. Please select a .json backup file.", "error");
+    return;
+  }
+
+  if (!confirm("Restore from backup? This will replace ALL current data. Current sessions will be lost!")) {
+    event.target.value = ''; // Reset file input
+    return;
+  }
+
+  try {
+    showMessage("Restoring from backup...", "info");
+
+    const text = await file.text();
+    const backupData = JSON.parse(text);
+
+    // Validate backup data structure
+    if (!backupData.meta || !backupData.sessions || !Array.isArray(backupData.sessions)) {
+      throw new Error("Invalid backup file format");
+    }
+
+    const response = await chrome.runtime.sendMessage({
+      action: "importAllData",
+      data: backupData
+    });
+
+    if (response.success) {
+      showMessage(`Restored ${backupData.sessions.length} sessions successfully`, "success");
+      await loadSessions();
+      await updateStorageUsage();
+    } else {
+      showMessage("Restore failed: " + (response.error || "Unknown error"), "error");
+    }
+  } catch (err) {
+    console.error("Restore failed:", err);
+    showMessage("Error restoring backup: " + err.message, "error");
+  } finally {
+    event.target.value = ''; // Reset file input
   }
 }
 
@@ -532,6 +682,30 @@ async function loadSettings() {
   }
 }
 
+// POP-MED-003: Persist export format selection
+async function loadExportFormat() {
+  try {
+    const result = await chrome.storage.local.get('exportFormat');
+    const savedFormat = result.exportFormat || 'docx';
+
+    // Set the correct radio button as checked
+    const formatRadio = document.querySelector(`input[name="format"][value="${savedFormat}"]`);
+    if (formatRadio) {
+      formatRadio.checked = true;
+    }
+  } catch (err) {
+    console.error("Load export format failed:", err);
+  }
+}
+
+async function saveExportFormat(format) {
+  try {
+    await chrome.storage.local.set({ exportFormat: format });
+  } catch (err) {
+    console.error("Save export format failed:", err);
+  }
+}
+
 // =====================
 // UI Helpers
 // =====================
@@ -544,6 +718,25 @@ async function updateState() {
       stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
       stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
       stepCount.textContent = response.stepCount || 0;
+
+      // Update screenshot count
+      const screenshotCountEl = document.getElementById('screenshotCount');
+      if (screenshotCountEl) {
+        screenshotCountEl.textContent = response.screenshotCount || 0;
+      }
+
+      // Update session duration
+      const sessionDurationEl = document.getElementById('sessionDuration');
+      if (sessionDurationEl && response.session?.startTime) {
+        const start = new Date(response.session.startTime).getTime();
+        const elapsed = Math.floor((Date.now() - start) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        sessionDurationEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+      } else if (sessionDurationEl) {
+        sessionDurationEl.textContent = '0:00';
+      }
+
       updateButtonStates();
       if (currentState === "recording" && currentSessionId) updateLiveSteps();
     }

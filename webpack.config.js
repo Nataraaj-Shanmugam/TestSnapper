@@ -1,0 +1,73 @@
+const path = require('path');
+const CopyPlugin = require('copy-webpack-plugin');
+
+module.exports = {
+  mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+  devtool: process.env.NODE_ENV === 'production' ? false : 'inline-source-map',
+
+  entry: {
+    // Background service worker
+    background: './src/background/background.js',
+  },
+
+  output: {
+    path: path.resolve(__dirname, 'dist'),
+    filename: 'src/background/[name].js',
+    clean: false // Don't clean to preserve manually copied files
+  },
+
+  module: {
+    rules: [
+      {
+        test: /\.js$/,
+        exclude: /node_modules/,
+        use: {
+          loader: 'babel-loader',
+          options: {
+            presets: [
+              ['@babel/preset-env', {
+                targets: {
+                  chrome: '88'
+                },
+                modules: false
+              }]
+            ]
+          }
+        }
+      }
+    ]
+  },
+
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        // Manifest
+        { from: 'manifest.json', to: 'manifest.json' },
+
+        // Source files (non-bundled)
+        { from: 'src/content', to: 'src/content' },
+        { from: 'src/ui', to: 'src/ui' },
+        { from: 'src/core', to: 'src/core' },
+        { from: 'src/storage.js', to: 'src/storage.js' },
+        { from: 'src/export.js', to: 'src/export.js' },
+
+        // Assets
+        { from: 'src/assets', to: 'src/assets', noErrorOnMissing: true },
+
+        // Libraries
+        { from: 'libs', to: 'libs', noErrorOnMissing: true },
+
+        // Documentation
+        { from: 'docs', to: 'docs', noErrorOnMissing: true },
+      ]
+    })
+  ],
+
+  resolve: {
+    extensions: ['.js']
+  },
+
+  optimization: {
+    minimize: process.env.NODE_ENV === 'production'
+  }
+};

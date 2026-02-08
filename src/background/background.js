@@ -136,7 +136,35 @@ class SettingsManager {
     if (this.cache) return this.cache;
 
     const result = await chrome.storage.local.get('settings');
-    this.cache = { ...this.defaults, ...result.settings };
+    const loadedSettings = result.settings || {};
+
+    // BG-MED-003: Validate settings on load
+    const validated = {};
+
+    // Validate screenshotSeconds
+    if (loadedSettings.screenshotSeconds !== undefined) {
+      const val = parseInt(loadedSettings.screenshotSeconds);
+      validated.screenshotSeconds = isNaN(val) ? this.defaults.screenshotSeconds : Math.max(1, Math.min(60, val));
+    }
+
+    // Validate maxSessions
+    if (loadedSettings.maxSessions !== undefined) {
+      const val = parseInt(loadedSettings.maxSessions);
+      validated.maxSessions = isNaN(val) ? this.defaults.maxSessions : Math.max(1, Math.min(100, val));
+    }
+
+    // Validate imageQuality
+    if (loadedSettings.imageQuality !== undefined) {
+      const val = parseFloat(loadedSettings.imageQuality);
+      validated.imageQuality = isNaN(val) ? this.defaults.imageQuality : Math.max(0.1, Math.min(1.0, val));
+    }
+
+    // Validate boolean fields
+    if (loadedSettings.autoScreenshot !== undefined) {
+      validated.autoScreenshot = Boolean(loadedSettings.autoScreenshot);
+    }
+
+    this.cache = { ...this.defaults, ...validated };
     return this.cache;
   }
 
@@ -176,6 +204,18 @@ const stateManager = new RecordingStateManager();
 const settingsManager = new SettingsManager();
 
 storage.init().catch(console.error);
+
+// SEC-012: Set uninstall URL and handle install/update events
+chrome.runtime.onInstalled.addListener((details) => {
+  // Set feedback URL for when users uninstall the extension
+  chrome.runtime.setUninstallURL('https://forms.gle/testsnapper-feedback');
+
+  if (details.reason === 'install') {
+    console.log('✅ TestSnapper installed successfully');
+  } else if (details.reason === 'update') {
+    console.log(`✅ TestSnapper updated from ${details.previousVersion} to ${chrome.runtime.getManifest().version}`);
+  }
+});
 
 // BUG FIX: BG-003 - Cleanup orphaned data on startup
 storage.init().then(async () => {
@@ -288,6 +328,19 @@ storage.onQuotaWarning((usage) => {
         console.warn('⚠️ Recording tab no longer exists, marking session incomplete');
         await markSessionIncomplete(session.sessionId);
         await chrome.storage.local.remove('activeRecording');
+
+        // BG-HIGH-001: Notify user that recovery failed
+        try {
+          await chrome.notifications.create('session-recovery-failed', {
+            type: 'basic',
+            iconUrl: 'src/assets/icons/icon128.png',
+            title: 'TestSnapper - Recording Recovery Failed',
+            message: `Your previous recording session could not be recovered because the tab was closed. The session has been saved as incomplete.`,
+            priority: 1
+          });
+        } catch (notifErr) {
+          console.warn('Could not show notification:', notifErr);
+        }
       }
     }
   } catch (err) {
@@ -317,17 +370,20 @@ async function markSessionIncomplete(sessionId) {
 
 class BadgeManager {
   static async setRecording(tabId) {
-    await chrome.action.setBadgeText({ text: 'REC', tabId });
-    await chrome.action.setBadgeBackgroundColor({ color: '#FF0000', tabId });
+    await chrome.action.setBadgeText({ text: '●', tabId });
+    await chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId });
+    await chrome.action.setTitle({ title: 'TestSnapper - Recording', tabId });
   }
 
   static async setPaused(tabId) {
-    await chrome.action.setBadgeText({ text: 'PAUSE', tabId });
-    await chrome.action.setBadgeBackgroundColor({ color: '#FFA500', tabId });
+    await chrome.action.setBadgeText({ text: '❚❚', tabId });
+    await chrome.action.setBadgeBackgroundColor({ color: '#d97706', tabId });
+    await chrome.action.setTitle({ title: 'TestSnapper - Paused', tabId });
   }
 
   static async clear(tabId) {
     await chrome.action.setBadgeText({ text: '', tabId });
+    await chrome.action.setTitle({ title: 'TestSnapper - Record UI Tests', tabId });
   }
 }
 
@@ -388,9 +444,12 @@ async function captureScreenshot(tabId, isManual = true) {
     return { success: false, error: 'No active session' };
   }
 
-  // BUG FIX: BG-002 - Rate limiting check
+  // BUG FIX: BG-002 - Rate limiting check (only for auto-screenshots)
+  // Manual screenshots always bypass rate limiting
   if (!isManual && !stateManager.canTakeScreenshot()) {
-    console.log('⏸️ Screenshot rate limited');
+    console.log('⏸️ Auto-screenshot rate limited');
+    // CNT-MED-003: Notify content script to show visual feedback
+    chrome.tabs.sendMessage(tabId, { action: 'screenshotRateLimited' }).catch(() => {});
     return { success: false, error: 'Rate limited' };
   }
 
@@ -417,8 +476,15 @@ async function captureScreenshot(tabId, isManual = true) {
 
     chrome.tabs.sendMessage(tabId, { action: 'afterScreenshot' }).catch(() => { });
 
+    // BUG FIX: BG-MED-001 - Validate screenshot data URL format
     if (!dataUrl || !dataUrl.startsWith('data:image/')) {
-      throw new Error('Screenshot capture returned invalid data');
+      throw new Error('Screenshot capture returned invalid data URL format');
+    }
+
+    // Additional validation
+    const base64Match = dataUrl.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/);
+    if (!base64Match) {
+      throw new Error('Screenshot data URL has invalid format');
     }
 
     // BUG FIX: BG-002 - Mark screenshot taken for rate limiting
@@ -634,6 +700,11 @@ async function exportSession(sessionId, format = 'json') {
   try {
     stateManager.setExporting();
 
+    // BG-HIGH-003: Persist export state for crash recovery
+    await chrome.storage.local.set({
+      activeExport: { sessionId, format, startedAt: Date.now() }
+    });
+
     const progressCallback = (update = {}) => {
       // BUG FIX: BG-004 - Only send if there are listeners
       chrome.runtime.sendMessage({
@@ -663,7 +734,8 @@ async function exportSession(sessionId, format = 'json') {
     const result = await exportService.exportSession(sessionId, format, progressCallback);
 
     let downloadUrl;
-    let filename = result.filename;
+    // BUG FIX: BG-MED-004 - Sanitize filename to remove invalid characters
+    let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
 
     if (result.blob) {
       // Binary format (docx) – convert Blob → dataUrl for the Downloads API
@@ -697,6 +769,9 @@ async function exportSession(sessionId, format = 'json') {
 
     stateManager.state = 'idle';
 
+    // BG-HIGH-003: Clear export state on success
+    await chrome.storage.local.remove('activeExport');
+
     progressCallback({
       percent: 100,
       status: 'Download started',
@@ -707,6 +782,9 @@ async function exportSession(sessionId, format = 'json') {
   } catch (error) {
     console.error('Export failed:', error);
     stateManager.state = 'idle';
+
+    // BG-HIGH-003: Clear export state on failure
+    await chrome.storage.local.remove('activeExport').catch(() => {});
 
     // BUG FIX: BG-004 - Safe error notification
     chrome.runtime.sendMessage({
@@ -872,6 +950,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'getStorageUsage':
           const usage = await storage.getStorageUsage();
           response = { success: true, usage };
+          break;
+
+        // STR-MED-003: Backup/Restore functionality
+        case 'exportAllData':
+          const exportData = await storage.exportAllData();
+          response = { success: true, data: exportData };
+          break;
+
+        case 'importAllData':
+          await storage.importAllData(message.data);
+          response = { success: true };
           break;
 
         default:

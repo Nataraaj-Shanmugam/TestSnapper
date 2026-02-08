@@ -24,6 +24,7 @@ var isPaused = false;
 var eventListenerController = null;
 var isModalOpen = false;
 var modalTimeout = null;
+var navigationCheckInterval = null;
 
 // Track last interactions to prevent duplicates
 var lastInteraction = {
@@ -284,12 +285,181 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
 
     modalStates.set(modalId, state);
 
+    // Detect page theme for modal styling
+    var modalTheme = 'light';
+    try {
+      var bgVal = getComputedStyle(document.body).backgroundColor;
+      var rgbMatch = bgVal.match(/\d+/g);
+      if (rgbMatch) {
+        var rgbNums = rgbMatch.map(Number);
+        var lum = (0.299 * rgbNums[0] + 0.587 * rgbNums[1] + 0.114 * rgbNums[2]) / 255;
+        modalTheme = lum < 0.5 ? 'dark' : 'light';
+      }
+    } catch(e) { /* fallback to light */ }
+
+    var isLight = modalTheme === 'light';
+    var modalBg = isLight ? '#ffffff' : '#1a1a1f';
+    var modalBorder = isLight ? '#dee2e6' : '#2e2e35';
+    var modalShadow = isLight ? '0 10px 25px -5px rgba(0,0,0,0.1)' : '0 10px 25px -5px rgba(0,0,0,0.5)';
+    var textPrimary = isLight ? '#212529' : '#ececef';
+    var textMuted = isLight ? '#868e96' : '#71717a';
+    var borderColor = isLight ? '#dee2e6' : '#2e2e35';
+    var inputBg = isLight ? '#ffffff' : '#111113';
+    var cancelBg = isLight ? 'transparent' : 'transparent';
+    var cancelHoverBg = isLight ? '#e9ecef' : '#2e2e35';
+
+    // CREATE MODAL UI
+    const overlay = document.createElement('div');
+    overlay.id = `testsnapper-modal-overlay-${modalId}`;
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 2147483646;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fadeIn 0.15s ease;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      background: ${modalBg};
+      border: 1px solid ${modalBorder};
+      padding: 24px;
+      border-radius: 10px;
+      width: min(440px, 90vw);
+      box-shadow: ${modalShadow};
+      animation: slideUp 0.15s ease;
+    `;
+
+    modal.innerHTML = `
+      <h3 style="margin: 0 0 8px 0; color: ${textPrimary}; font-size: 16px; font-weight: 600;">
+        Enter Field Name
+      </h3>
+      <p style="color: ${textMuted}; margin: 0 0 20px 0; font-size: 13px; line-height: 1.5;">
+        TestSnapper couldn't automatically detect the field name for this <strong>${action}</strong> action.
+        Please provide a descriptive name.
+      </p>
+      <input type="text"
+             id="testsnapper-field-input-${modalId}"
+             placeholder="e.g., Username, Email Address, Submit Button..."
+             style="width: 100%;
+                    padding: 8px 12px;
+                    border: 1px solid ${borderColor};
+                    border-radius: 6px;
+                    font-size: 13px;
+                    color: ${textPrimary};
+                    background: ${inputBg};
+                    margin-bottom: 20px;
+                    box-sizing: border-box;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+                    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+                    outline: none;">
+      <div style="display: flex; gap: 8px; justify-content: flex-end;">
+        <button id="testsnapper-modal-cancel-${modalId}"
+                style="padding: 8px 16px;
+                       border: 1px solid ${borderColor};
+                       border-radius: 6px;
+                       background: ${cancelBg};
+                       color: ${textMuted};
+                       cursor: pointer;
+                       font-size: 13px;
+                       font-weight: 500;
+                       transition: background 0.15s ease;">
+          Skip
+        </button>
+        <button id="testsnapper-modal-confirm-${modalId}"
+                style="padding: 8px 16px;
+                       border: none;
+                       border-radius: 6px;
+                       background: #2563eb;
+                       color: white;
+                       cursor: pointer;
+                       font-size: 13px;
+                       font-weight: 500;
+                       transition: background 0.15s ease;">
+          Confirm
+        </button>
+      </div>
+    `;
+
+    // Add CSS animations
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes slideUp {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes fadeOut {
+        from { opacity: 1; }
+        to { opacity: 0; }
+      }
+    `;
+    overlay.appendChild(style);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    state.overlay = overlay;
+
+    const input = document.getElementById(`testsnapper-field-input-${modalId}`);
+    const cancelBtn = document.getElementById(`testsnapper-modal-cancel-${modalId}`);
+    const confirmBtn = document.getElementById(`testsnapper-modal-confirm-${modalId}`);
+
+    // Focus input with focus ring
+    setTimeout(() => {
+      input.focus();
+      input.style.borderColor = '#2563eb';
+      input.style.boxShadow = '0 0 0 3px ' + (isLight ? '#eff6ff' : 'rgba(59,130,246,0.1)');
+    }, 100);
+
+    input.onfocus = () => {
+      input.style.borderColor = '#2563eb';
+      input.style.boxShadow = '0 0 0 3px ' + (isLight ? '#eff6ff' : 'rgba(59,130,246,0.1)');
+    };
+    input.onblur = () => {
+      input.style.borderColor = borderColor;
+      input.style.boxShadow = 'none';
+    };
+
+    // Button hover effects
+    confirmBtn.onmouseover = () => { confirmBtn.style.background = '#1d4ed8'; };
+    confirmBtn.onmouseout = () => { confirmBtn.style.background = '#2563eb'; };
+    cancelBtn.onmouseover = () => { cancelBtn.style.background = cancelHoverBg; };
+    cancelBtn.onmouseout = () => { cancelBtn.style.background = cancelBg; };
+
+    // Event handlers
+    confirmBtn.onclick = () => {
+      const value = input.value.trim();
+      closeModalById(modalId, value || null);
+    };
+
+    cancelBtn.onclick = () => {
+      closeModalById(modalId, null);
+    };
+
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmBtn.click();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelBtn.click();
+      }
+    };
+
     // Auto-close after 30 seconds
     state.timeout = setTimeout(() => {
       console.warn('⚠️ Modal auto-closed after timeout:', modalId);
       closeModalById(modalId, null);
     }, 30000);
-  })
+  });
 }
 /**
  * 🔧 FIX #2: Enhanced cleanup
@@ -387,8 +557,8 @@ function createHighlight(element) {
     left: ${rect.left}px;
     width: ${rect.width}px;
     height: ${rect.height}px;
-    border: 2px solid #FF6B6B;
-    background: rgba(255, 107, 107, 0.1);
+    border: 2px solid #2563eb;
+    background: rgba(37, 99, 235, 0.1);
     pointer-events: none;
     z-index: 999999;
     transition: all 0.2s;
@@ -409,11 +579,24 @@ function isDuplicateInteraction(element, action, value = null) {
   const now = Date.now();
   const timeSinceLastAction = now - lastInteraction.timestamp;
 
+  // CNT-MED-004: Smarter duplicate detection with action-specific time windows
+  let timeWindow = 500; // Default 500ms
+
+  // Stricter window for rapid clicks
+  if (action === 'click' || action === 'submit') {
+    timeWindow = 300; // 300ms for clicks to allow intentional double-clicks
+  }
+  // More lenient for typing to handle debouncing
+  else if (action === 'type' || action === 'select') {
+    timeWindow = 800; // 800ms for typing
+  }
+
   if (lastInteraction.element === element &&
     lastInteraction.action === action &&
-    timeSinceLastAction < 500) {
+    timeSinceLastAction < timeWindow) {
 
-    if (action === 'type' && value !== lastInteraction.value) {
+    // Allow if value changed (important for typing)
+    if ((action === 'type' || action === 'select') && value !== lastInteraction.value) {
       return false;
     }
 
@@ -494,24 +677,88 @@ async function handleClick(event) {
 }
 
 function showErrorNotification(message) {
+  showToastNotification(message, 'error');
+}
+
+/**
+ * CNT-MED-003: Show toast notification - theme-aware with left border accent
+ * @param {string} message
+ * @param {string} type - 'info' | 'success' | 'warning' | 'error'
+ */
+function showToastNotification(message, type = 'info') {
+  // Remove any existing notification
+  const existing = document.getElementById('testsnapper-toast');
+  if (existing) existing.remove();
+
+  // Detect page theme
+  var toastTheme = 'light';
+  try {
+    var bgStr = getComputedStyle(document.body).backgroundColor;
+    var rgbArr = bgStr.match(/\d+/g);
+    if (rgbArr) {
+      var rgbN = rgbArr.map(Number);
+      var lv = (0.299 * rgbN[0] + 0.587 * rgbN[1] + 0.114 * rgbN[2]) / 255;
+      toastTheme = lv < 0.5 ? 'dark' : 'light';
+    }
+  } catch(e) { /* fallback to light */ }
+
+  // Map legacy color params to types
+  if (type.startsWith('#')) {
+    if (type === '#ff4444' || type === '#FF4444') type = 'error';
+    else if (type === '#FFA500') type = 'warning';
+    else if (type === '#4CAF50' || type === '#333') type = 'info';
+    else type = 'info';
+  }
+
+  var accentColors = { info: '#2563eb', success: '#16a34a', warning: '#d97706', error: '#dc2626' };
+  var accentColor = accentColors[type] || accentColors.info;
+  var isLt = toastTheme === 'light';
+
   const notification = document.createElement('div');
+  notification.id = 'testsnapper-toast';
   notification.style.cssText = `
     position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: #ff4444;
-    color: white;
-    padding: 12px 20px;
+    bottom: 16px;
+    right: 16px;
+    background: ${isLt ? '#ffffff' : '#1a1a1f'};
+    color: ${isLt ? '#495057' : '#a1a1aa'};
+    border: 1px solid ${isLt ? '#dee2e6' : '#2e2e35'};
+    border-left: 3px solid ${accentColor};
+    padding: 12px 16px;
     border-radius: 8px;
     z-index: 2147483646;
-    font-family: sans-serif;
-    font-size: 14px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: ${isLt ? '0 4px 12px rgba(0,0,0,0.08)' : '0 4px 12px rgba(0,0,0,0.4)'};
+    animation: slideInRight 0.2s ease;
+    max-width: 360px;
   `;
   notification.textContent = message;
+
+  // Add animation keyframe
+  var toastStyle = document.createElement('style');
+  toastStyle.textContent = `
+    @keyframes slideInRight {
+      from { opacity: 0; transform: translateX(16px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+  `;
+  notification.appendChild(toastStyle);
   document.body.appendChild(notification);
 
-  setTimeout(() => notification.remove(), 5000);
+  setTimeout(() => {
+    notification.style.opacity = '0';
+    notification.style.transition = 'opacity 0.2s ease';
+    setTimeout(() => notification.remove(), 200);
+  }, 3000);
+}
+
+/**
+ * CNT-MED-003: Show rate limit feedback
+ */
+function showRateLimitFeedback() {
+  showToastNotification('Screenshot rate limited - please wait a moment', 'warning');
 }
 
 function handleInput(event) {
@@ -765,17 +1012,28 @@ function startRecording(sessionId, isRestoring = false, startTimeStr = null) {
   console.log('Starting timer with:', { startTimeStr, startTime, now: Date.now() });
   addRecordingIndicator(startTime);
 
-  // 🔧 FIX #7: Start session validation heartbeat
+  // 🔧 FIX #7: Start session validation heartbeat (reduced frequency)
   sessionValidationInterval = setInterval(async () => {
     const valid = await validateSession();
     if (!valid) {
       console.error('❌ Session validation failed - stopping recording');
       stopRecording();
     }
-  }, 5000);
+  }, 15000); // Reduced from 5s to 15s to improve performance
 
   if (isRestoring) {
     captureNavigation();
+  }
+
+  // Start navigation monitoring
+  if (!navigationCheckInterval) {
+    lastUrl = window.location.href;
+    navigationCheckInterval = setInterval(() => {
+      if (isRecording && window.location.href !== lastUrl) {
+        lastUrl = window.location.href;
+        captureNavigation();
+      }
+    }, 1000);
   }
 
   console.log('Content script: Recording started');
@@ -831,6 +1089,12 @@ function stopRecording() {
     eventListenerController = null;
   }
 
+  // 🔧 FIX: CNT-HIGH-001 - Clear navigation interval
+  if (navigationCheckInterval) {
+    clearInterval(navigationCheckInterval);
+    navigationCheckInterval = null;
+  }
+
   removeRecordingIndicator();
   removeHighlight();
 
@@ -848,32 +1112,50 @@ function addRecordingIndicator(startTime = Date.now()) {
   panelContainer.id = 'testsnapper-control-panel-container';
   const shadow = panelContainer.attachShadow({ mode: 'open' });
 
+  // Detect page theme for panel styling
+  var panelTheme = 'dark';
+  try {
+    var bg = getComputedStyle(document.body).backgroundColor;
+    var rgb = bg.match(/\d+/g);
+    if (rgb) {
+      var nums = rgb.map(Number);
+      var luminance = (0.299 * nums[0] + 0.587 * nums[1] + 0.114 * nums[2]) / 255;
+      panelTheme = luminance < 0.5 ? 'dark' : 'light';
+    }
+  } catch(e) { /* fallback to dark */ }
+
   const style = document.createElement('style');
   style.textContent = `
     :host {
       position: fixed;
-      top: 20px;
+      top: 16px;
       left: 50%;
       transform: translateX(-50%);
       z-index: 2147483647;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     }
     .panel {
       display: flex;
       align-items: center;
-      gap: 12px;
-      background: #1e1e1e;
-      padding: 8px 16px;
-      border-radius: 999px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1);
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 8px;
       cursor: grab;
-      backdrop-filter: blur(10px);
-      transition: transform 0.1s;
       user-select: none;
+      transition: transform 0.1s;
+    }
+    .panel.theme-light {
+      background: #ffffff;
+      border: 1px solid #dee2e6;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .panel.theme-dark {
+      background: #1a1a1f;
+      border: 1px solid #2e2e35;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
     .panel:active {
       cursor: grabbing;
-      transform: scale(0.98);
     }
     .status-container {
       display: flex;
@@ -881,28 +1163,30 @@ function addRecordingIndicator(startTime = Date.now()) {
       gap: 8px;
     }
     .status-dot {
-      width: 8px;
-      height: 8px;
-      background: #FF4444;
+      width: 6px;
+      height: 6px;
+      background: #dc2626;
       border-radius: 50%;
       animation: pulse 2s infinite;
     }
     .status-dot.paused {
-      background: #FFBB33;
+      background: #d97706;
       animation: none;
     }
     .time-display {
       font-variant-numeric: tabular-nums;
-      font-size: 13px;
-      color: #e0e0e0;
+      font-size: 12px;
       font-weight: 500;
       min-width: 35px;
     }
+    .theme-light .time-display { color: #495057; }
+    .theme-dark .time-display { color: #a1a1aa; }
     .divider {
       width: 1px;
-      height: 16px;
-      background: rgba(255,255,255,0.15);
+      height: 14px;
     }
+    .theme-light .divider { background: #dee2e6; }
+    .theme-dark .divider { background: #2e2e35; }
     .controls {
       display: flex;
       gap: 4px;
@@ -911,40 +1195,34 @@ function addRecordingIndicator(startTime = Date.now()) {
       background: transparent;
       border: none;
       cursor: pointer;
-      padding: 6px;
-      border-radius: 50%;
+      padding: 4px;
+      border-radius: 4px;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #e0e0e0;
-      transition: all 0.2s ease;
+      transition: background 0.15s ease, color 0.15s ease;
     }
-    .btn:hover {
-      background: rgba(255,255,255,0.1);
-      transform: translateY(-1px);
-    }
-    .btn:active {
-      transform: translateY(1px);
-    }
+    .theme-light .btn { color: #868e96; }
+    .theme-dark .btn { color: #71717a; }
+    .theme-light .btn:hover { background: #e9ecef; }
+    .theme-dark .btn:hover { background: #2e2e35; }
+    .btn:hover.stop { color: #dc2626; }
+    .btn:hover.pause { color: #d97706; }
+    .btn:hover.resume { color: #16a34a; }
+    .btn:hover.screenshot { color: #2563eb; }
     .btn svg {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       fill: currentColor;
     }
-    .btn.stop { color: #FF6B6B; }
-    .btn.pause { color: #FFCC00; }
-    .btn.resume { color: #4CAF50; }
-    .btn.screenshot { color: #4FC3F7; }
-
     @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.4); }
-      70% { box-shadow: 0 0 0 6px rgba(255, 68, 68, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0); }
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
     }
   `;
 
   const panel = document.createElement('div');
-  panel.className = 'panel';
+  panel.className = 'panel theme-' + panelTheme;
 
   panel.innerHTML = `
     <div class="status-container">
@@ -1019,10 +1297,16 @@ function addRecordingIndicator(startTime = Date.now()) {
     if (!isDragging) return;
     e.preventDefault();
 
-    const x = e.clientX - initialX;
-    const y = e.clientY - initialY;
+    let x = e.clientX - initialX;
+    let y = e.clientY - initialY;
 
-    // Boundary checks (optional)
+    // Boundary checks to prevent dragging off-screen
+    const rect = panelContainer.getBoundingClientRect();
+    const maxX = window.innerWidth - rect.width;
+    const maxY = window.innerHeight - rect.height;
+
+    x = Math.max(0, Math.min(x, maxX));
+    y = Math.max(0, Math.min(y, maxY));
 
     panelContainer.style.left = `${x}px`;
     panelContainer.style.top = `${y}px`;
@@ -1142,8 +1426,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'afterScreenshot':
       if (floatingPanelContainer) floatingPanelContainer.style.display = 'block';
-      // Note: we don't automatically restore other bits like modals to avoid logic issues, 
-      // but usually the modal is what triggered the capture or it's manual.
+      sendResponse({ success: true });
+      break;
+
+    // CNT-MED-003: Visual feedback when rate limited
+    case 'screenshotRateLimited':
+      showRateLimitFeedback();
       sendResponse({ success: true });
       break;
 
@@ -1153,14 +1441,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
-
-var lastUrl = window.location.href;
-setInterval(() => {
-  if (isRecording && window.location.href !== lastUrl) {
-    lastUrl = window.location.href;
-    captureNavigation();
-  }
-}, 1000);
 
 function formatTime(totalSeconds) {
   const mins = Math.floor(totalSeconds / 60).toString().padStart(2, '0');

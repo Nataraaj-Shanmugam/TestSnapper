@@ -20,7 +20,30 @@
 export class ExportService {
   constructor(storage) {
     this.storage = storage;
+    this.cancelledExports = new Set(); // Track cancelled exports
     console.log('✅ ExportService initialized');
+  }
+
+  /**
+   * BUG FIX: EXP-HIGH-001 - Cancel an ongoing export
+   */
+  cancelExport(sessionId) {
+    this.cancelledExports.add(sessionId);
+    console.log('🛑 Export cancelled for session:', sessionId);
+  }
+
+  /**
+   * Check if export was cancelled
+   */
+  _isCancelled(sessionId) {
+    return this.cancelledExports.has(sessionId);
+  }
+
+  /**
+   * Clear cancellation flag
+   */
+  _clearCancellation(sessionId) {
+    this.cancelledExports.delete(sessionId);
   }
 
   /**
@@ -30,7 +53,15 @@ export class ExportService {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
 
+    // Clear any previous cancellation
+    this._clearCancellation(sessionId);
+
     console.log('📄 Starting export:', format, 'for session:', sessionId);
+
+    // Check cancellation
+    if (this._isCancelled(sessionId)) {
+      throw new Error('Export cancelled');
+    }
 
     notify({ percent: 5, status: 'Loading session...' });
 
@@ -446,10 +477,16 @@ export class ExportService {
     let processed = 0;
 
     for (const asset of screenshotAssets) {
+      // BUG FIX: EXP-HIGH-001 - Check cancellation during processing
+      if (this._isCancelled(session.id)) {
+        this._clearCancellation(session.id);
+        throw new Error('Export cancelled by user');
+      }
+
       let url = await this._resolveAssetUrl(asset);
       if (url) {
-        // 🔧 FIX: EXP-002 - Resize before using
-        const imgObj = await this._resizeImageForExport(url, 1600, 1200);
+        // 🔧 FIX: EXP-002 - Resize before using (reduced from 1600 to 1200 for smaller files)
+        const imgObj = await this._resizeImageForExport(url, 1200, 900);
         screenshotMap.set(asset.stepId, imgObj);
       } else {
         console.warn('No usable image data for asset', asset.id, '(stepId:', asset.stepId + ')');
@@ -495,6 +532,12 @@ export class ExportService {
       console.log(`Processing chunk ${chunkStart}-${chunkEnd} of ${totalSteps}`);
 
       for (const step of chunk) {
+        // BUG FIX: EXP-HIGH-001 - Check cancellation during step processing
+        if (this._isCancelled(session.id)) {
+          this._clearCancellation(session.id);
+          throw new Error('Export cancelled by user');
+        }
+
         let oneliner;
 
         if (step.action === 'screenshot') {

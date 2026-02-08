@@ -94,13 +94,29 @@ export class Exporter {
   // ────────────────────────────────────────────────────────────
 
   toMarkdown(session, steps) {
+    // EXP-MED-002: Enhanced metadata
     let content = `# Test Recording Session\n\n`;
+    content += `## Session Information\n\n`;
+    if (session.sessionName) {
+      content += `**Session Name:** ${session.sessionName}\n`;
+    }
     content += `**Session ID:** ${session.sessionId}\n`;
     content += `**Created:** ${new Date(session.createdAt).toLocaleString()}\n`;
-    content += `**URL:** ${session.env?.url || 'N/A'}\n`;
-    content += `**Page Title:** ${session.env?.title || 'N/A'}\n`;
+    if (session.lastModified) {
+      content += `**Last Modified:** ${new Date(session.lastModified).toLocaleString()}\n`;
+    }
     content += `**Total Steps:** ${steps.length}\n\n`;
-    content += `---\n\n`;
+
+    content += `## Environment\n\n`;
+    content += `**Starting URL:** ${session.env?.url || 'N/A'}\n`;
+    content += `**Page Title:** ${session.env?.title || 'N/A'}\n`;
+    if (session.env?.userAgent) {
+      content += `**Browser:** ${session.env.userAgent}\n`;
+    }
+    if (session.env?.viewport) {
+      content += `**Viewport:** ${session.env.viewport.width}x${session.env.viewport.height}\n`;
+    }
+    content += `\n---\n\n`;
     content += `## Steps\n\n`;
 
     steps.forEach((step, index) => {
@@ -148,24 +164,51 @@ export class Exporter {
   async toDocx(session, steps) {
     const filename = `testsnapper_${(session.sessionName || session.sessionId || 'session').replace(/\s+/g, '_').substring(0, 30)}_${Date.now()}.docx`;
 
-    // ── Try to load the bundled docx library ──
+    // ── Try to load the bundled docx library with CDN fallback ──
     let docxLib = null;
     try {
       // If already loaded globally (e.g. by a previous export)
       if (window.docx) {
         docxLib = window.docx;
       } else {
+        // BUG FIX: EXP-CRIT-001 - Try local first, then CDN fallback
         await new Promise((resolve, reject) => {
           const script = document.createElement('script');
+
+          // Try local library first
           script.src = chrome.runtime.getURL('libs/docx.min.js');
-          script.onload = resolve;
-          script.onerror = () => reject(new Error('Failed to load docx library'));
+
+          script.onload = () => {
+            console.log('✅ Loaded docx library from local bundle');
+            resolve();
+          };
+
+          script.onerror = () => {
+            console.warn('⚠️ Local docx library not found, trying CDN...');
+            // Remove failed script
+            script.remove();
+
+            // SEC-003: Try CDN as fallback (using specific version + SRI for security)
+            const cdnScript = document.createElement('script');
+            cdnScript.src = 'https://unpkg.com/docx@7.8.2/build/index.js';
+            cdnScript.crossOrigin = 'anonymous';
+            cdnScript.integrity = 'sha384-zjTqOObJTD6OT6CUn8mSpDY+crIiP0cX457OjcZosSATiUFbmdXa9KRScjfLVxFH';
+            cdnScript.onload = () => {
+              console.log('✅ Loaded docx library from CDN');
+              resolve();
+            };
+            cdnScript.onerror = () => {
+              reject(new Error('Failed to load docx library from both local and CDN'));
+            };
+            document.head.appendChild(cdnScript);
+          };
+
           document.head.appendChild(script);
         });
         docxLib = window.docx;
       }
     } catch (e) {
-      console.warn('docx library not available, falling back to plain-text .docx shell:', e);
+      console.warn('⚠️ docx library not available, falling back to plain-text .docx shell:', e);
     }
 
     // ── Build document content ──
@@ -325,11 +368,13 @@ export class Exporter {
   <w:body>${bodyParagraphs}<w:sectPr/></w:body>
 </w:document>`;
 
+    // EXP-MED-003: Fixed content types to include styles for valid DOCX
     const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>`;
 
     const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -338,14 +383,32 @@ export class Exporter {
 </Relationships>`;
 
     const wordRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`;
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
 
-    // Build ZIP manually using DecompressionStream is read-only; use a simple ZIP builder
+    // EXP-MED-003: Add minimal styles.xml for proper heading formatting
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Heading1">
+    <w:name w:val="heading 1"/>
+    <w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>
+    <w:rPr><w:b/><w:sz w:val="32"/><w:color w:val="2C3E50"/></w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2">
+    <w:name w:val="heading 2"/>
+    <w:pPr><w:spacing w:before="200" w:after="80"/></w:pPr>
+    <w:rPr><w:b/><w:sz w:val="26"/><w:color w:val="34495E"/></w:rPr>
+  </w:style>
+</w:styles>`;
+
+    // Build ZIP with all required parts for a valid DOCX
     const blob = await this._createZipBlob({
       '[Content_Types].xml': contentTypesXml,
       '_rels/.rels': relsXml,
       'word/_rels/document.xml.rels': wordRelsXml,
-      'word/document.xml': documentXml
+      'word/document.xml': documentXml,
+      'word/styles.xml': stylesXml
     });
 
     return { blob, filename };
@@ -475,18 +538,42 @@ export class Exporter {
     `;
 
     let element = null;
-    let script = null;
 
     try {
-      // Load html2pdf library bundled with the extension
+      // BUG FIX: EXP-CRIT-002 - Load html2pdf library with CDN fallback
       if (!window.html2pdf) {
-        script = document.createElement('script');
-        script.src = chrome.runtime.getURL('libs/html2pdf.bundle.min.js');
-        document.head.appendChild(script);
-
         await new Promise((resolve, reject) => {
-          script.onload = resolve;
-          script.onerror = () => reject(new Error('Failed to load html2pdf library'));
+          const script = document.createElement('script');
+
+          // Try local library first
+          script.src = chrome.runtime.getURL('libs/html2pdf.bundle.min.js');
+
+          script.onload = () => {
+            console.log('✅ Loaded html2pdf library from local bundle');
+            resolve();
+          };
+
+          script.onerror = () => {
+            console.warn('⚠️ Local html2pdf library not found, trying CDN...');
+            // Remove failed script
+            script.remove();
+
+            // SEC-003: Try CDN as fallback (using specific version + SRI for security)
+            const cdnScript = document.createElement('script');
+            cdnScript.src = 'https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js';
+            cdnScript.crossOrigin = 'anonymous';
+            cdnScript.integrity = 'sha384-Yv5O+t3uE3hunW8uyrbpPW3iw6/5/Y7HitWJBLgqfMoA36NogMmy+8wWZMpn3HWc';
+            cdnScript.onload = () => {
+              console.log('✅ Loaded html2pdf library from CDN');
+              resolve();
+            };
+            cdnScript.onerror = () => {
+              reject(new Error('Failed to load html2pdf library from both local and CDN'));
+            };
+            document.head.appendChild(cdnScript);
+          };
+
+          document.head.appendChild(script);
         });
       }
 
