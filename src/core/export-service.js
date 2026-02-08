@@ -131,7 +131,7 @@ export class ExportService {
     });
   }
 
-  async _compressImage(blob, maxWidth = 1920, quality = 0.95) {
+  async _compressImage(blob, maxWidth = 600, quality = 0.95) {
     try {
       const useOffscreen = typeof OffscreenCanvas !== 'undefined';
 
@@ -308,7 +308,7 @@ export class ExportService {
   /**
    * 🔧 FIX: EXP-002 - Resize images for exports to reduce file size
    */
-  async _resizeImageForExport(dataUrl, maxWidth = 800, maxHeight = 600) {
+  async _resizeImageForExport(dataUrl, maxWidth = 600, maxHeight = 450) {
     // Helper to check if we are in a Service Worker or similar context
     const useOffscreen = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined';
 
@@ -344,7 +344,7 @@ export class ExportService {
 
         // Convert back to blob -> dataUrl
         // OffscreenCanvas.convertToBlob is standard
-        const resizedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+        const resizedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
         const reader = new FileReader();
         const resizedDataUrl = await new Promise((resolve) => {
           reader.onloadend = () => resolve(reader.result);
@@ -358,7 +358,7 @@ export class ExportService {
       } catch (error) {
         console.error('Offscreen image resize failed:', error);
         // We might not know dimensions if bitmap creation failed, safe fallback
-        return { dataUrl, width: 800, height: 600 };
+        return { dataUrl, width: 600, height: 450 };
       }
     } else {
       // Standard DOM implementation
@@ -389,19 +389,19 @@ export class ExportService {
             ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-            const resized = canvas.toDataURL('image/jpeg', 0.85);
+            const resized = canvas.toDataURL('image/jpeg', 0.95);
             console.log(`📐 Resized image: ${img.width}x${img.height} → ${canvas.width}x${canvas.height}`);
 
             resolve({ dataUrl: resized, width: canvas.width, height: canvas.height });
           } catch (error) {
             console.error('Image resize failed:', error);
-            resolve({ dataUrl: dataUrl, width: 800, height: 600 }); // Fallback with safe defaults
+            resolve({ dataUrl: dataUrl, width: 600, height: 450 }); // Fallback with safe defaults
           }
         };
 
         img.onerror = () => {
           console.error('Failed to load image for resizing');
-          resolve({ dataUrl: dataUrl, width: 800, height: 600 }); // Fallback
+          resolve({ dataUrl: dataUrl, width: 600, height: 450 }); // Fallback
         };
 
         img.src = dataUrl;
@@ -432,23 +432,23 @@ export class ExportService {
     .divider { border-top: 2px solid #ddd; margin: 30px 0; }
     ol { line-height: 1.8; padding-left: 30px; margin-top: 20px; }
     li { margin: 15px 0; color: #333; font-size: 14px; }
-    .screenshot-img { 
-      width: 100% !important; 
-      max-width: 6.5in !important; 
-      height: auto !important; 
-      margin-top: 15px; 
-      border: 1px solid #ccc; 
-      display: block; 
+    .screenshot-img {
+      max-width: 7.29in !important;
+      max-height: 4.11in !important;
+      height: auto !important;
+      margin-top: 15px;
+      border: 1px solid #ccc;
+      display: block;
     }
     .automated-screenshots { margin-top: 40px; padding-top: 20px; border-top: 2px solid #3498db; }
     .auto-screenshot { margin: 30px 0; text-align: center; }
-    .auto-screenshot img { 
-      width: 100% !important; 
-      max-width: 6.5in !important; 
-      height: auto !important; 
-      margin: 15px auto; 
-      border: 1px solid #ccc; 
-      display: block; 
+    .auto-screenshot img {
+      max-width: 7.29in !important;
+      max-height: 4.11in !important;
+      height: auto !important;
+      margin: 15px auto;
+      border: 1px solid #ccc;
+      display: block;
     }
   </style>
 </head>
@@ -485,8 +485,8 @@ export class ExportService {
 
       let url = await this._resolveAssetUrl(asset);
       if (url) {
-        // 🔧 FIX: EXP-002 - Resize before using (reduced from 1600 to 1200 for smaller files)
-        const imgObj = await this._resizeImageForExport(url, 1200, 900);
+        // 🔧 FIX: EXP-002 - Use higher resolution for better quality (increased from 400x900)
+        const imgObj = await this._resizeImageForExport(url, 600, 450);
         screenshotMap.set(asset.stepId, imgObj);
       } else {
         console.warn('No usable image data for asset', asset.id, '(stepId:', asset.stepId + ')');

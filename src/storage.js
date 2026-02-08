@@ -13,6 +13,7 @@
  * - STR-004: Orphaned asset cleanup
  * - STR-005: Export/import for backup
  * - STR-006: Batch operations for better performance
+ * - STR-MED-001: GZIP compression for step data
  *
  * Data layout (split across keys for scalability):
  *   testsnapper_meta → {
@@ -32,6 +33,8 @@
  *
  * Add "storage" and "unlimitedStorage" permissions to manifest.json.
  */
+
+import { compress, decompress, isCompressed } from './core/compression.js';
 
 const STORAGE_VERSION = 2;
 const META_KEY = 'testsnapper_meta';
@@ -90,19 +93,32 @@ class StorageManager {
 
   /**
    * Read steps for a specific session
+   * BUG FIX: STR-MED-001 - Decompress step data if compressed
    */
   async _readSteps(sessionId) {
     const key = `testsnapper_steps_${sessionId}`;
     const result = await chrome.storage.local.get(key);
-    return result[key] || [];
+    const data = result[key];
+
+    if (!data) return [];
+
+    // Handle compressed data (string with prefix)
+    if (isCompressed(data)) {
+      return await decompress(data);
+    }
+
+    // Handle legacy uncompressed data (array)
+    return Array.isArray(data) ? data : [];
   }
 
   /**
    * Write steps for a specific session
+   * BUG FIX: STR-MED-001 - Compress step data before storage
    */
   async _writeSteps(sessionId, steps) {
     const key = `testsnapper_steps_${sessionId}`;
-    await chrome.storage.local.set({ [key]: steps });
+    const compressed = await compress(steps);
+    await chrome.storage.local.set({ [key]: compressed });
   }
 
   /**
