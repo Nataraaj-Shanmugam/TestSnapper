@@ -1,6 +1,15 @@
 /**
  * Review Session Page - WITH ADD STEP FEATURE + DND + FILTER + HISTORY + PROGRESS
  * Proper export flow through background script
+ *
+ * Fixes applied:
+ *  1. Screenshot rendering: chrome.storage.local serialises to JSON, so Blob
+ *     objects come back as plain `{}`.  The code now falls back to `asset.data`
+ *     (the persisted base64 data-URL string) when `asset.blob` is missing or
+ *     not a real Blob.
+ *  2. Step-card alignment: `.step-top` now uses `align-items: flex-start`
+ *     instead of `center` so the checkbox, drag-handle, and delete button
+ *     stay pinned to the top of the card regardless of screenshot height.
  */
 
 import { StorageManager } from '../../storage.js';
@@ -57,11 +66,9 @@ const noResultsMsg = document.getElementById('noResultsMsg');
 
 // Undo/Redo UI
 const undoBtn = document.getElementById('undoBtn');
-// const redoBtn = document.getElementById('redoBtn');
 
 // Export progress UI
 const progressModal = document.getElementById('progressModal');
-const progressFill = document.getElementById('progressFill');
 const progressStatus = document.getElementById('progressStatus');
 const progressPercent = document.getElementById('progressPercent');
 const cancelExportBtn = document.getElementById('cancelExportBtn');
@@ -97,9 +104,43 @@ async function init() {
 
     await loadSession();
     setupEventListeners();
+    setupTheme();
   } catch (error) {
     console.error('Initialization failed:', error);
     showMessage('Failed to initialize: ' + error.message, 'error');
+  }
+}
+
+function setupTheme() {
+  const themeToggle = document.getElementById('themeToggle');
+  if (!themeToggle) return;
+
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme) {
+    applyTheme(savedTheme);
+  } else {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    applyTheme(prefersDark ? 'dark' : 'light');
+  }
+
+  themeToggle.addEventListener('click', () => {
+    const currentTheme = document.body.dataset.theme || 'light';
+    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    applyTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+  });
+}
+
+function applyTheme(theme) {
+  const iconEl = document.querySelector('#themeToggle .icon');
+  document.body.dataset.theme = theme;
+
+  if (iconEl) {
+    if (theme === 'light') {
+      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+    } else {
+      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+    }
   }
 }
 
@@ -111,19 +152,12 @@ function setupEventListeners() {
   // Session name auto-save
   sessionNameInput.addEventListener('blur', saveSessionName);
 
-  // Listen for checkbox changes (delegated)
-  stepsContainer.addEventListener('change', (e) => {
-    if (e.target.classList.contains('step-checkbox')) {
-      updateBulkDeleteButton();
-    }
-  });
-
   // Add Step Modal
   screenshotUpload.addEventListener('click', () => screenshotInput.click());
   screenshotInput.addEventListener('change', handleScreenshotUpload);
   cancelAddStep.addEventListener('click', closeAddStepModal);
   confirmAddStep.addEventListener('click', handleConfirmAddStep);
-  
+
   // Click outside modal to close
   addStepModal.addEventListener('click', (e) => {
     if (e.target === addStepModal) {
@@ -179,11 +213,10 @@ function setupEventListeners() {
     });
   }
 
-  // Undo / Redo buttons
+  // Undo button
   if (undoBtn) undoBtn.addEventListener('click', undo);
-  // if (redoBtn) redoBtn.addEventListener('click', redo);
 
-  // Keyboard shortcuts: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z
+  // Keyboard shortcuts: Ctrl/Cmd+Z
   document.addEventListener('keydown', (e) => {
     const meta = e.metaKey;
     const ctrl = e.ctrlKey;
@@ -192,11 +225,7 @@ function setupEventListeners() {
       if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
         e.preventDefault();
         undo();
-      } 
-     /*else if (e.key.toLowerCase() === 'z' && e.shiftKey) {
-        e.preventDefault();
-        redo();
-      }*/
+      }
     }
   });
 
@@ -222,6 +251,22 @@ function setupEventListeners() {
       handleExportProgress(message);
     }
   });
+
+  // Mobile sidebar toggle
+  var sidebarToggle = document.getElementById('sidebarToggle');
+  var sidebar = document.getElementById('sidebar');
+  var sidebarOverlay = document.getElementById('sidebarOverlay');
+
+  if (sidebarToggle && sidebar && sidebarOverlay) {
+    sidebarToggle.addEventListener('click', () => {
+      sidebar.classList.toggle('open');
+      sidebarOverlay.classList.toggle('active');
+    });
+    sidebarOverlay.addEventListener('click', () => {
+      sidebar.classList.remove('open');
+      sidebarOverlay.classList.remove('active');
+    });
+  }
 }
 
 // ==================== Session Management ====================
@@ -266,9 +311,16 @@ async function loadSession() {
 
 async function saveSessionName() {
   try {
-    const newName = sessionNameInput.value.trim();
+    let newName = sessionNameInput.value.trim();
+
+    // SEC-009: Sanitize session name
+    // Remove control characters and limit length
+    newName = newName.replace(/[\x00-\x1F\x7F]/g, ''); // Remove control characters
+    newName = newName.substring(0, 200); // Limit to 200 characters
+
     if (newName && sessionData) {
       sessionData.sessionName = newName;
+      sessionNameInput.value = newName; // Update input with sanitized value
       await storage.updateSession(sessionData);
 
       await chrome.runtime.sendMessage({
@@ -306,8 +358,9 @@ function filterSteps() {
   }
 
   if (filterAction && filterAction !== 'all') {
+    const targetAction = filterAction.toLowerCase();
     filtered = filtered.filter(
-      (step) => (step.action || '').toLowerCase() === filterAction
+      (step) => (step.action || 'click').toLowerCase() === targetAction
     );
   }
 
@@ -361,47 +414,63 @@ function undo() {
   restoreFromHistory(historyIndex - 1);
 }
 
-/*function redo() {
-  if (historyIndex >= history.length - 1) return;
-  restoreFromHistory(historyIndex + 1);
-}*/
-
 // ==================== Step Rendering ====================
+
+/**
+ * Resolve a usable image data-URL from a storage asset.
+ *
+ * chrome.storage.local round-trips through JSON, so Blob objects are
+ * deserialised as plain empty objects `{}`.  The reliable persisted
+ * representation is `asset.data` (a base64 data-URL string written at
+ * capture time).  This helper tries both paths so it works regardless of
+ * whether the asset was captured in the current session (blob still live)
+ * or loaded from a previous one (only data survives).
+ */
+async function resolveScreenshotUrl(asset) {
+  // 1. If .blob is a real Blob, convert it (live-session fast path)
+  if (asset.blob && asset.blob instanceof Blob && asset.blob.size > 0) {
+    try {
+      return await Utils.blobToDataURL(asset.blob);
+    } catch (err) {
+      console.warn('blobToDataURL failed, falling back to asset.data:', err);
+    }
+  }
+
+  // 2. Fall back to the persisted base64 data-URL string
+  if (typeof asset.data === 'string' && asset.data.length > 0) {
+    return asset.data;
+  }
+
+  return null; // nothing usable
+}
 
 async function renderSteps() {
   const container = stepsContainer;
 
   if (!stepsData || stepsData.length === 0) {
-    container.innerHTML = '<div class="loading">No steps recorded</div>';
-    if (stepResultsSummary) {
-      stepResultsSummary.textContent = '';
-    }
-    if (noResultsMsg) {
-      noResultsMsg.classList.add('hidden');
-    }
+    container.innerHTML = '<div class="loading" style="text-align: center; padding: 40px;">No steps recorded. Start a session to see steps here!</div>';
+    if (stepResultsSummary) stepResultsSummary.textContent = '';
+    if (noResultsMsg) noResultsMsg.classList.add('hidden');
     return;
   }
 
-  // Load all screenshots for the session
+  // ---------- Load screenshots ----------
   const screenshotAssets = await storage.getAllAssets(sessionId);
   const screenshotMap = new Map();
 
   for (const asset of screenshotAssets) {
-    if (asset.blob) {
-      try {
-        const dataUrl = await Utils.blobToDataURL(asset.blob);
-        screenshotMap.set(asset.stepId, dataUrl);
-      } catch (err) {
-        console.warn('Failed to convert screenshot blob:', err);
-      }
+    const url = await resolveScreenshotUrl(asset);
+    if (url) {
+      screenshotMap.set(asset.stepId, url);
     }
   }
+  // ---------- End screenshot loading ----------
 
   const visibleSteps = filterSteps();
 
   if (stepResultsSummary) {
     if (visibleSteps.length === stepsData.length) {
-      stepResultsSummary.textContent = `Showing ${stepsData.length} steps`;
+      stepResultsSummary.textContent = `${stepsData.length} Documented Steps`;
     } else {
       stepResultsSummary.textContent = `Showing ${visibleSteps.length} of ${stepsData.length} steps`;
     }
@@ -416,45 +485,65 @@ async function renderSteps() {
   }
 
   if (visibleSteps.length === 0) {
-    container.innerHTML = '<div class="loading">No results found</div>';
+    container.innerHTML = '';
     return;
   }
 
   container.innerHTML = visibleSteps.map((step, index) => {
-    // Use custom description if set, otherwise generate from fields
     const description = step.description || generateStepDescription(step);
     const screenshotData = screenshotMap.get(step.id) || null;
     const safeDescription = Utils.escapeHtml(description);
 
     return `
-      <div class="step-doc-line" data-step-id="${step.id}" draggable="true">
-        <div class="step-left">
-          <span class="drag-handle" title="Drag to reorder">☰</span>
-          <input type="checkbox" class="step-checkbox" data-step-id="${step.id}" ${step.selected ? 'checked' : ''}>
-          <span class="step-number">${index + 1}.</span>
-          <div class="step-text" style="flex: 1;">
-            <textarea
-              class="step-text-input"
-              data-step-id="${step.id}"
-              style="width: 100%; font-size: 15px; padding: 4px 8px;
-                     border-radius: 4px; border: 1px solid var(--border-color);
-                     background: var(--bg-secondary); color: var(--text-primary);
-                     resize: vertical; min-height: 40px;">${safeDescription}</textarea>
-          </div>
-        </div>
-        <div class="step-actions">
-          ${screenshotData ? `
-            <button class="icon-btn toggle-img-btn" data-step-id="${step.id}" title="Show Screenshot">📸</button>
-          ` : ''}
-          <button class="icon-btn delete-btn" title="Delete" data-step-id="${step.id}">🗑️</button>
-        </div>
-        <button class="add-step-after" data-after-step-id="${step.id}" title="Add step after this">+</button>
-        ${screenshotData ? `
-          <div class="step-screenshot hidden" id="img-${step.id}">
-            <img src="${screenshotData}" alt="Step Screenshot" />
-          </div>
-        ` : ''}
+      <div class="add-between">
+         <button class="btn-add" data-before-step-id="${step.id}" title="Add step here">+</button>
       </div>
+      <div class="step-card" data-step-id="${step.id}" draggable="true">
+        <div class="step-number-badge">${index + 1}</div>
+
+        <!-- FIX 2: align-items: flex-start keeps checkbox / handle / delete
+             pinned to the TOP of the card even when the screenshot makes
+             .step-main tall. -->
+        <div class="step-top" style="align-items: flex-start;">
+
+          <!-- drag handle -->
+          <div class="step-handle" title="Drag to reorder" style="font-size: 20px; padding-top: 10px;">⋮⋮</div>
+
+          <!-- checkbox – fixed width, top-aligned -->
+          <div style="display: flex; align-items: flex-start; justify-content: center; width: 40px; flex-shrink: 0; padding-top: 8px;">
+            <input type="checkbox" class="step-checkbox" data-step-id="${step.id}"
+                   ${step.selected ? 'checked' : ''}
+                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--primary);">
+          </div>
+
+          <!-- main content (textarea + optional screenshot) -->
+          <div class="step-main">
+            <textarea
+              class="step-description-area"
+              data-step-id="${step.id}"
+              placeholder="Describe this step..."
+              rows="1">${safeDescription}</textarea>
+
+            ${screenshotData ? `
+              <div class="screenshot-container" id="img-${step.id}" data-step-id="${step.id}">
+                <img src="${screenshotData}" alt="Interaction Screenshot" loading="lazy">
+              </div>
+            ` : ''}
+          </div>
+
+          <!-- delete button – top-aligned -->
+          <div class="step-actions" style="flex-shrink: 0; padding-top: 4px;">
+            <button class="icon-btn delete-btn" title="Delete Step" data-step-id="${step.id}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
+              ✕
+            </button>
+          </div>
+        </div>
+      </div>
+      ${index === visibleSteps.length - 1 ? `
+        <div class="add-between">
+           <button class="btn-add" data-after-last="true" title="Add step at the end">+</button>
+        </div>
+      ` : ''}
     `;
   }).join('');
 
@@ -487,28 +576,40 @@ function generateStepDescription(step) {
 }
 
 function attachStepEventListeners() {
-  // Delete
   document.querySelectorAll('.delete-btn').forEach(btn =>
-    btn.addEventListener('click', () => handleDeleteStep(btn.dataset.stepId))
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleDeleteStep(btn.dataset.stepId);
+    })
   );
 
-  // Checkbox selection
   document.querySelectorAll('.step-checkbox').forEach(box =>
     box.addEventListener('change', handleCheckboxChange)
   );
 
-  // Screenshot toggle
-  document.querySelectorAll('.toggle-img-btn').forEach(btn =>
-    btn.addEventListener('click', () => toggleScreenshot(btn.dataset.stepId))
+  document.querySelectorAll('.btn-add').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const stepId = btn.dataset.beforeStepId;
+      const isLast = btn.dataset.afterLast === 'true';
+      if (isLast) {
+        openAddStepModal(stepsData[stepsData.length - 1]?.id);
+      } else {
+        const index = stepsData.findIndex(s => s.id === stepId);
+        const targetId = index > 0 ? stepsData[index - 1].id : null;
+        openAddStepModal(targetId);
+      }
+    })
   );
 
-  // Add step after
-  document.querySelectorAll('.add-step-after').forEach(btn =>
-    btn.addEventListener('click', () => openAddStepModal(btn.dataset.afterStepId))
-  );
+  // Auto-resize textareas
+  document.querySelectorAll('.step-description-area').forEach(textarea => {
+    const resize = () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = (textarea.scrollHeight) + 'px';
+    };
+    textarea.addEventListener('input', resize);
+    resize(); // Initial
 
-  // Inline editing: auto-save on blur
-  document.querySelectorAll('.step-text-input').forEach(textarea => {
     textarea.addEventListener('blur', async (e) => {
       const stepId = e.target.dataset.stepId;
       const step = stepsData.find(s => s.id === stepId);
@@ -532,12 +633,12 @@ function attachStepEventListeners() {
     });
   });
 
-  // Drag and drop for reordering
-  document.querySelectorAll('.step-doc-line').forEach(line => {
-    line.addEventListener('dragstart', handleDragStart);
-    line.addEventListener('dragover', handleDragOver);
-    line.addEventListener('drop', handleDrop);
-    line.addEventListener('dragend', handleDragEnd);
+  document.querySelectorAll('.step-card').forEach(card => {
+    card.addEventListener('dragstart', handleDragStart);
+    card.addEventListener('dragover', handleDragOver);
+    card.addEventListener('drop', handleDrop);
+    card.addEventListener('dragend', handleDragEnd);
+    card.addEventListener('dragleave', handleDragLeave);
   });
 }
 
@@ -549,7 +650,7 @@ function openAddStepModal(afterStepId) {
   newStepAction.value = 'click';
   newStepScreenshotBlob = null;
   screenshotPreview.style.display = 'none';
-  screenshotUpload.classList.remove('has-image');
+  screenshotPreview.src = '';
   addStepModal.classList.add('active');
   newStepDescription.focus();
 }
@@ -573,7 +674,7 @@ function processScreenshotFile(file) {
     screenshotPreview.src = e.target.result;
     screenshotPreview.style.display = 'block';
     screenshotUpload.classList.add('has-image');
-    
+
     // Convert to blob
     fetch(e.target.result)
       .then(res => res.blob())
@@ -586,7 +687,7 @@ function processScreenshotFile(file) {
 
 async function handleConfirmAddStep() {
   const description = newStepDescription.value.trim();
-  
+
   if (!description) {
     showMessage('Please enter a step description', 'error');
     return;
@@ -597,7 +698,7 @@ async function handleConfirmAddStep() {
 
     // Find the position to insert
     const afterStepIndex = stepsData.findIndex(s => s.id === insertAfterStepId);
-    const newSequence = afterStepIndex + 2; // Insert after the clicked step
+    const newSequence = afterStepIndex + 2;
 
     // Create new step
     const newStep = {
@@ -616,14 +717,23 @@ async function handleConfirmAddStep() {
     // Add step to database
     await storage.addStep(newStep);
 
-    // If screenshot provided, save it
+    // If screenshot provided, save it as both blob AND data URL so it
+    // survives the chrome.storage.local JSON round-trip.
     if (newStepScreenshotBlob) {
+      let dataUrl = null;
+      try {
+        dataUrl = await Utils.blobToDataURL(newStepScreenshotBlob);
+      } catch (err) {
+        console.warn('Failed to convert new screenshot to data URL:', err);
+      }
+
       await storage.addAsset({
         id: Utils.generateUUID(),
         sessionId: sessionId,
         stepId: newStep.id,
         type: 'screenshot',
-        blob: newStepScreenshotBlob,
+        blob: newStepScreenshotBlob,   // live-session use (won't survive reload)
+        data: dataUrl,                  // persisted base64 string (survives reload)
         createdAt: new Date().toISOString()
       });
     }
@@ -645,37 +755,12 @@ async function handleConfirmAddStep() {
 
 // ==================== Step Actions ====================
 
-async function toggleScreenshot(stepId) {
-  const imgBlock = document.getElementById(`img-${stepId}`);
-  const btn = document.querySelector(`.toggle-img-btn[data-step-id="${stepId}"]`);
-
-  if (!imgBlock) return;
-
-  const isHidden = imgBlock.classList.contains('hidden');
-  if (isHidden) {
-    imgBlock.classList.remove('hidden');
-    if (btn) {
-      btn.textContent = '🙈';
-      btn.title = 'Hide Screenshot';
-    }
-  } else {
-    imgBlock.classList.add('hidden');
-    if (btn) {
-      btn.textContent = '📸';
-      btn.title = 'Show Screenshot';
-    }
-  }
-}
-
 async function handleDeleteStep(stepId) {
-  // if (!confirm('Delete this step?')) return;
-
   try {
-    await storage.deleteStep(stepId);
-
     // Save history BEFORE mutation
     saveToHistory('delete');
 
+    await storage.deleteStep(stepId);
     stepsData = stepsData.filter(s => s.id !== stepId);
 
     await resequenceAndPersist();
@@ -697,12 +782,12 @@ async function handleBulkDelete() {
   if (!confirm(`Delete ${selectedSteps.length} selected step(s)?`)) return;
 
   try {
-    for (const step of selectedSteps) {
-      await storage.deleteStep(step.id);
-    }
-
     // Save history BEFORE mutation
     saveToHistory('bulk-delete');
+
+    // STR-MED-002: Use batch delete for better performance
+    const stepIds = selectedSteps.map(s => s.id);
+    await storage.batchDeleteSteps(stepIds);
 
     stepsData = stepsData.filter(s => !s.selected);
 
@@ -718,15 +803,18 @@ function handleCheckboxChange(e) {
   const stepId = e.target.dataset.stepId;
   const isChecked = e.target.checked;
   const step = stepsData.find(s => s.id === stepId);
-  if (step) step.selected = isChecked;
+  if (step) {
+    step.selected = isChecked;
+    console.log('Step checkbox changed:', stepId, isChecked);
+  }
   updateBulkDeleteButton();
 }
 
 function updateBulkDeleteButton() {
   const checkedCount = document.querySelectorAll('.step-checkbox:checked').length;
-  bulkDeleteBtn.disabled = checkedCount === 0;
-  bulkDeleteBtn.querySelector('span:last-child').textContent =
-    checkedCount > 0 ? `Delete Selected (${checkedCount})` : 'Delete Selected';
+  if (bulkDeleteBtn) {
+    bulkDeleteBtn.disabled = checkedCount === 0;
+  }
 }
 
 // ==================== Drag & Drop Reordering ====================
@@ -742,9 +830,16 @@ function handleDragStart(event) {
 
 function handleDragOver(event) {
   event.preventDefault();
-  const line = event.currentTarget;
-  if (!line.classList.contains('dragging')) {
-    line.classList.add('drag-over');
+  const card = event.currentTarget.closest('.step-card');
+  if (card && !card.classList.contains('dragging')) {
+    card.classList.add('drag-over');
+  }
+}
+
+function handleDragLeave(event) {
+  const card = event.currentTarget.closest('.step-card');
+  if (card) {
+    card.classList.remove('drag-over');
   }
 }
 
@@ -753,7 +848,7 @@ async function handleDrop(event) {
   const targetLine = event.currentTarget;
   const targetStepId = targetLine.dataset.stepId;
 
-  document.querySelectorAll('.step-doc-line.drag-over').forEach(el =>
+  document.querySelectorAll('.step-card.drag-over').forEach(el =>
     el.classList.remove('drag-over')
   );
 
@@ -774,10 +869,10 @@ async function handleDrop(event) {
 
 function handleDragEnd() {
   draggedStepId = null;
-  document.querySelectorAll('.step-doc-line.dragging').forEach(el =>
+  document.querySelectorAll('.step-card.dragging').forEach(el =>
     el.classList.remove('dragging')
   );
-  document.querySelectorAll('.step-doc-line.drag-over').forEach(el =>
+  document.querySelectorAll('.step-card.drag-over').forEach(el =>
     el.classList.remove('drag-over')
   );
 }
@@ -803,7 +898,8 @@ async function resequenceAndPersist() {
 function showProgressModal() {
   if (!progressModal) return;
   progressModal.classList.add('active');
-  if (progressFill) progressFill.style.width = '0%';
+  const circle = document.getElementById('progressCircle');
+  if (circle) circle.style.strokeDashoffset = '125.6';
   if (progressStatus) progressStatus.textContent = 'Starting export...';
   if (progressPercent) progressPercent.textContent = '0%';
 }
@@ -814,25 +910,33 @@ function hideProgressModal() {
 }
 
 function handleExportProgress(message) {
-  const { percent, status, error, done } = message;
-
-  if (typeof percent === 'number' && progressFill && progressPercent) {
-    progressFill.style.width = `${percent}%`;
-    progressPercent.textContent = `${percent}%`;
+  if (!progressModal.classList.contains('active')) {
+    progressModal.classList.add('active');
   }
 
-  if (status && progressStatus) {
-    progressStatus.textContent = status;
+  const percent = message.percent || 0;
+  const status = message.status || 'Exporting...';
+  const circle = document.getElementById('progressCircle');
+
+  if (progressPercent) progressPercent.textContent = `${percent}%`;
+  if (progressStatus) progressStatus.textContent = status;
+
+  if (circle) {
+    const offset = 125.6 - (percent / 100) * 125.6;
+    circle.style.strokeDashoffset = offset;
   }
 
-  if (error) {
-    hideProgressModal();
-    showMessage('Export failed: ' + error, 'error');
-  }
-
-  // 🔑 THIS MUST EXIST
-  if (done) {
-    hideProgressModal();
+  if (message.done) {
+    setTimeout(() => {
+      hideProgressModal();
+      if (message.error) {
+        showMessage(`Export failed: ${message.error}`, 'error');
+      } else if (message.canceled) {
+        // Handled via cancel btn listener mostly
+      } else {
+        showMessage('Export complete!', 'success');
+      }
+    }, 1000);
   }
 }
 
@@ -853,12 +957,6 @@ async function handleSaveAndExport() {
 
     if (response && response.success) {
       showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
-
-      /*setTimeout(() => {
-        if (confirm('Export successful! Close this window?')) {
-          window.close();
-        }
-      }, 1000);*/
     } else if (response && !response.success) {
       throw new Error(response.error || 'Export failed');
     }
@@ -866,7 +964,6 @@ async function handleSaveAndExport() {
     console.error('Save and export failed:', error);
     showMessage('Failed: ' + error.message, 'error');
   } finally {
-    // 🛟 Safety net: close modal even if progress events misbehave
     hideProgressModal();
   }
 }
