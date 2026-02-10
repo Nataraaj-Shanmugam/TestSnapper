@@ -816,17 +816,40 @@ class StorageManager {
 
       if (idx === -1) throw new Error(`Session ${asset.sessionId} not found`);
 
-      // Compress image if it's a screenshot
+      // Store screenshot as-is (PNG lossless from capture, or JPEG-high)
+      // Compression only happens at export time for maximum quality preservation
       if (asset.type === 'screenshot' && asset.dataUrl) {
-        asset.dataUrl = await this._compressImage(asset.dataUrl);
+        asset.format = this._detectImageFormat(asset.dataUrl);
+        asset.originalSize = asset.dataUrl.length;
       }
 
       const assets = await this._readAssets(asset.sessionId);
       assets.push(asset);
       await this._writeAssets(asset.sessionId, assets);
 
+      // Warn if PNG storage is consuming significant space
+      if (asset.type === 'screenshot' && asset.format === 'png') {
+        try {
+          const usage = await this.getStorageUsage();
+          if (usage.percentage > 0.60) {
+            console.warn('⚠️ PNG storage is consuming significant space (' +
+              Math.round(usage.percentage * 100) + '%). Consider switching to JPEG-high in settings.');
+          }
+        } catch (e) { /* non-critical */ }
+      }
+
       return asset;
     }, 'addAsset');
+  }
+
+  /**
+   * Detect image format from data URL prefix.
+   */
+  _detectImageFormat(dataUrl) {
+    if (dataUrl.startsWith('data:image/png')) return 'png';
+    if (dataUrl.startsWith('data:image/jpeg') || dataUrl.startsWith('data:image/jpg')) return 'jpeg';
+    if (dataUrl.startsWith('data:image/webp')) return 'webp';
+    return 'unknown';
   }
 
   async getAllAssets(sessionId) {

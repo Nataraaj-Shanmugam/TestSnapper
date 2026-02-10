@@ -14,6 +14,7 @@ window.testSnapperInitialized = true;
 
 var selectorEngine;
 var redactor;
+var fieldNameResolver;
 var isRecording = false;
 var currentSessionId = null;
 var highlightOverlay = null;
@@ -51,6 +52,9 @@ function initModules() {
   if (window.SelectorEngine && window.Redactor) {
     selectorEngine = new window.SelectorEngine();
     redactor = new window.Redactor();
+    if (window.FieldNameResolver) {
+      fieldNameResolver = new window.FieldNameResolver(selectorEngine);
+    }
     console.log('TestSnapper content script initialized');
     return true;
   }
@@ -70,6 +74,13 @@ if (!initModules()) {
  * Enhanced field name extraction for better reporting
  */
 function getEnhancedFieldName(element) {
+  // Delegate to the advanced resolver if available
+  if (fieldNameResolver) {
+    var resolved = fieldNameResolver.resolve(element);
+    if (resolved) return resolved;
+  }
+
+  // Fallback to legacy detection for backward compatibility
   const label = findAssociatedLabel(element);
   if (label) return cleanFieldName(label);
 
@@ -93,8 +104,14 @@ function getEnhancedFieldName(element) {
     return cleanFieldName(element.id);
   }
 
-  if (element.type) {
-    return cleanFieldName(element.type);
+  // Extract title attribute or visible text from the element itself
+  if (element.title) {
+    return cleanFieldName(element.title);
+  }
+
+  const visibleText = (element.innerText || '').trim();
+  if (visibleText && visibleText.length > 0 && visibleText.length < 60) {
+    return cleanFieldName(visibleText.split('\n')[0].trim());
   }
 
   const nearbyText = findNearbyText(element);
@@ -591,24 +608,44 @@ function isDuplicateInteraction(element, action, value = null) {
     timeWindow = 800; // 800ms for typing
   }
 
-  if (lastInteraction.element === element &&
-    lastInteraction.action === action &&
-    timeSinceLastAction < timeWindow) {
+  if (timeSinceLastAction >= timeWindow) return false;
+  if (lastInteraction.action !== action) return false;
 
+  // Match by DOM element reference OR by selector fingerprint
+  // (frameworks like Salesforce Aura, React re-render and replace DOM nodes)
+  var sameElement = (lastInteraction.element === element) ||
+    (lastInteraction.selectorKey && lastInteraction.selectorKey === _getElementFingerprint(element));
+
+  if (sameElement) {
     // Allow if value changed (important for typing)
     if ((action === 'type' || action === 'select') && value !== lastInteraction.value) {
       return false;
     }
-
     return true;
   }
 
   return false;
 }
 
+/**
+ * Generate a lightweight fingerprint for an element using its tag, key attributes,
+ * and text. Used to detect duplicates even when the DOM node is re-created by a framework.
+ */
+function _getElementFingerprint(element) {
+  var tag = element.tagName;
+  var id = element.id || '';
+  var name = element.name || '';
+  var type = element.type || '';
+  var cls = (element.className && typeof element.className === 'string')
+    ? element.className.split(/\s+/).sort().join('.') : '';
+  var text = (element.innerText || '').trim().substring(0, 30);
+  return tag + '|' + id + '|' + name + '|' + type + '|' + cls + '|' + text;
+}
+
 function updateLastInteraction(element, action, value = null) {
   lastInteraction = {
     element: element,
+    selectorKey: _getElementFingerprint(element),
     action: action,
     timestamp: Date.now(),
     value: value
@@ -991,6 +1028,12 @@ function startRecording(sessionId, isRestoring = false, startTimeStr = null) {
   document.addEventListener('input', handleInput, { capture: true, signal });
   document.addEventListener('change', handleChange, { capture: true, signal });
   document.addEventListener('submit', handleSubmit, { capture: true, signal });
+
+  // Pre-fetch iframe label context for cross-frame detection
+  if (fieldNameResolver) {
+    fieldNameResolver.clearCache();
+    fieldNameResolver.initFrameContext();
+  }
 
   if (isRestoring && !startTimeStr) {
     console.log('⚠️ startRecording: Missing startTimeStr during restore, fetching from session...');
@@ -1434,6 +1477,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       showRateLimitFeedback();
       sendResponse({ success: true });
       break;
+
+    // Cross-frame label resolution: find aria-label/title of an iframe element
+    case 'getIframeLabel': {
+      let iframeLabel = null;
+      const iframes = document.querySelectorAll('iframe');
+      for (const iframe of iframes) {
+        try {
+          if (iframe.src === message.frameUrl) {
+            iframeLabel = iframe.getAttribute('aria-label') || iframe.title || iframe.name || null;
+            break;
+          }
+        } catch (e) { /* skip */ }
+      }
+      sendResponse({ label: iframeLabel });
+      break;
+    }
 
     default:
       sendResponse({ success: false, error: 'Unknown action' });

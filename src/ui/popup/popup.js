@@ -578,7 +578,8 @@ async function handleSaveSettings() {
     // Validate settings before saving
     const screenshotSecondsValue = parseInt(screenshotSeconds?.value) || 5;
     const maxSessionsValue = parseInt(maxSessions?.value) || 25;
-    const imageQualityValue = parseFloat(document.getElementById('imageQuality')?.value) || 0.92;
+    const screenshotFormatValue = document.getElementById('screenshotFormat')?.value || 'png';
+    const exportImageQualityValue = document.getElementById('exportImageQuality')?.value || 'auto';
 
     // Validation ranges
     if (screenshotSecondsValue < 1 || screenshotSecondsValue > 60) {
@@ -591,11 +592,6 @@ async function handleSaveSettings() {
       return;
     }
 
-    if (imageQualityValue < 0.1 || imageQualityValue > 1.0) {
-      showMessage("Image quality must be between 0.1-1.0", "error");
-      return;
-    }
-
     const settings = {
       autoScreenshot: autoScreenshot?.checked || false,
       screenshotSeconds: screenshotSecondsValue,
@@ -603,7 +599,9 @@ async function handleSaveSettings() {
       smartDedup: document.getElementById('smartDedup')?.checked !== false,
       autoSave: autoSave?.checked !== false,
       maxSessions: maxSessionsValue,
-      imageQuality: imageQualityValue,
+      screenshotFormat: screenshotFormatValue,
+      exportImageQuality: exportImageQualityValue,
+      imageQuality: screenshotFormatValue === 'jpeg-high' ? 0.92 : 0.92,
       captureApiCalls: captureApiCalls?.checked || false,
       captureFailedCalls: captureFailedCalls?.checked || false,
       captureAllCalls: captureAllCalls?.checked || false,
@@ -671,8 +669,11 @@ async function loadSettings() {
     if (autoSave) autoSave.checked = s.autoSave !== false;
     if (maxSessions) maxSessions.value = s.maxSessions || 25;
 
-    const imageQualityInput = document.getElementById('imageQuality');
-    if (imageQualityInput) imageQualityInput.value = s.imageQuality || 0.92;
+    const screenshotFormatInput = document.getElementById('screenshotFormat');
+    if (screenshotFormatInput) screenshotFormatInput.value = s.screenshotFormat || 'png';
+
+    const exportImageQualityInput = document.getElementById('exportImageQuality');
+    if (exportImageQualityInput) exportImageQualityInput.value = s.exportImageQuality || 'auto';
 
     // Update visibility
     if (apiCallsOptions) apiCallsOptions.style.display = captureApiCalls?.checked ? "block" : "none";

@@ -35,6 +35,47 @@ const MAX_HISTORY = 50;
 // Drag state
 let draggedStepId = null;
 
+// ==================== Consecutive Duplicate Removal ====================
+
+/**
+ * Remove consecutive duplicate steps. If steps 2, 3, 4 are identical
+ * (same action + fieldName + selector CSS + url), keep only step 2.
+ * Screenshots and navigate actions are never considered duplicates.
+ */
+function deduplicateConsecutiveSteps(steps) {
+  if (!steps || steps.length <= 1) return steps;
+
+  const result = [steps[0]];
+
+  for (let i = 1; i < steps.length; i++) {
+    const prev = steps[i - 1];
+    const curr = steps[i];
+
+    // Never deduplicate screenshots or navigation
+    if (curr.action === 'screenshot' || curr.action === 'navigate') {
+      result.push(curr);
+      continue;
+    }
+
+    // Compare: same action + fieldName + url + selector CSS
+    const isDup =
+      prev.action === curr.action &&
+      prev.fieldName === curr.fieldName &&
+      prev.url === curr.url &&
+      (prev.selector?.css || '') === (curr.selector?.css || '') &&
+      // For type/select, also check value hasn't changed
+      !((curr.action === 'type' || curr.action === 'select') && prev.value !== curr.value);
+
+    if (isDup) {
+      continue; // Skip this duplicate
+    }
+
+    result.push(curr);
+  }
+
+  return result;
+}
+
 // ==================== UI Elements ====================
 
 const messageDiv = document.getElementById('message');
@@ -283,6 +324,16 @@ async function loadSession() {
 
     stepsData = await storage.getSteps(sessionId);
     stepsData.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+
+    // Auto-remove consecutive duplicate steps (same action + fieldName + selector + url)
+    const originalCount = stepsData.length;
+    stepsData = deduplicateConsecutiveSteps(stepsData);
+    if (stepsData.length < originalCount) {
+      console.log(`🧹 Removed ${originalCount - stepsData.length} consecutive duplicate step(s)`);
+      // Resequence and persist the cleaned data
+      stepsData.forEach((step, index) => { step.sequence = index + 1; });
+      await storage.updateAllSteps(sessionId, stepsData);
+    }
 
     // Update UI
     sessionNameInput.value = sessionData.sessionName ||

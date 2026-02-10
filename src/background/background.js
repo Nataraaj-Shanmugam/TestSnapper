@@ -128,7 +128,9 @@ class SettingsManager {
       captureFailedCalls: false,
       captureAllCalls: false,
       autoScreenshot: false,
-      imageQuality: 0.92
+      imageQuality: 0.92,
+      screenshotFormat: 'png',
+      exportImageQuality: 'auto'
     };
   }
 
@@ -162,6 +164,20 @@ class SettingsManager {
     // Validate boolean fields
     if (loadedSettings.autoScreenshot !== undefined) {
       validated.autoScreenshot = Boolean(loadedSettings.autoScreenshot);
+    }
+
+    // Validate screenshotFormat
+    if (loadedSettings.screenshotFormat !== undefined) {
+      const validFormats = ['png', 'jpeg-high'];
+      validated.screenshotFormat = validFormats.includes(loadedSettings.screenshotFormat)
+        ? loadedSettings.screenshotFormat : this.defaults.screenshotFormat;
+    }
+
+    // Validate exportImageQuality
+    if (loadedSettings.exportImageQuality !== undefined) {
+      const validExportQualities = ['auto', 'png', 'jpeg-high', 'jpeg-standard'];
+      validated.exportImageQuality = validExportQualities.includes(loadedSettings.exportImageQuality)
+        ? loadedSettings.exportImageQuality : this.defaults.exportImageQuality;
     }
 
     this.cache = { ...this.defaults, ...validated };
@@ -467,12 +483,17 @@ async function captureScreenshot(tabId, isManual = true) {
     await new Promise(resolve => setTimeout(resolve, 150));
 
     const settings = await settingsManager.get();
-    const quality = Math.round((settings.imageQuality || 0.92) * 100);
 
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-      format: 'jpeg',
-      quality: quality
-    });
+    // Smart capture: PNG (lossless) by default, JPEG-high as user option
+    let captureOptions;
+    if (settings.screenshotFormat === 'jpeg-high') {
+      const quality = Math.round((settings.imageQuality || 0.92) * 100);
+      captureOptions = { format: 'jpeg', quality: quality };
+    } else {
+      captureOptions = { format: 'png' };
+    }
+
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, captureOptions);
 
     chrome.tabs.sendMessage(tabId, { action: 'afterScreenshot' }).catch(() => { });
 
@@ -538,6 +559,9 @@ async function startRecording(tabId, tabInfo) {
   if (!stateManager.isIdle()) {
     return { success: false, error: 'Already recording' };
   }
+
+  // Reset duplicate tracker for new session
+  _lastAddedStep = null;
 
   try {
     // Add tabId to tabInfo
@@ -658,6 +682,35 @@ async function stopRecording(tabId) {
 
 // ==================== Step Management ====================
 
+// Track the last step to detect consecutive duplicates at the background level
+let _lastAddedStep = null;
+
+function _isConsecutiveDuplicate(stepData) {
+  if (!_lastAddedStep) return false;
+
+  // Same action + same fieldName + same selector CSS + same URL = duplicate
+  if (_lastAddedStep.action !== stepData.action) return false;
+  if (_lastAddedStep.fieldName !== stepData.fieldName) return false;
+  if (_lastAddedStep.url !== stepData.url) return false;
+
+  // For type/select actions, allow if value changed
+  if ((stepData.action === 'type' || stepData.action === 'select') &&
+      stepData.value !== _lastAddedStep.value) {
+    return false;
+  }
+
+  // Compare selector CSS if both have one
+  const prevCss = _lastAddedStep.selector?.css || '';
+  const currCss = stepData.selector?.css || '';
+  if (prevCss && currCss && prevCss !== currCss) return false;
+
+  // If target labels match too, it's definitely a duplicate
+  if (_lastAddedStep.targetLabel === stepData.targetLabel) return true;
+
+  // Even without matching targetLabel, same action+field+url+selector is enough
+  return true;
+}
+
 async function addStep(stepData) {
   if (!stateManager.session) {
     console.error('❌ No active session - rejecting step');
@@ -665,6 +718,12 @@ async function addStep(stepData) {
   }
 
   try {
+    // Server-side consecutive duplicate detection
+    if (_isConsecutiveDuplicate(stepData)) {
+      console.log('⏭️ Skipping consecutive duplicate step:', stepData.action, stepData.fieldName);
+      return { success: true, skipped: true };
+    }
+
     const settings = await settingsManager.get();
     const sequence = await stateManager.incrementStepCount();
 
@@ -678,6 +737,8 @@ async function addStep(stepData) {
     if (settings.includeTimestamp !== false) {
       step.timestamp = new Date().toISOString();
     }
+
+    _lastAddedStep = stepData;
 
     await storage.addStep(step);
     await storage.updateSession(stateManager.session);
@@ -961,6 +1022,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'importAllData':
           await storage.importAllData(message.data);
           response = { success: true };
+          break;
+
+        // Cross-frame label resolution: relay request to main frame
+        case 'getFrameLabel':
+          try {
+            const frameTab = sender.tab;
+            if (frameTab && frameTab.id) {
+              const frameResult = await chrome.tabs.sendMessage(frameTab.id, {
+                action: 'getIframeLabel',
+                frameUrl: message.frameUrl
+              }, { frameId: 0 });
+              response = frameResult || { label: null };
+            } else {
+              response = { label: null };
+            }
+          } catch (frameErr) {
+            response = { label: null };
+          }
           break;
 
         default:

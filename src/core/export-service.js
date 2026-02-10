@@ -306,107 +306,240 @@ export class ExportService {
   }
 
   /**
-   * 🔧 FIX: EXP-002 - Resize images for exports to reduce file size
+   * Process image for export with smart format selection.
+   * - Text-heavy screenshots: export as PNG (preserves text clarity)
+   * - Photo-heavy screenshots: export as JPEG (smaller file size)
+   *
+   * Returns both the actual pixel dimensions (actualWidth/actualHeight)
+   * and the recommended display dimensions (width/height) for DOCX embedding.
+   * The image data is kept at high resolution so zooming in reveals detail.
+   *
+   * @param {string} dataUrl - Original image data URL
+   * @param {Object} options - { maxWidth, maxHeight, displayWidth, displayHeight, quality, format }
+   * @returns {{ dataUrl, width, height, actualWidth, actualHeight, format }}
    */
-  async _resizeImageForExport(dataUrl, maxWidth = 600, maxHeight = 450) {
-    // Helper to check if we are in a Service Worker or similar context
+  async _processImageForExport(dataUrl, options = {}) {
+    const {
+      maxWidth = 1920,         // Actual pixel cap (keep high for zoom quality)
+      maxHeight = 1080,
+      displayWidth = 600,      // Display size in DOCX (old layout)
+      displayHeight = 450,
+      quality = 0.92,
+      format = 'auto'          // 'auto', 'png', 'jpeg-high', 'jpeg-standard'
+    } = options;
+
+    const jpegQuality = format === 'jpeg-standard' ? 0.85 : quality;
     const useOffscreen = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined';
 
+    let result;
     if (useOffscreen) {
-      try {
-        // Service Worker implementation using OffscreenCanvas
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
-        const bitmap = await createImageBitmap(blob);
-
-        const { width: imgWidth, height: imgHeight } = bitmap;
-
-        // Calculate scale
-        const scale = Math.min(
-          maxWidth / imgWidth,
-          maxHeight / imgHeight,
-          1
-        );
-
-        if (scale >= 1) {
-          bitmap.close();
-          return { dataUrl, width: imgWidth, height: imgHeight };
-        }
-
-        const canvasWidth = Math.floor(imgWidth * scale);
-        const canvasHeight = Math.floor(imgHeight * scale);
-
-        const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(bitmap, 0, 0, canvasWidth, canvasHeight);
-
-        // Convert back to blob -> dataUrl
-        // OffscreenCanvas.convertToBlob is standard
-        const resizedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
-        const reader = new FileReader();
-        const resizedDataUrl = await new Promise((resolve) => {
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(resizedBlob);
-        });
-
-        bitmap.close();
-        console.log(`📐 Resized image (Offscreen): ${imgWidth}x${imgHeight} → ${canvasWidth}x${canvasHeight}`);
-        return { dataUrl: resizedDataUrl, width: canvasWidth, height: canvasHeight };
-
-      } catch (error) {
-        console.error('Offscreen image resize failed:', error);
-        // We might not know dimensions if bitmap creation failed, safe fallback
-        return { dataUrl, width: 600, height: 450 };
-      }
+      result = await this._processImageOffscreen(dataUrl, maxWidth, maxHeight, jpegQuality, format);
     } else {
-      // Standard DOM implementation
-      return new Promise((resolve, reject) => {
-        const img = new Image();
+      result = await this._processImageDOM(dataUrl, maxWidth, maxHeight, jpegQuality, format);
+    }
 
-        img.onload = () => {
-          try {
-            // Calculate scale to fit within max dimensions
-            const scale = Math.min(
-              maxWidth / img.width,
-              maxHeight / img.height,
-              1 // Don't upscale
-            );
+    // Calculate display dimensions that fit within displayWidth x displayHeight
+    // while preserving aspect ratio
+    const scale = Math.min(displayWidth / result.width, displayHeight / result.height, 1);
+    result.actualWidth = result.width;
+    result.actualHeight = result.height;
+    result.width = Math.floor(result.width * scale);
+    result.height = Math.floor(result.height * scale);
 
-            if (scale >= 1) {
-              // No resize needed
-              resolve({ dataUrl: dataUrl, width: img.width, height: img.height });
+    return result;
+  }
+
+  async _processImageOffscreen(dataUrl, maxWidth, maxHeight, quality, format) {
+    try {
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      const bitmap = await createImageBitmap(blob);
+
+      const { width: imgWidth, height: imgHeight } = bitmap;
+
+      const scale = Math.min(maxWidth / imgWidth, maxHeight / imgHeight, 1);
+      const canvasWidth = Math.floor(imgWidth * scale);
+      const canvasHeight = Math.floor(imgHeight * scale);
+
+      const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
+      const ctx = canvas.getContext('2d', { alpha: false });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, 0, 0, canvasWidth, canvasHeight);
+
+      // Determine output format
+      let outputFormat = format;
+      if (outputFormat === 'auto') {
+        outputFormat = this._detectContentType(ctx, canvasWidth, canvasHeight);
+      }
+
+      let outputBlob;
+      if (outputFormat === 'png') {
+        outputBlob = await canvas.convertToBlob({ type: 'image/png' });
+      } else {
+        outputBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+        outputFormat = 'jpeg';
+      }
+
+      // Safety: if auto-selected PNG is >3x larger than JPEG, use JPEG
+      if (format === 'auto' && outputFormat === 'png') {
+        const jpegBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+        if (outputBlob.size > jpegBlob.size * 3) {
+          outputBlob = jpegBlob;
+          outputFormat = 'jpeg';
+        }
+      }
+
+      bitmap.close();
+
+      const reader = new FileReader();
+      const outputDataUrl = await new Promise((resolve) => {
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(outputBlob);
+      });
+
+      console.log(`📐 Export image (Offscreen): ${imgWidth}x${imgHeight} → ${canvasWidth}x${canvasHeight} [${outputFormat}]`);
+      return { dataUrl: outputDataUrl, width: canvasWidth, height: canvasHeight, format: outputFormat };
+    } catch (error) {
+      console.error('Offscreen export image processing failed:', error);
+      return { dataUrl, width: 1200, height: 900, format: 'original' };
+    }
+  }
+
+  async _processImageDOM(dataUrl, maxWidth, maxHeight, quality, format) {
+    return new Promise((resolve) => {
+      const img = new Image();
+
+      img.onload = () => {
+        try {
+          const scale = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
+          const canvasWidth = Math.floor(img.width * scale);
+          const canvasHeight = Math.floor(img.height * scale);
+
+          const canvas = document.createElement('canvas');
+          canvas.width = canvasWidth;
+          canvas.height = canvasHeight;
+
+          const ctx = canvas.getContext('2d', { alpha: false });
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+
+          // Step-down scaling for large reductions (better quality)
+          if (canvasWidth < img.width * 0.5) {
+            const tempCanvas = document.createElement('canvas');
+            const intermediateWidth = Math.floor(img.width * 0.7);
+            const intermediateHeight = Math.floor(img.height * 0.7);
+            tempCanvas.width = intermediateWidth;
+            tempCanvas.height = intermediateHeight;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.imageSmoothingEnabled = true;
+            tempCtx.imageSmoothingQuality = 'high';
+            tempCtx.drawImage(img, 0, 0, intermediateWidth, intermediateHeight);
+            ctx.drawImage(tempCanvas, 0, 0, canvasWidth, canvasHeight);
+            tempCanvas.width = 0;
+            tempCanvas.height = 0;
+          } else {
+            ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+          }
+
+          // Determine output format
+          let outputFormat = format;
+          if (outputFormat === 'auto') {
+            outputFormat = this._detectContentType(ctx, canvasWidth, canvasHeight);
+          }
+
+          if (outputFormat === 'png') {
+            const pngDataUrl = canvas.toDataURL('image/png');
+            const jpegDataUrl = canvas.toDataURL('image/jpeg', quality);
+
+            // Safety: if PNG is >3x JPEG, use JPEG
+            if (format === 'auto' && pngDataUrl.length > jpegDataUrl.length * 3) {
+              outputFormat = 'jpeg';
+              canvas.width = 0;
+              canvas.height = 0;
+              img.src = '';
+              resolve({ dataUrl: jpegDataUrl, width: canvasWidth, height: canvasHeight, format: 'jpeg' });
               return;
             }
 
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.floor(img.width * scale);
-            canvas.height = Math.floor(img.height * scale);
-
-            const ctx = canvas.getContext('2d');
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-            const resized = canvas.toDataURL('image/jpeg', 0.95);
-            console.log(`📐 Resized image: ${img.width}x${img.height} → ${canvas.width}x${canvas.height}`);
-
-            resolve({ dataUrl: resized, width: canvas.width, height: canvas.height });
-          } catch (error) {
-            console.error('Image resize failed:', error);
-            resolve({ dataUrl: dataUrl, width: 600, height: 450 }); // Fallback with safe defaults
+            canvas.width = 0;
+            canvas.height = 0;
+            img.src = '';
+            resolve({ dataUrl: pngDataUrl, width: canvasWidth, height: canvasHeight, format: 'png' });
+          } else {
+            const jpegDataUrl = canvas.toDataURL('image/jpeg', quality);
+            canvas.width = 0;
+            canvas.height = 0;
+            img.src = '';
+            console.log(`📐 Export image: ${img.width || canvasWidth}x${img.height || canvasHeight} → ${canvasWidth}x${canvasHeight} [jpeg]`);
+            resolve({ dataUrl: jpegDataUrl, width: canvasWidth, height: canvasHeight, format: 'jpeg' });
           }
-        };
+        } catch (error) {
+          console.error('DOM export image processing failed:', error);
+          img.src = '';
+          resolve({ dataUrl, width: 1200, height: 900, format: 'original' });
+        }
+      };
 
-        img.onerror = () => {
-          console.error('Failed to load image for resizing');
-          resolve({ dataUrl: dataUrl, width: 600, height: 450 }); // Fallback
-        };
+      img.onerror = () => {
+        console.error('Failed to load image for export processing');
+        resolve({ dataUrl, width: 1200, height: 900, format: 'original' });
+      };
 
-        img.src = dataUrl;
-      });
+      img.src = dataUrl;
+    });
+  }
+
+  /**
+   * Detect whether image content is text-heavy or photo-heavy using edge density.
+   * Samples a pixel region and counts sharp luminance transitions.
+   * High edge density = text/UI → PNG; Low = photo → JPEG.
+   */
+  _detectContentType(ctx, width, height) {
+    try {
+      const sampleSize = Math.min(200, width, height);
+      const imageData = ctx.getImageData(0, 0, Math.min(sampleSize, width), Math.min(sampleSize, height));
+      const data = imageData.data;
+      const w = imageData.width;
+
+      let edgeCount = 0;
+      let totalPixels = 0;
+      const threshold = 30;
+
+      for (let y = 0; y < imageData.height - 1; y++) {
+        for (let x = 0; x < w - 1; x++) {
+          const idx = (y * w + x) * 4;
+          const idxRight = (y * w + x + 1) * 4;
+          const idxBelow = ((y + 1) * w + x) * 4;
+
+          const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+          const lumRight = 0.299 * data[idxRight] + 0.587 * data[idxRight + 1] + 0.114 * data[idxRight + 2];
+          const lumBelow = 0.299 * data[idxBelow] + 0.587 * data[idxBelow + 1] + 0.114 * data[idxBelow + 2];
+
+          if (Math.abs(lum - lumRight) > threshold || Math.abs(lum - lumBelow) > threshold) {
+            edgeCount++;
+          }
+          totalPixels++;
+        }
+      }
+
+      const edgeDensity = totalPixels > 0 ? edgeCount / totalPixels : 0;
+      console.log(`🔍 Content detection: edge density = ${edgeDensity.toFixed(3)} → ${edgeDensity > 0.12 ? 'PNG (text/UI)' : 'JPEG (photo)'}`);
+      return edgeDensity > 0.12 ? 'png' : 'jpeg';
+    } catch (e) {
+      return 'jpeg'; // Safe fallback
     }
+  }
+
+  /**
+   * @deprecated Use _processImageForExport instead. Kept for backward compatibility.
+   */
+  async _resizeImageForExport(dataUrl, maxWidth = 600, maxHeight = 450) {
+    return this._processImageForExport(dataUrl, {
+      displayWidth: maxWidth,
+      displayHeight: maxHeight,
+      format: 'auto'
+    });
   }
 
   async _exportDOCX(exportData, sessionId, progressCallback) {
@@ -467,6 +600,14 @@ export class ExportService {
 `;
 
     // ------------------------------------------------------------------
+    // Load user's export quality preference
+    let exportFormat = 'auto';
+    try {
+      const settingsResult = await chrome.storage.local.get('settings');
+      const settings = settingsResult.settings || {};
+      exportFormat = settings.exportImageQuality || 'auto';
+    } catch (e) { /* use default */ }
+
     // Load screenshots — use _resolveAssetUrl which checks dataUrl first,
     // then data, then blob.  This is the line that was broken before: it
     // only checked asset.blob, which is always {} after storage round-trip.
@@ -485,8 +626,12 @@ export class ExportService {
 
       let url = await this._resolveAssetUrl(asset);
       if (url) {
-        // 🔧 FIX: EXP-002 - Use higher resolution for better quality (increased from 400x900)
-        const imgObj = await this._resizeImageForExport(url, 600, 450);
+        // Smart export: high-res data (1920x1080) for zoom quality,
+        // display at 600x450 in DOCX for old layout
+        const imgObj = await this._processImageForExport(url, {
+          quality: 0.92,
+          format: exportFormat
+        });
         screenshotMap.set(asset.stepId, imgObj);
       } else {
         console.warn('No usable image data for asset', asset.id, '(stepId:', asset.stepId + ')');

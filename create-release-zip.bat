@@ -3,7 +3,7 @@ REM TestSnapper - Create Chrome Web Store Release ZIP
 REM Run this after npm run build
 
 echo ========================================
-echo TestSnapper v1.1.3 - Release Packager
+echo TestSnapper v1.1.4 - Release Packager
 echo ========================================
 echo.
 
@@ -73,7 +73,7 @@ REM Create release folder name with timestamp
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set "dt=%%a"
 set "YMD=%dt:~0,8%"
 set "HMS=%dt:~8,6%"
-set "RELEASE_NAME=testsnapper-v1.1.3-%YMD%-%HMS%"
+set "RELEASE_NAME=testsnapper-v1.1.4-%YMD%-%HMS%"
 set "RELEASE_ZIP=%RELEASE_NAME%.zip"
 
 echo Creating ZIP: %RELEASE_ZIP%

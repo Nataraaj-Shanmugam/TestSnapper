@@ -215,11 +215,20 @@
         </div>
 
         <div class="form-group">
-          <label>Image Quality (DOCX/PDF):</label>
-          <select id="imageQuality" class="select">
-            <option value="0.85">Standard (85%)</option>
-            <option value="0.92" selected>High (92%)</option>
-            <option value="0.95">Very High (95%)</option>
+          <label>Screenshot Storage Format:</label>
+          <select id="screenshotFormat" class="select">
+            <option value="png" selected>PNG - Best Quality (Larger Files)</option>
+            <option value="jpeg-high">JPEG High 92% (Smaller Files)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Export Image Quality:</label>
+          <select id="exportImageQuality" class="select">
+            <option value="auto" selected>Smart (Auto-detect text vs photos)</option>
+            <option value="png">Always PNG (Best for text/UI)</option>
+            <option value="jpeg-high">Always JPEG High (92%)</option>
+            <option value="jpeg-standard">Always JPEG Standard (85%)</option>
           </select>
         </div>
       </div>

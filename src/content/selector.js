@@ -870,6 +870,13 @@ class SelectorEngine {
   // ==================== Field Name Extraction ====================
 
   extractFieldName(element) {
+    // Delegate to the advanced FieldNameResolver if available
+    if (typeof FieldNameResolver !== 'undefined' && window.fieldNameResolver) {
+      const resolved = window.fieldNameResolver.resolve(element);
+      if (resolved) return resolved;
+    }
+
+    // Fallback to legacy sources
     const sources = [
       () => element.getAttribute('aria-label'),
       () => element.getAttribute('aria-labelledby') && this._getTextFromId(element.getAttribute('aria-labelledby')),
