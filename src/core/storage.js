@@ -34,23 +34,23 @@
  * Add "storage" and "unlimitedStorage" permissions to manifest.json.
  */
 
-import { compress, decompress, isCompressed } from './core/compression.js';
+import { compress, decompress, isCompressed } from './compression.js';
+import { QuotaMonitor } from './quota-monitor.js';
+import { migrateIfNeeded, STORAGE_VERSION } from './schema-migrator.js';
+import { OrphanCleaner } from './orphan-cleaner.js';
 
-const STORAGE_VERSION = 2;
 const META_KEY = 'testsnapper_meta';
 const SESSIONS_KEY = 'testsnapper_sessions';
-const QUOTA_WARNING_THRESHOLD = 0.80; // 80%
-const QUOTA_ERROR_THRESHOLD = 0.95; // 95%
 const MAX_IMAGE_WIDTH = 1920;
 const MAX_IMAGE_HEIGHT = 1080;
 const IMAGE_QUALITY = 0.95;
-const CLEANUP_INTERVAL_DAYS = 7;
 
 class StorageManager {
   constructor() {
     this.maxRetries = 3;
     this.retryDelay = 100; // ms base; multiplied by attempt number
-    this.quotaListeners = new Set();
+    this.quotaMonitor = new QuotaMonitor();
+    this.orphanCleaner = new OrphanCleaner(this);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -59,6 +59,9 @@ class StorageManager {
 
   /**
    * Read metadata (version, counts, etc.)
+   * @private
+   * @async
+   * @returns {Promise<Object>} Metadata object with version, sessionCount, lastCleanup
    */
   async _readMeta() {
     const result = await chrome.storage.local.get(META_KEY);
@@ -71,6 +74,10 @@ class StorageManager {
 
   /**
    * Write metadata
+   * @private
+   * @async
+   * @param {Object} meta - Metadata object to write
+   * @returns {Promise<void>}
    */
   async _writeMeta(meta) {
     await chrome.storage.local.set({ [META_KEY]: meta });
@@ -78,6 +85,9 @@ class StorageManager {
 
   /**
    * Read all session metadata (without steps/assets)
+   * @private
+   * @async
+   * @returns {Promise<Array>} Array of session metadata objects
    */
   async _readSessions() {
     const result = await chrome.storage.local.get(SESSIONS_KEY);
@@ -86,6 +96,10 @@ class StorageManager {
 
   /**
    * Write all session metadata
+   * @private
+   * @async
+   * @param {Array} sessions - Array of session metadata objects
+   * @returns {Promise<void>}
    */
   async _writeSessions(sessions) {
     await chrome.storage.local.set({ [SESSIONS_KEY]: sessions });
@@ -93,7 +107,11 @@ class StorageManager {
 
   /**
    * Read steps for a specific session
-   * BUG FIX: STR-MED-001 - Decompress step data if compressed
+   * Decompresses step data if stored compressed (STR-MED-001 fix)
+   * @private
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @returns {Promise<Array>} Array of step objects
    */
   async _readSteps(sessionId) {
     const key = `testsnapper_steps_${sessionId}`;
@@ -113,7 +131,12 @@ class StorageManager {
 
   /**
    * Write steps for a specific session
-   * BUG FIX: STR-MED-001 - Compress step data before storage
+   * Compresses step data before storage (STR-MED-001 fix)
+   * @private
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @param {Array} steps - Array of step objects
+   * @returns {Promise<void>}
    */
   async _writeSteps(sessionId, steps) {
     const key = `testsnapper_steps_${sessionId}`;
@@ -123,6 +146,10 @@ class StorageManager {
 
   /**
    * Read assets for a specific session
+   * @private
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @returns {Promise<Array>} Array of asset objects
    */
   async _readAssets(sessionId) {
     const key = `testsnapper_assets_${sessionId}`;
@@ -132,6 +159,11 @@ class StorageManager {
 
   /**
    * Write assets for a specific session
+   * @private
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @param {Array} assets - Array of asset objects
+   * @returns {Promise<void>}
    */
   async _writeAssets(sessionId, assets) {
     const key = `testsnapper_assets_${sessionId}`;
@@ -139,7 +171,14 @@ class StorageManager {
   }
 
   /**
-   * Generic retry wrapper – identical contract to the old IndexedDB version.
+   * Generic retry wrapper with exponential backoff
+   * @private
+   * @async
+   * @param {Function} operation - Async operation to retry
+   * @param {string} operationName - Name for logging
+   * @param {number} [retries=3] - Maximum number of retries
+   * @returns {Promise<*>} Result of the operation
+   * @throws {Error} If operation fails after all retries
    */
   async _retryOperation(operation, operationName, retries = this.maxRetries) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -157,257 +196,97 @@ class StorageManager {
   }
 
   /**
-   * Find the index of a session by ID. Returns -1 if not found.
+   * Find the index of a session by ID
+   * @private
+   * @param {Array} sessions - Array of session metadata
+   * @param {string} sessionId - Session identifier
+   * @returns {number} Index of session, or -1 if not found
    */
   _findSessionIndex(sessions, sessionId) {
     return sessions.findIndex(s => s.sessionId === sessionId);
   }
 
-  /**
-   * Compress image data URL to reduce storage size
-   * BUG FIX: STR-001 - Image compression
-   */
-  async _compressImage(dataUrl) {
-    // Helper to check if we are in a Service Worker or similar context
-    const useOffscreen = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined';
-
-    if (useOffscreen) {
-      try {
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
-        const bitmap = await createImageBitmap(blob);
-
-        let { width, height } = bitmap;
-
-        // Resize if too large
-        if (width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT) {
-          const ratio = Math.min(MAX_IMAGE_WIDTH / width, MAX_IMAGE_HEIGHT / height);
-          width = Math.floor(width * ratio);
-          height = Math.floor(height * ratio);
-        }
-
-        const canvas = new OffscreenCanvas(width, height);
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(bitmap, 0, 0, width, height);
-
-        const compressedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: IMAGE_QUALITY });
-
-        // Convert blob to dataUrl
-        const reader = new FileReader();
-        const compressedDataUrl = await new Promise((resolve) => {
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(compressedBlob);
-        });
-
-        bitmap.close();
-        console.log(`🗜️ Image compressed (Offscreen): ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
-
-        return compressedDataUrl;
-      } catch (error) {
-        console.error('Offscreen image compression failed:', error);
-        return dataUrl; // Fallback
-      }
-    } else {
-      // Standard DOM implementation
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-
-        img.onload = () => {
-          try {
-            const canvas = document.createElement('canvas');
-            let { width, height } = img;
-
-            // Resize if too large
-            if (width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT) {
-              const ratio = Math.min(MAX_IMAGE_WIDTH / width, MAX_IMAGE_HEIGHT / height);
-              width = Math.floor(width * ratio);
-              height = Math.floor(height * ratio);
-            }
-
-            canvas.width = width;
-            canvas.height = height;
-
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, width, height);
-
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', IMAGE_QUALITY);
-
-            console.log(`🗜️ Image compressed: ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
-
-            resolve(compressedDataUrl);
-          } catch (error) {
-            console.error('Image compression failed:', error);
-            resolve(dataUrl); // Fallback to original
-          }
-        };
-
-        img.onerror = () => {
-          console.error('Failed to load image for compression');
-          resolve(dataUrl); // Fallback to original
-        };
-
-        img.src = dataUrl;
-      });
-    }
-  }
-
   // ════════════════════════════════════════════════════════════════
-  // BUG-004: Storage Quota Monitoring
+  // BUG-004: Storage Quota Monitoring (delegated to QuotaMonitor)
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Get current storage usage
-   * Returns { used, total, percentage, warning, error }
+   * Get current storage usage statistics
+   * @async
+   * @returns {Promise<Object>} { used, total, percentage, warning, error }
    */
   async getStorageUsage() {
-    try {
-      const bytesInUse = await chrome.storage.local.getBytesInUse();
-
-      // BUG FIX: STR-CRIT-001 - Check if unlimitedStorage permission is granted
-      let QUOTA_BYTES;
-      try {
-        const hasUnlimited = await chrome.permissions.contains({ permissions: ['unlimitedStorage'] });
-        if (hasUnlimited) {
-          // With unlimitedStorage, quota is much larger (typically 1GB+)
-          QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 1073741824; // 1GB
-        } else {
-          // Without unlimitedStorage, limited to 10MB
-          QUOTA_BYTES = 10485760; // 10MB
-        }
-      } catch (err) {
-        // Fallback if permissions API fails
-        QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 10485760;
-      }
-
-      const percentage = bytesInUse / QUOTA_BYTES;
-
-      return {
-        used: bytesInUse,
-        total: QUOTA_BYTES,
-        percentage: percentage,
-        warning: percentage >= QUOTA_WARNING_THRESHOLD,
-        error: percentage >= QUOTA_ERROR_THRESHOLD
-      };
-    } catch (error) {
-      console.error('Failed to get storage usage:', error);
-      return { used: 0, total: 0, percentage: 0, warning: false, error: false };
-    }
+    return this.quotaMonitor.getStorageUsage();
   }
 
   /**
    * Check quota before write operation
-   * Throws error if quota exceeded
+   * @private
+   * @async
+   * @returns {Promise<void>}
+   * @throws {Error} If quota is critically exceeded
    */
   async _checkQuota() {
-    const usage = await this.getStorageUsage();
-
-    if (usage.error) {
-      throw new Error(`Storage quota critically low (${(usage.percentage * 100).toFixed(1)}%). Delete old sessions or enable cleanup.`);
-    }
-
-    if (usage.warning) {
-      console.warn(`⚠️ Storage quota warning: ${(usage.percentage * 100).toFixed(1)}% used`);
-      this._notifyQuotaWarning(usage);
-    }
-
-    return usage;
+    return this.quotaMonitor.checkQuota();
   }
 
   /**
    * Notify quota warning listeners
+   * @private
+   * @param {Object} usage - Storage usage statistics
    */
   _notifyQuotaWarning(usage) {
-    this.quotaListeners.forEach(listener => {
-      try {
-        listener(usage);
-      } catch (error) {
-        console.error('Quota listener error:', error);
-      }
-    });
+    return this.quotaMonitor._notifyQuotaWarning(usage);
   }
 
   /**
-   * Add quota warning listener
+   * Add a quota warning listener
+   * @param {Function} listener - Callback function
+   * @returns {void}
    */
   onQuotaWarning(listener) {
-    this.quotaListeners.add(listener);
+    return this.quotaMonitor.onQuotaWarning(listener);
   }
 
   /**
-   * Remove quota warning listener
+   * Remove a quota warning listener
+   * @param {Function} listener - Callback function
+   * @returns {void}
    */
   offQuotaWarning(listener) {
-    this.quotaListeners.delete(listener);
+    return this.quotaMonitor.offQuotaWarning(listener);
   }
 
   // ════════════════════════════════════════════════════════════════
-  // STR-004: Orphaned Asset Cleanup
+  // STR-004: Orphaned Asset Cleanup (delegated to OrphanCleaner)
   // ════════════════════════════════════════════════════════════════
 
   /**
    * Find assets that reference non-existent steps or sessions
+   * @async
+   * @returns {Promise<Array>} Array of orphaned asset objects
    */
   async findOrphanedAssets() {
-    const sessions = await this._readSessions();
-    const orphaned = [];
-
-    for (const session of sessions) {
-      const steps = await this._readSteps(session.sessionId);
-      const assets = await this._readAssets(session.sessionId);
-      const stepIds = new Set(steps.map(s => s.id));
-
-      for (const asset of assets) {
-        if (!stepIds.has(asset.stepId)) {
-          orphaned.push(asset);
-        }
-      }
-    }
-
-    return orphaned;
+    return this.orphanCleaner.findOrphanedAssets();
   }
 
   /**
-   * Remove orphaned assets
+   * Remove orphaned assets from storage
+   * @async
+   * @returns {Promise<number>} Number of assets removed
    */
   async cleanupOrphans() {
-    const sessions = await this._readSessions();
-    let totalRemoved = 0;
-
-    for (const session of sessions) {
-      const steps = await this._readSteps(session.sessionId);
-      const assets = await this._readAssets(session.sessionId);
-      const stepIds = new Set(steps.map(s => s.id));
-
-      const beforeCount = assets.length;
-      const cleaned = assets.filter(a => stepIds.has(a.stepId));
-      const removed = beforeCount - cleaned.length;
-
-      if (removed > 0) {
-        await this._writeAssets(session.sessionId, cleaned);
-        totalRemoved += removed;
-      }
-    }
-
-    // Update last cleanup time
-    const meta = await this._readMeta();
-    meta.lastCleanup = Date.now();
-    await this._writeMeta(meta);
-
-    console.log(`🧹 Cleaned up ${totalRemoved} orphaned assets`);
-    return totalRemoved;
+    return this.orphanCleaner.cleanupOrphans();
   }
 
   /**
    * Check if cleanup is needed (runs once per week)
+   * @private
+   * @async
+   * @returns {Promise<void>}
    */
   async _autoCleanupCheck() {
-    const meta = await this._readMeta();
-    const daysSinceCleanup = (Date.now() - (meta.lastCleanup || 0)) / (1000 * 60 * 60 * 24);
-
-    if (daysSinceCleanup >= CLEANUP_INTERVAL_DAYS) {
-      console.log('🧹 Running automatic cleanup...');
-      await this.cleanupOrphans();
-    }
+    return this.orphanCleaner.autoCleanupCheck();
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -416,6 +295,8 @@ class StorageManager {
 
   /**
    * Export all data for backup
+   * @async
+   * @returns {Promise<Object>} Complete data object with meta and sessions
    */
   async exportAllData() {
     const meta = await this._readMeta();
@@ -443,6 +324,10 @@ class StorageManager {
   /**
    * Import data from backup
    * Overwrites existing data!
+   * @async
+   * @param {Object} data - Backup data object with meta and sessions
+   * @returns {Promise<boolean>} true if successful
+   * @throws {Error} If backup data structure is invalid
    */
   async importData(data) {
     // Validate data structure
@@ -466,7 +351,7 @@ class StorageManager {
       await this._writeAssets(session.sessionId, session.assets || []);
     }
 
-    console.log('✅ Data imported successfully');
+    console.log('Data imported successfully');
     return true;
   }
 
@@ -476,6 +361,10 @@ class StorageManager {
 
   /**
    * Update multiple steps in a single transaction
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @param {Array<Object>} stepUpdates - Array of step objects with id and updated fields
+   * @returns {Promise<Array>} Updated steps array
    */
   async batchUpdateSteps(sessionId, stepUpdates) {
     return this._retryOperation(async () => {
@@ -494,6 +383,9 @@ class StorageManager {
 
   /**
    * Delete multiple steps in a single transaction
+   * @async
+   * @param {Array<string>} stepIds - Array of step IDs to delete
+   * @returns {Promise<number>} Total number of steps deleted
    */
   async batchDeleteSteps(stepIds) {
     return this._retryOperation(async () => {
@@ -527,76 +419,14 @@ class StorageManager {
   }
 
   // ════════════════════════════════════════════════════════════════
-  // STR-002: Schema Versioning
-  // ════════════════════════════════════════════════════════════════
-
-  /**
-   * Migrate data from older schema versions
-   */
-  async _migrateIfNeeded() {
-    const meta = await this._readMeta();
-
-    if (!meta.version || meta.version < STORAGE_VERSION) {
-      console.log(`🔄 Migrating storage from v${meta.version || 1} to v${STORAGE_VERSION}`);
-
-      if (meta.version === 1 || !meta.version) {
-        // Migration from v1 to v2: Split single-key storage into multi-key
-        const oldKey = 'testsnapper_data';
-        const oldData = await chrome.storage.local.get(oldKey);
-
-        // BUG FIX: STR-HIGH-001 - Validate data before migration
-        if (oldData[oldKey] && oldData[oldKey].sessions) {
-          const sessions = oldData[oldKey].sessions;
-
-          // Validate sessions array
-          if (!Array.isArray(sessions)) {
-            console.error('Migration failed: sessions is not an array');
-            throw new Error('Invalid data format for migration');
-          }
-
-          // Validate each session has required fields
-          const validSessions = sessions.filter(s => {
-            if (!s || !s.sessionId) {
-              console.warn('Skipping invalid session during migration:', s);
-              return false;
-            }
-            return true;
-          });
-
-          if (validSessions.length === 0) {
-            console.warn('No valid sessions to migrate');
-          } else {
-            // Write new format
-            const sessionMeta = validSessions.map(({ steps, assets, ...meta }) => meta);
-            await this._writeSessions(sessionMeta);
-
-            for (const session of validSessions) {
-              const steps = Array.isArray(session.steps) ? session.steps : [];
-              const assets = Array.isArray(session.assets) ? session.assets : [];
-              await this._writeSteps(session.sessionId, steps);
-              await this._writeAssets(session.sessionId, assets);
-            }
-
-            console.log(`✅ Migration v1→v2 complete: ${validSessions.length} sessions migrated`);
-          }
-
-          // Remove old key
-          await chrome.storage.local.remove(oldKey);
-        }
-      }
-
-      // Update version
-      meta.version = STORAGE_VERSION;
-      await this._writeMeta(meta);
-    }
-  }
-
-  // ════════════════════════════════════════════════════════════════
   // Public API (same signatures as the old IndexedDB version)
   // ════════════════════════════════════════════════════════════════
 
   /**
    * Initialize storage and run migrations
+   * @async
+   * @returns {Promise<boolean>} true if successful
+   * @throws {Error} If storage initialization fails
    */
   async init() {
     // Verify the API is available (fails fast in non-extension contexts)
@@ -605,7 +435,13 @@ class StorageManager {
     }
 
     // Run migrations if needed
-    await this._migrateIfNeeded();
+    await migrateIfNeeded({
+      readMeta: () => this._readMeta(),
+      writeMeta: (m) => this._writeMeta(m),
+      writeSessions: (s) => this._writeSessions(s),
+      writeSteps: (id, steps) => this._writeSteps(id, steps),
+      writeAssets: (id, assets) => this._writeAssets(id, assets)
+    });
 
     // Run auto-cleanup check
     await this._autoCleanupCheck();
@@ -615,6 +451,16 @@ class StorageManager {
 
   // ──── Sessions ─────────────────────────────────────────────────────
 
+  /**
+   * Create a new session
+   * @async
+   * @param {Object} sessionData - Session metadata object
+   * @param {string} sessionData.sessionId - Unique session identifier
+   * @param {string} sessionData.sessionName - Human-readable session name
+   * @param {number} sessionData.createdAt - Creation timestamp
+   * @returns {Promise<Object>} Created session object
+   * @throws {Error} If session already exists or quota exceeded
+   */
   async createSession(sessionData) {
     return this._retryOperation(async () => {
       await this._checkQuota();
@@ -644,6 +490,12 @@ class StorageManager {
     }, 'createSession');
   }
 
+  /**
+   * Get a session with all its steps and assets
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @returns {Promise<Object|null>} Session object with steps and assets, or null if not found
+   */
   async getSession(sessionId) {
     return this._retryOperation(async () => {
       const sessions = await this._readSessions();
@@ -663,6 +515,14 @@ class StorageManager {
     }, 'getSession');
   }
 
+  /**
+   * Update session metadata
+   * @async
+   * @param {Object} sessionData - Updated session metadata
+   * @param {string} sessionData.sessionId - Session identifier
+   * @returns {Promise<Object>} Updated session object
+   * @throws {Error} If session not found
+   */
   async updateSession(sessionData) {
     return this._retryOperation(async () => {
       const sessions = await this._readSessions();
@@ -684,6 +544,11 @@ class StorageManager {
     }, 'updateSession');
   }
 
+  /**
+   * Get all sessions (metadata only)
+   * @async
+   * @returns {Promise<Array>} Array of session metadata objects
+   */
   async getAllSessions() {
     return this._retryOperation(async () => {
       const sessions = await this._readSessions();
@@ -691,6 +556,14 @@ class StorageManager {
     }, 'getAllSessions');
   }
 
+  /**
+   * Update a session's name
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @param {string} sessionName - New session name
+   * @returns {Promise<Object>} Updated session object
+   * @throws {Error} If session not found
+   */
   async updateSessionName(sessionId, sessionName) {
     return this._retryOperation(async () => {
       const sessions = await this._readSessions();
@@ -706,6 +579,13 @@ class StorageManager {
 
   // ──── Steps ────────────────────────────────────────────────────────
 
+  /**
+   * Add a step to a session
+   * @async
+   * @param {Object} step - Step object with sessionId
+   * @returns {Promise<Object>} The added step
+   * @throws {Error} If session not found or quota exceeded
+   */
   async addStep(step) {
     return this._retryOperation(async () => {
       await this._checkQuota();
@@ -727,6 +607,12 @@ class StorageManager {
     }, 'addStep');
   }
 
+  /**
+   * Get all steps for a session
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @returns {Promise<Array>} Array of step objects
+   */
   async getSteps(sessionId) {
     return this._retryOperation(async () => {
       const steps = await this._readSteps(sessionId);
@@ -734,6 +620,13 @@ class StorageManager {
     }, 'getSteps');
   }
 
+  /**
+   * Delete a single step by ID
+   * @async
+   * @param {string} stepId - Step identifier
+   * @returns {Promise<boolean>} true if deleted, false if not found
+   * @throws {Error} If stepId is not provided
+   */
   async deleteStep(stepId) {
     return this._retryOperation(async () => {
       if (!stepId) throw new Error('Step ID is required');
@@ -762,6 +655,13 @@ class StorageManager {
     }, 'deleteStep');
   }
 
+  /**
+   * Update a single step
+   * @async
+   * @param {Object} step - Step object with id and updated fields
+   * @returns {Promise<Object>} Updated step object
+   * @throws {Error} If step not found or invalid
+   */
   async updateStep(step) {
     return this._retryOperation(async () => {
       if (!step || !step.id) throw new Error('Valid step with ID is required');
@@ -784,8 +684,13 @@ class StorageManager {
   }
 
   /**
-   * Replace ALL steps for a session in one atomic write.
-   * Also updates the session's stepCount.
+   * Replace ALL steps for a session in one atomic write
+   * Also updates the session's stepCount
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @param {Array} steps - New array of step objects
+   * @returns {Promise<boolean>} true if successful
+   * @throws {Error} If session not found
    */
   async updateAllSteps(sessionId, steps) {
     return this._retryOperation(async () => {
@@ -800,13 +705,23 @@ class StorageManager {
       sessions[idx].stepCount = steps.length;
       await this._writeSessions(sessions);
 
-      console.log('✅ All steps updated successfully');
+      console.log('All steps updated successfully');
       return true;
     }, 'updateAllSteps');
   }
 
   // ──── Assets ───────────────────────────────────────────────────────
 
+  /**
+   * Add an asset (screenshot) to a session
+   * @async
+   * @param {Object} asset - Asset object
+   * @param {string} asset.sessionId - Session identifier
+   * @param {string} asset.stepId - Step identifier
+   * @param {string} asset.dataUrl - Base64 data URL of image
+   * @returns {Promise<Object>} The added asset
+   * @throws {Error} If session not found or quota exceeded
+   */
   async addAsset(asset) {
     return this._retryOperation(async () => {
       await this._checkQuota();
@@ -832,7 +747,7 @@ class StorageManager {
         try {
           const usage = await this.getStorageUsage();
           if (usage.percentage > 0.60) {
-            console.warn('⚠️ PNG storage is consuming significant space (' +
+            console.warn('PNG storage is consuming significant space (' +
               Math.round(usage.percentage * 100) + '%). Consider switching to JPEG-high in settings.');
           }
         } catch (e) { /* non-critical */ }
@@ -843,7 +758,10 @@ class StorageManager {
   }
 
   /**
-   * Detect image format from data URL prefix.
+   * Detect image format from data URL prefix
+   * @private
+   * @param {string} dataUrl - Data URL string
+   * @returns {string} Format string: 'png', 'jpeg', 'webp', or 'unknown'
    */
   _detectImageFormat(dataUrl) {
     if (dataUrl.startsWith('data:image/png')) return 'png';
@@ -852,6 +770,12 @@ class StorageManager {
     return 'unknown';
   }
 
+  /**
+   * Get all assets for a session
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @returns {Promise<Array>} Array of asset objects
+   */
   async getAllAssets(sessionId) {
     return this._retryOperation(async () => {
       const assets = await this._readAssets(sessionId);
@@ -859,6 +783,12 @@ class StorageManager {
     }, 'getAllAssets');
   }
 
+  /**
+   * Get all assets associated with a specific step
+   * @async
+   * @param {string} stepId - Step identifier
+   * @returns {Promise<Array>} Array of asset objects for the step
+   */
   async getAssetsByStepId(stepId) {
     return this._retryOperation(async () => {
       const sessions = await this._readSessions();
@@ -873,6 +803,12 @@ class StorageManager {
     }, 'getAssetsByStepId');
   }
 
+  /**
+   * Delete all assets for a session
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @returns {Promise<boolean>} true if successful
+   */
   async deleteAssets(sessionId) {
     return this._retryOperation(async () => {
       await this._writeAssets(sessionId, []);
@@ -883,7 +819,10 @@ class StorageManager {
   // ──── Session lifecycle ────────────────────────────────────────────
 
   /**
-   * Delete a session and all its steps + assets in one atomic operation.
+   * Delete a session and all its steps + assets in one atomic operation
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @returns {Promise<boolean>} true if successful
    */
   async clearSession(sessionId) {
     return this._retryOperation(async () => {
@@ -905,7 +844,7 @@ class StorageManager {
       meta.sessionCount = sessions.length;
       await this._writeMeta(meta);
 
-      console.log(`✅ Session ${sessionId} cleared`);
+      console.log(`Session ${sessionId} cleared`);
       return true;
     }, 'clearSession');
   }

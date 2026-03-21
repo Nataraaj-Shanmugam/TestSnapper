@@ -11,7 +11,16 @@
  * - POP-006: Added keyboard shortcuts documentation
  */
 
+import { FSStorageManager } from '../../core/fs-storage.js';
+import { ExportService } from '../../core/export-service.js';
+import { Utils } from '../../core/utils.js';
+import { setupTheme } from '../theme.js';
+
 console.log("✅ TestSnapper Popup loaded");
+
+const fsStorage = new FSStorageManager();
+const fileSync = fsStorage.fileSync;
+const exportService = new ExportService(fsStorage);
 
 document.addEventListener("DOMContentLoaded", async () => {
   await init();
@@ -46,6 +55,13 @@ const stepsList = document.getElementById("stepsList");
 const liveStepsViewer = document.getElementById("liveStepsViewer");
 const liveStepsList = document.getElementById("liveStepsList");
 
+// File sync
+const setStorageFolderBtn = document.getElementById("setStorageFolderBtn");
+const reauthorizeFolderBtn = document.getElementById("reauthorizeFolderBtn");
+const syncIndicator = document.getElementById("syncIndicator");
+const syncFolderName = document.getElementById("syncFolderName");
+const fileSyncStatus = document.getElementById("fileSyncStatus");
+
 // Settings section
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const backupAllBtn = document.getElementById("backupAllBtn"); // STR-MED-003
@@ -72,7 +88,10 @@ async function init() {
   setupTabs();
   setupEventListeners();
   setupTheme();
+  await fsStorage.init();
   await updateState();
+  await checkFileSyncStatus();
+  await flushAllPending(); // Flush any buffered sessions from previous recordings
   await loadSessions();
   await loadSettings();
   await loadExportFormat(); // POP-MED-003: Load saved export format
@@ -80,44 +99,7 @@ async function init() {
   setupKeyboardShortcuts(); // BUG FIX: POP-006
 }
 
-/**
- * BUG FIX: BUG-002 - Theme State Inconsistency
- * Standardized on light-mode class toggle with explicit state management
- */
-function setupTheme() {
-  const themeToggle = document.getElementById('themeToggle');
-  if (!themeToggle) return;
-
-  // Detect initial theme: saved > system preference
-  const savedTheme = localStorage.getItem('theme');
-  if (savedTheme) {
-    applyTheme(savedTheme);
-  } else {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    applyTheme(prefersDark ? 'dark' : 'light');
-  }
-
-  // Toggle Listener
-  themeToggle.addEventListener('click', () => {
-    const currentTheme = document.body.dataset.theme || 'light';
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    applyTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
-  });
-}
-
-function applyTheme(theme) {
-  const iconEl = document.querySelector('#themeToggle .icon');
-  document.body.dataset.theme = theme;
-
-  if (iconEl) {
-    if (theme === 'light') {
-      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
-    } else {
-      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
-    }
-  }
-}
+// setupTheme / applyTheme imported from ../theme.js
 
 /**
  * BUG FIX: POP-006 - Keyboard shortcuts documentation
@@ -136,13 +118,18 @@ Keyboard Shortcuts:
   });
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message) => {
   if (message.action === 'sessionNameUpdated') {
     loadSessions();
   } else if (message.action === 'storageQuotaWarning') {
-    // BUG FIX: POP-003 - Storage quota warning
-    showMessage(`⚠️ Storage ${(message.usage.percentage * 100).toFixed(1)}% full. Consider deleting old sessions.`, 'warning', 10000);
+    // BUG FIX: POP-003 - Storage quota warning (only relevant if still using buffer)
+    showMessage(`Storage ${(message.usage.percentage * 100).toFixed(1)}% full. Consider deleting old sessions.`, 'warning', 10000);
     updateStorageUsage();
+  } else if (message.action === 'sessionDataChanged') {
+    if (message.changeType !== 'deleted') loadSessions();
+  } else if (message.action === 'flushRecordingBuffer') {
+    // Recording stopped — flush buffered session from chrome.storage to filesystem
+    flushBufferedSession(message.sessionId);
   }
 });
 
@@ -154,8 +141,12 @@ function setupTabs() {
     tab.addEventListener("click", () => {
       const targetTab = tab.dataset.tab;
 
-      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+      document.querySelectorAll(".tab").forEach((t) => {
+        t.classList.remove("active");
+        t.setAttribute("aria-selected", "false");
+      });
       tab.classList.add("active");
+      tab.setAttribute("aria-selected", "true");
 
       document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
       document.getElementById(targetTab + "-tab").classList.add("active");
@@ -183,6 +174,12 @@ function setupEventListeners() {
   backupAllBtn?.addEventListener("click", handleBackupAll);
   restoreAllBtn?.addEventListener("click", () => restoreFileInput.click());
   restoreFileInput?.addEventListener("change", handleRestoreAll);
+
+  // File sync
+  setStorageFolderBtn?.addEventListener("click", handleSetStorageFolder);
+  reauthorizeFolderBtn?.addEventListener("click", handleReauthorize);
+  document.getElementById("onboardingPickFolderBtn")?.addEventListener("click", handleSetStorageFolder);
+  document.getElementById("onboardingReauthBtn")?.addEventListener("click", handleReauthorize);
 
   // Settings interactivity
   captureApiCalls?.addEventListener("change", (e) => {
@@ -278,37 +275,35 @@ function setupKeyboardNavigation() {
 }
 
 // =====================
-// BUG FIX: POP-003 - Storage Usage Indicator
+// Storage Usage Indicator
 // =====================
 async function updateStorageUsage() {
-  try {
-    const response = await chrome.runtime.sendMessage({ action: "getStorageUsage" });
-    if (response.success) {
-      const usage = response.usage;
-      const usageBar = document.getElementById('storageUsageBar');
-      const usageText = document.getElementById('storageUsageText');
+  const usageBar = document.getElementById('storageUsageBar');
+  const usageText = document.getElementById('storageUsageText');
+  if (!usageBar || !usageText) return;
 
-      if (usageBar && usageText) {
-        const percentage = (usage.percentage * 100).toFixed(1);
-        usageBar.style.width = `${percentage}%`;
-        usageBar.className = 'storage-usage-bar';
-
-        // Color coding
-        if (usage.error) {
-          usageBar.classList.add('storage-critical');
-        } else if (usage.warning) {
-          usageBar.classList.add('storage-warning');
-        } else {
-          usageBar.classList.add('storage-ok');
-        }
-
-        const usedMB = (usage.used / 1024 / 1024).toFixed(1);
-        const totalMB = (usage.total / 1024 / 1024).toFixed(0);
-        usageText.textContent = `${usedMB} MB / ${totalMB} MB (${percentage}%)`;
+  const fsReady = await fsStorage.isFilesystemReady();
+  if (fsReady) {
+    // Filesystem has no quota — show a simple status
+    usageBar.style.width = '0%';
+    usageBar.className = 'storage-usage-bar storage-ok';
+    usageText.textContent = 'Filesystem storage (no limit)';
+  } else {
+    // Still using chrome.storage buffer — show quota
+    try {
+      const response = await chrome.runtime.sendMessage({ action: "getStorageUsage" });
+      if (response?.success) {
+        const { percentage, error: err, warning, used, total } = response.usage;
+        const pct = (percentage * 100).toFixed(1);
+        usageBar.style.width = `${pct}%`;
+        usageBar.className = 'storage-usage-bar' + (err ? ' storage-critical' : warning ? ' storage-warning' : ' storage-ok');
+        const usedMB = (used / 1024 / 1024).toFixed(1);
+        const totalMB = (total / 1024 / 1024).toFixed(0);
+        usageText.textContent = `${usedMB} MB / ${totalMB} MB (${pct}%)`;
       }
+    } catch (e) {
+      console.error('Failed to update storage usage:', e);
     }
-  } catch (error) {
-    console.error('Failed to update storage usage:', error);
   }
 }
 
@@ -419,18 +414,28 @@ async function handleExport() {
   showMessage("Exporting...", "info");
 
   try {
-    const response = await chrome.runtime.sendMessage({ action: "exportSession", sessionId, format });
+    const result = await exportService.exportSession(sessionId, format);
 
-    if (response.success) {
-      showMessage(`Exported as ${response.filename}`, "success");
-      // BUG FIX: POP-HIGH-001 - Update storage usage after export
-      await updateStorageUsage();
+    let downloadUrl;
+    let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+
+    if (result.blob) {
+      downloadUrl = URL.createObjectURL(result.blob);
     } else {
-      showMessage("Export failed: " + (response.error || "Unknown error"), "error");
+      const utf8Bytes = new TextEncoder().encode(result.content);
+      let binaryString = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < utf8Bytes.length; i += chunkSize) {
+        binaryString += String.fromCharCode.apply(null, utf8Bytes.subarray(i, i + chunkSize));
+      }
+      downloadUrl = `data:${result.mimeType};charset=utf-8;base64,${btoa(binaryString)}`;
     }
+
+    await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
+    showMessage(`Exported as ${filename}`, "success");
   } catch (err) {
     console.error("Export failed:", err);
-    showMessage("Error during export", "error");
+    showMessage("Export failed: " + err.message, "error");
   }
 }
 
@@ -454,14 +459,12 @@ async function handleDeleteSession() {
   if (!confirm("Delete this session? This cannot be undone.")) return;
 
   try {
-    const response = await chrome.runtime.sendMessage({ action: "deleteSession", sessionId });
-    if (response.success) {
-      showMessage("Deleted session", "success");
-      await loadSessions();
-      await updateStorageUsage(); // Update storage after delete
-    } else {
-      showMessage("Delete failed: " + (response.error || "Unknown error"), "error");
-    }
+    // Delete from filesystem (and buffer if pending)
+    await fsStorage.clearSession(sessionId);
+    // Also notify background to clear any buffer state
+    chrome.runtime.sendMessage({ action: "deleteSession", sessionId }).catch(() => {});
+    showMessage("Deleted session", "success");
+    await loadSessions();
   } catch (err) {
     console.error("Delete failed:", err);
     showMessage("Error deleting session", "error");
@@ -472,14 +475,14 @@ async function handleClearAll() {
   if (!confirm("Delete ALL sessions? This cannot be undone.")) return;
 
   try {
-    const response = await chrome.runtime.sendMessage({ action: "clearAllSessions" });
-    if (response.success) {
-      showMessage("Cleared all sessions", "success");
-      await loadSessions();
-      await updateStorageUsage(); // Update storage after clear
-    } else {
-      showMessage("Clear failed: " + (response.error || "Unknown error"), "error");
+    const sessions = await fsStorage.getAllSessions();
+    for (const s of sessions) {
+      await fsStorage.clearSession(s.sessionId);
     }
+    // Also clear all from background buffer
+    chrome.runtime.sendMessage({ action: "clearAllSessions" }).catch(() => {});
+    showMessage("Cleared all sessions", "success");
+    await loadSessions();
   } catch (err) {
     console.error("Clear all failed:", err);
     showMessage("Error clearing sessions", "error");
@@ -626,20 +629,19 @@ async function handleSaveSettings() {
 
 async function loadSessions() {
   try {
-    const response = await chrome.runtime.sendMessage({ action: "getAllSessions" });
-    if (response.success) {
-      const sessions = response.sessions || [];
-      sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
-      sessions.forEach((s) => {
-        const opt = document.createElement("option");
-        const sessionName = s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`;
-        opt.value = s.sessionId;
-        opt.textContent = `${sessionName} (${s.stepCount || 0} steps)`;
-        sessionDropdown.appendChild(opt);
-      });
-      if (currentSessionId) sessionDropdown.value = currentSessionId;
-      handleSessionSelect();
-    }
+    // Read directly from filesystem (or buffer for active/pending sessions)
+    const sessions = await fsStorage.getAllSessions();
+    sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
+    sessions.forEach((s) => {
+      const opt = document.createElement("option");
+      const sessionName = s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`;
+      opt.value = s.sessionId;
+      opt.textContent = `${sessionName} (${s.stepCount || 0} steps)`;
+      sessionDropdown.appendChild(opt);
+    });
+    if (currentSessionId) sessionDropdown.value = currentSessionId;
+    handleSessionSelect();
   } catch (e) {
     console.error("Load sessions failed:", e);
   }
@@ -765,7 +767,7 @@ function updateButtonStates() {
 
 function displaySteps(steps, target = stepsList) {
   if (!steps?.length) {
-    target.innerHTML = `<p style="text-align:center;color:#999;font-size:11px;">No steps recorded</p>`;
+    target.innerHTML = `<p style="text-align:center;color:var(--text-muted);font-size:11px;">No steps recorded</p>`;
     return;
   }
   target.innerHTML = steps
@@ -774,31 +776,173 @@ function displaySteps(steps, target = stepsList) {
     <div class="step-item">
       <div class="step-header">
         <span class="step-number">Step ${i + 1}</span>
-        <span class="step-action">${escapeHtml(step.action)}</span>
+        <span class="step-action">${Utils.escapeHtml(step.action)}</span>
       </div>
       <div class="step-details">
-        ${step.fieldName ? `<div><strong>Field:</strong> ${escapeHtml(step.fieldName)}</div>` : ""}
-        ${step.selector?.css ? `<div><strong>Selector:</strong> <code>${escapeHtml(step.selector.css)}</code></div>` : ""}
-        ${step.value ? `<div><strong>Value:</strong> ${escapeHtml(step.value)}</div>` : ""}
+        ${step.fieldName ? `<div><strong>Field:</strong> ${Utils.escapeHtml(step.fieldName)}</div>` : ""}
+        ${step.selector?.css ? `<div><strong>Selector:</strong> <code>${Utils.escapeHtml(step.selector.css)}</code></div>` : ""}
+        ${step.value ? `<div><strong>Value:</strong> ${Utils.escapeHtml(step.value)}</div>` : ""}
       </div>
     </div>`
     )
     .join("");
 }
 
-/**
- * BUG FIX: Added HTML escaping to prevent XSS
- */
-function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
 
 function showMessage(text, type = "info", duration = 3000) {
   messageDiv.textContent = text;
   messageDiv.className = "message " + type;
   messageDiv.style.display = "block";
   setTimeout(() => (messageDiv.style.display = "none"), duration);
+}
+
+// =====================
+// File Sync / Storage Setup
+// =====================
+
+async function checkFileSyncStatus() {
+  try {
+    const configured = await fileSync.isConfigured();
+    if (!configured) {
+      updateSyncUI('none', 'No folder linked');
+      return;
+    }
+
+    const permission = await fileSync.checkPermission();
+    const folderName = await fileSync.getFolderName();
+
+    if (permission === 'granted') {
+      updateSyncUI('active', folderName || '.TestSnapper');
+    } else if (permission === 'prompt') {
+      // Popup open = user gesture context — silently re-request permission
+      // so the user doesn't have to click a separate "Re-authorize" button.
+      try {
+        const granted = await fileSync.requestPermission();
+        if (granted) {
+          updateSyncUI('active', folderName || '.TestSnapper');
+          await flushAllPending();
+          await loadSessions();
+        } else {
+          updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
+        }
+      } catch {
+        updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
+      }
+    } else {
+      updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
+    }
+  } catch (err) {
+    console.error('File sync status check failed:', err);
+    updateSyncUI('none', 'Error checking folder');
+  }
+}
+
+function updateSyncUI(state, label) {
+  const onboardingBanner = document.getElementById('storageOnboarding');
+  const reauthBanner = document.getElementById('storageReauthBanner');
+
+  // Control top-of-popup banners
+  if (onboardingBanner) onboardingBanner.style.display = state === 'none' ? 'flex' : 'none';
+  if (reauthBanner) reauthBanner.style.display = state === 'needs-auth' ? 'flex' : 'none';
+
+  // Update compact status in Export tab
+  if (!syncIndicator || !syncFolderName || !fileSyncStatus) return;
+
+  syncIndicator.className = 'sync-indicator';
+  fileSyncStatus.className = 'file-sync-status';
+  syncFolderName.textContent = label || 'No folder set';
+
+  if (state === 'active') {
+    syncIndicator.classList.add('sync-active');
+    fileSyncStatus.classList.add('active');
+    if (setStorageFolderBtn) setStorageFolderBtn.textContent = 'Change Location';
+    if (reauthorizeFolderBtn) reauthorizeFolderBtn.style.display = 'none';
+  } else if (state === 'needs-auth') {
+    syncIndicator.classList.add('sync-needs-auth');
+    fileSyncStatus.classList.add('needs-auth');
+    if (reauthorizeFolderBtn) reauthorizeFolderBtn.style.display = '';
+  } else {
+    if (reauthorizeFolderBtn) reauthorizeFolderBtn.style.display = 'none';
+    if (setStorageFolderBtn) setStorageFolderBtn.textContent = 'Setup .TestSnapper';
+  }
+}
+
+async function handleSetStorageFolder() {
+  try {
+    showMessage('Pick a parent folder — .TestSnapper will be created inside it', 'info', 5000);
+    const result = await fileSync.pickDirectory();
+    updateSyncUI('active', `.TestSnapper (in ${result.parentName})`);
+
+    // Run migration if chrome.storage has existing sessions and not yet migrated
+    const migrated = await fileSync.isMigrated();
+    if (!migrated) {
+      const { StorageManager } = await import('../../storage.js');
+      const legacyStorage = new StorageManager();
+      await legacyStorage.init();
+      showMessage('Migrating existing sessions to filesystem...', 'info', 5000);
+      const { migrated: count } = await fileSync.migrateFromChromeStorage(legacyStorage);
+      showMessage(`${count} session(s) migrated to ${result.parentName}/.TestSnapper`, 'success');
+    } else {
+      showMessage(`Storage folder set: ${result.parentName}/.TestSnapper`, 'success');
+    }
+
+    await loadSessions();
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    console.error('Set storage folder failed:', err);
+    showMessage('Failed to set folder: ' + err.message, 'error');
+  }
+}
+
+async function handleReauthorize() {
+  try {
+    const granted = await fileSync.requestPermission();
+    if (granted) {
+      const folderName = await fileSync.getFolderName();
+      updateSyncUI('active', folderName);
+      await flushAllPending();
+      await loadSessions();
+      showMessage('Folder access restored', 'success');
+    } else {
+      showMessage('Permission denied. Try setting a new folder.', 'error');
+    }
+  } catch (err) {
+    console.error('Re-authorize failed:', err);
+    showMessage('Re-authorization failed', 'error');
+  }
+}
+
+// =====================
+// Flush Helpers (Buffer → Filesystem)
+// =====================
+
+/**
+ * Flush a single buffered session from chrome.storage to the filesystem.
+ */
+async function flushBufferedSession(sessionId) {
+  if (!sessionId) return;
+  const fsReady = await fsStorage.isFilesystemReady();
+  if (!fsReady) return;
+
+  const success = await fsStorage.flushSession(sessionId);
+  if (success) {
+    // Notify background to clear buffer
+    chrome.runtime.sendMessage({ action: 'clearBuffer', sessionId }).catch(() => {});
+    await loadSessions();
+  }
+}
+
+/**
+ * Flush all sessions that are pending flush from previous recordings.
+ */
+async function flushAllPending() {
+  const fsReady = await fsStorage.isFilesystemReady();
+  if (!fsReady) return;
+
+  const response = await chrome.runtime.sendMessage({ action: 'getPendingFlush' }).catch(() => null);
+  if (!response?.pending?.length) return;
+
+  for (const sessionId of response.pending) {
+    await flushBufferedSession(sessionId);
+  }
 }

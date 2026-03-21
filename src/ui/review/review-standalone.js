@@ -12,12 +12,17 @@
  *     stay pinned to the top of the card regardless of screenshot height.
  */
 
-import { StorageManager } from '../../storage.js';
+import { FSStorageManager } from '../../core/fs-storage.js';
+import { ExportService } from '../../core/export-service.js';
 import { Utils } from '../../core/utils.js';
+import { DomUtils } from '../../core/dom-utils.js';
+import { deduplicateConsecutiveSteps } from '../../core/step-utils.js';
+import { setupTheme } from '../theme.js';
 
 // ==================== Initialize Services ====================
 
-const storage = new StorageManager();
+const fsStorage = new FSStorageManager();
+const exportService = new ExportService(fsStorage);
 
 let sessionId = null;
 let sessionData = null;
@@ -36,45 +41,7 @@ const MAX_HISTORY = 50;
 let draggedStepId = null;
 
 // ==================== Consecutive Duplicate Removal ====================
-
-/**
- * Remove consecutive duplicate steps. If steps 2, 3, 4 are identical
- * (same action + fieldName + selector CSS + url), keep only step 2.
- * Screenshots and navigate actions are never considered duplicates.
- */
-function deduplicateConsecutiveSteps(steps) {
-  if (!steps || steps.length <= 1) return steps;
-
-  const result = [steps[0]];
-
-  for (let i = 1; i < steps.length; i++) {
-    const prev = steps[i - 1];
-    const curr = steps[i];
-
-    // Never deduplicate screenshots or navigation
-    if (curr.action === 'screenshot' || curr.action === 'navigate') {
-      result.push(curr);
-      continue;
-    }
-
-    // Compare: same action + fieldName + url + selector CSS
-    const isDup =
-      prev.action === curr.action &&
-      prev.fieldName === curr.fieldName &&
-      prev.url === curr.url &&
-      (prev.selector?.css || '') === (curr.selector?.css || '') &&
-      // For type/select, also check value hasn't changed
-      !((curr.action === 'type' || curr.action === 'select') && prev.value !== curr.value);
-
-    if (isDup) {
-      continue; // Skip this duplicate
-    }
-
-    result.push(curr);
-  }
-
-  return result;
-}
+// deduplicateConsecutiveSteps is imported from ../../core/step-utils.js
 
 // ==================== UI Elements ====================
 
@@ -133,7 +100,7 @@ async function init() {
   showMessage('Initializing...', 'info');
 
   try {
-    await storage.init();
+    await fsStorage.init();
 
     const urlParams = new URLSearchParams(window.location.search);
     sessionId = urlParams.get('sessionId');
@@ -142,6 +109,9 @@ async function init() {
       showMessage('No session ID provided in URL', 'error');
       return;
     }
+
+    // Flush buffered session to disk if needed (review opens right after recording stops)
+    await flushIfPending(sessionId);
 
     await loadSession();
     setupEventListeners();
@@ -152,38 +122,24 @@ async function init() {
   }
 }
 
-function setupTheme() {
-  const themeToggle = document.getElementById('themeToggle');
-  if (!themeToggle) return;
+/**
+ * Flush a buffered session to disk if it hasn't been flushed yet.
+ */
+async function flushIfPending(sid) {
+  const fsReady = await fsStorage.isFilesystemReady();
+  if (!fsReady) return;
 
-  const savedTheme = localStorage.getItem('theme');
-  if (savedTheme) {
-    applyTheme(savedTheme);
-  } else {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    applyTheme(prefersDark ? 'dark' : 'light');
-  }
+  const inBuffer = await fsStorage.isInBuffer(sid);
+  if (!inBuffer) return;
 
-  themeToggle.addEventListener('click', () => {
-    const currentTheme = document.body.dataset.theme || 'light';
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    applyTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
-  });
-}
-
-function applyTheme(theme) {
-  const iconEl = document.querySelector('#themeToggle .icon');
-  document.body.dataset.theme = theme;
-
-  if (iconEl) {
-    if (theme === 'light') {
-      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
-    } else {
-      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
-    }
+  showMessage('Saving session to disk...', 'info');
+  const success = await fsStorage.flushSession(sid);
+  if (success) {
+    chrome.runtime.sendMessage({ action: 'clearBuffer', sessionId: sid }).catch(() => {});
   }
 }
+
+// setupTheme / applyTheme imported from ../theme.js
 
 function setupEventListeners() {
   bulkDeleteBtn.addEventListener('click', handleBulkDelete);
@@ -286,10 +242,12 @@ function setupEventListeners() {
     });
   }
 
-  // Listen for export progress events from background
+  // Listen for export progress and storage flush events from background
   chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'exportProgress') {
       handleExportProgress(message);
+    } else if (message.action === 'flushRecordingBuffer' && message.sessionId === sessionId) {
+      flushIfPending(message.sessionId);
     }
   });
 
@@ -316,13 +274,13 @@ async function loadSession() {
   try {
     showMessage('Loading session...', 'info');
 
-    sessionData = await storage.getSession(sessionId);
+    sessionData = await fsStorage.getSession(sessionId);
 
     if (!sessionData) {
       throw new Error('Session not found');
     }
 
-    stepsData = await storage.getSteps(sessionId);
+    stepsData = await fsStorage.getSteps(sessionId);
     stepsData.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
 
     // Auto-remove consecutive duplicate steps (same action + fieldName + selector + url)
@@ -332,7 +290,7 @@ async function loadSession() {
       console.log(`🧹 Removed ${originalCount - stepsData.length} consecutive duplicate step(s)`);
       // Resequence and persist the cleaned data
       stepsData.forEach((step, index) => { step.sequence = index + 1; });
-      await storage.updateAllSteps(sessionId, stepsData);
+      await fsStorage.updateAllSteps(sessionId, stepsData);
     }
 
     // Update UI
@@ -371,15 +329,8 @@ async function saveSessionName() {
 
     if (newName && sessionData) {
       sessionData.sessionName = newName;
-      sessionNameInput.value = newName; // Update input with sanitized value
-      await storage.updateSession(sessionData);
-
-      await chrome.runtime.sendMessage({
-        action: 'updateSessionName',
-        sessionId: sessionData.sessionId,
-        sessionName: newName
-      });
-
+      sessionNameInput.value = newName;
+      await fsStorage.updateSessionName(sessionData.sessionId, newName);
       console.log('✅ Session name saved:', newName, sessionData.sessionId);
     }
   } catch (error) {
@@ -449,10 +400,10 @@ async function restoreFromHistory(targetIndex) {
   stepsData = JSON.parse(JSON.stringify(snapshot));
 
   // Persist to DB
-  await storage.updateAllSteps(sessionId, stepsData);
+  await fsStorage.updateAllSteps(sessionId, stepsData);
   if (sessionData) {
     sessionData.stepCount = stepsData.length;
-    await storage.updateSession(sessionData);
+    await fsStorage.updateSession(sessionData);
     sessionStepCount.textContent = `Steps: ${stepsData.length}`;
   }
 
@@ -477,22 +428,12 @@ function undo() {
  * whether the asset was captured in the current session (blob still live)
  * or loaded from a previous one (only data survives).
  */
-async function resolveScreenshotUrl(asset) {
-  // 1. If .blob is a real Blob, convert it (live-session fast path)
-  if (asset.blob && asset.blob instanceof Blob && asset.blob.size > 0) {
-    try {
-      return await Utils.blobToDataURL(asset.blob);
-    } catch (err) {
-      console.warn('blobToDataURL failed, falling back to asset.data:', err);
-    }
-  }
-
-  // 2. Fall back to the persisted base64 data-URL string
-  if (typeof asset.data === 'string' && asset.data.length > 0) {
-    return asset.data;
-  }
-
-  return null; // nothing usable
+function resolveScreenshotUrl(asset) {
+  // Screenshots are stored as base64 data URLs in the filesystem format
+  if (typeof asset.dataUrl === 'string' && asset.dataUrl.length > 0) return asset.dataUrl;
+  // Legacy fallback for chrome.storage assets
+  if (typeof asset.data === 'string' && asset.data.length > 0) return asset.data;
+  return null;
 }
 
 async function renderSteps() {
@@ -506,14 +447,12 @@ async function renderSteps() {
   }
 
   // ---------- Load screenshots ----------
-  const screenshotAssets = await storage.getAllAssets(sessionId);
+  const screenshotAssets = await fsStorage.getAllAssets(sessionId);
   const screenshotMap = new Map();
 
   for (const asset of screenshotAssets) {
-    const url = await resolveScreenshotUrl(asset);
-    if (url) {
-      screenshotMap.set(asset.stepId, url);
-    }
+    const url = resolveScreenshotUrl(asset);
+    if (url) screenshotMap.set(asset.stepId, url);
   }
   // ---------- End screenshot loading ----------
 
@@ -541,7 +480,7 @@ async function renderSteps() {
   }
 
   container.innerHTML = visibleSteps.map((step, index) => {
-    const description = step.description || generateStepDescription(step);
+    const description = step.description || Utils.generateStepDescription(step);
     const screenshotData = screenshotMap.get(step.id) || null;
     const safeDescription = Utils.escapeHtml(description);
 
@@ -564,7 +503,7 @@ async function renderSteps() {
           <div style="display: flex; align-items: flex-start; justify-content: center; width: 40px; flex-shrink: 0; padding-top: 8px;">
             <input type="checkbox" class="step-checkbox" data-step-id="${step.id}"
                    ${step.selected ? 'checked' : ''}
-                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--primary);">
+                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--accent);">
           </div>
 
           <!-- main content (textarea + optional screenshot) -->
@@ -584,7 +523,7 @@ async function renderSteps() {
 
           <!-- delete button – top-aligned -->
           <div class="step-actions" style="flex-shrink: 0; padding-top: 4px;">
-            <button class="icon-btn delete-btn" title="Delete Step" data-step-id="${step.id}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
+            <button class="delete-btn" title="Delete Step" data-step-id="${step.id}">
               ✕
             </button>
           </div>
@@ -601,30 +540,6 @@ async function renderSteps() {
   attachStepEventListeners();
 }
 
-function generateStepDescription(step) {
-  const action = step.action || 'Action';
-  const field = step.fieldName ? Utils.escapeHtml(step.fieldName.trim()) : '';
-  const value = step.value ? Utils.escapeHtml(step.value.trim()) : '';
-
-  switch (action.toLowerCase()) {
-    case 'click':
-      return `Click "${field || 'element'}"`;
-    case 'type':
-      return `Type "${value || 'text'}" in ${field || 'field'}`;
-    case 'navigate':
-      return `Navigate to ${value}`;
-    case 'select':
-      return `Select "${value || field}" from dropdown`;
-    case 'check':
-      return `Check the box ${field ? `for "${field}"` : ''}`;
-    case 'submit':
-      return `Submit the form`;
-    case 'screenshot':
-      return step.isManual ? '📸 Manual screenshot' : '📸 Auto screenshot';
-    default:
-      return `${action} ${field} ${value ? `→ "${value}"` : ''}`.trim();
-  }
-}
 
 function attachStepEventListeners() {
   document.querySelectorAll('.delete-btn').forEach(btn =>
@@ -667,15 +582,15 @@ function attachStepEventListeners() {
       if (!step) return;
 
       const newText = e.target.value.trim();
-      const oldText = step.description || generateStepDescription(step);
+      const oldText = step.description || Utils.generateStepDescription(step);
 
       if (newText && newText !== oldText) {
         try {
           saveToHistory('edit');
           step.description = newText;
-          await storage.updateStep(step);
+          await fsStorage.updateStep(step);
           showMessage('Step updated', 'success');
-        } catch (err) {
+            } catch (err) {
           console.error('Failed to update step:', err);
           showMessage('Failed to update step: ' + err.message, 'error');
           e.target.value = oldText;
@@ -766,10 +681,8 @@ async function handleConfirmAddStep() {
     };
 
     // Add step to database
-    await storage.addStep(newStep);
+    await fsStorage.addStep(newStep);
 
-    // If screenshot provided, save it as both blob AND data URL so it
-    // survives the chrome.storage.local JSON round-trip.
     if (newStepScreenshotBlob) {
       let dataUrl = null;
       try {
@@ -778,15 +691,16 @@ async function handleConfirmAddStep() {
         console.warn('Failed to convert new screenshot to data URL:', err);
       }
 
-      await storage.addAsset({
-        id: Utils.generateUUID(),
-        sessionId: sessionId,
-        stepId: newStep.id,
-        type: 'screenshot',
-        blob: newStepScreenshotBlob,   // live-session use (won't survive reload)
-        data: dataUrl,                  // persisted base64 string (survives reload)
-        createdAt: new Date().toISOString()
-      });
+      if (dataUrl) {
+        await fsStorage.addAsset({
+          id: Utils.generateUUID(),
+          sessionId: sessionId,
+          stepId: newStep.id,
+          type: 'screenshot',
+          dataUrl,
+          createdAt: new Date().toISOString()
+        });
+      }
     }
 
     // Save history BEFORE mutation
@@ -811,7 +725,7 @@ async function handleDeleteStep(stepId) {
     // Save history BEFORE mutation
     saveToHistory('delete');
 
-    await storage.deleteStep(stepId);
+    await fsStorage.deleteStep(stepId);
     stepsData = stepsData.filter(s => s.id !== stepId);
 
     await resequenceAndPersist();
@@ -838,7 +752,7 @@ async function handleBulkDelete() {
 
     // STR-MED-002: Use batch delete for better performance
     const stepIds = selectedSteps.map(s => s.id);
-    await storage.batchDeleteSteps(stepIds);
+    await fsStorage.batchDeleteSteps(stepIds);
 
     stepsData = stepsData.filter(s => !s.selected);
 
@@ -933,11 +847,11 @@ async function resequenceAndPersist() {
     step.sequence = index + 1;
   });
 
-  await storage.updateAllSteps(sessionId, stepsData);
+  await fsStorage.updateAllSteps(sessionId, stepsData);
 
   if (sessionData) {
     sessionData.stepCount = stepsData.length;
-    await storage.updateSession(sessionData);
+    await fsStorage.updateSession(sessionData);
     sessionStepCount.textContent = `Steps: ${stepsData.length}`;
   }
 
@@ -1000,17 +914,33 @@ async function handleSaveAndExport() {
     const format = exportFormatSelect.value;
     showMessage(`Exporting as ${format.toUpperCase()}...`, 'info');
 
-    const response = await chrome.runtime.sendMessage({
-      action: 'exportSession',
-      sessionId: sessionId,
-      format: format
+    const progressCallback = (update) => handleExportProgress(update);
+
+    const result = await exportService.exportSession(sessionId, format, progressCallback);
+
+    let downloadUrl;
+    let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+
+    if (result.blob) {
+      downloadUrl = await Utils.blobToDataURL(result.blob);
+    } else {
+      const utf8Bytes = new TextEncoder().encode(result.content);
+      let binaryString = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < utf8Bytes.length; i += chunkSize) {
+        binaryString += String.fromCharCode.apply(null, utf8Bytes.subarray(i, i + chunkSize));
+      }
+      downloadUrl = `data:${result.mimeType};charset=utf-8;base64,${btoa(binaryString)}`;
+    }
+
+    await chrome.downloads.download({
+      url: downloadUrl,
+      filename,
+      saveAs: false,
+      conflictAction: 'uniquify'
     });
 
-    if (response && response.success) {
-      showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
-    } else if (response && !response.success) {
-      throw new Error(response.error || 'Export failed');
-    }
+    showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
   } catch (error) {
     console.error('Save and export failed:', error);
     showMessage('Failed: ' + error.message, 'error');
@@ -1022,7 +952,7 @@ async function handleSaveAndExport() {
 // ==================== UI Helpers ====================
 
 function showMessage(text, type = 'info') {
-  Utils.showMessage(messageDiv, text, type);
+  DomUtils.showMessage(messageDiv, text, type);
 }
 
 function hideMessage() {

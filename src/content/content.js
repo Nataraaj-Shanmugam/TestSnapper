@@ -49,15 +49,16 @@ var sessionValidationInterval = null;
 
 // Initialize modules
 function initModules() {
-  if (window.SelectorEngine && window.Redactor) {
+  if (window.SelectorEngine && window.Redactor && window.FieldNameResolver) {
     selectorEngine = new window.SelectorEngine();
     redactor = new window.Redactor();
-    if (window.FieldNameResolver) {
-      fieldNameResolver = new window.FieldNameResolver(selectorEngine);
-    }
+    fieldNameResolver = new window.FieldNameResolver(selectorEngine);
     console.log('TestSnapper content script initialized');
     return true;
   }
+  if (!window.SelectorEngine) console.error('TestSnapper: SelectorEngine not loaded');
+  if (!window.Redactor) console.error('TestSnapper: Redactor not loaded');
+  if (!window.FieldNameResolver) console.error('TestSnapper: FieldNameResolver not loaded');
   return false;
 }
 

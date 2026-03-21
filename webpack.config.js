@@ -48,8 +48,8 @@ module.exports = {
         { from: 'src/content', to: 'src/content' },
         { from: 'src/ui', to: 'src/ui' },
         { from: 'src/core', to: 'src/core' },
-        { from: 'src/storage.js', to: 'src/storage.js' },
-        { from: 'src/export.js', to: 'src/export.js' },
+        // storage.js moved to src/core/storage.js (covered by src/core copy above)
+        // export.js removed (dead code — superseded by ExportService)
 
         // Assets
         { from: 'src/assets', to: 'src/assets', noErrorOnMissing: true },

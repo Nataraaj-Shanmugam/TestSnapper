@@ -13,32 +13,20 @@
  */
 
 class Redactor {
+  /**
+   * Initialize the redactor with sensitive patterns and PII detection
+   */
   constructor() {
-    // Keywords that flag a field as sensitive (no /g needed — used with .some/.test on short strings)
+    // Keywords that flag a field as sensitive
     // RED-MED-001: Enhanced with PIN, routing, account, DOB patterns
     this.sensitivePatterns = [
-      /password/i,
-      /passwd/i,
-      /pwd/i,
-      /secret/i,
-      /token/i,
-      /api[_-]?key/i,
-      /auth/i,
-      /credit[_-]?card/i,
-      /cvv/i,
-      /ssn/i,
-      /social[_-]?security/i,
-      /\bpin\b/i,
-      /routing[_-]?number/i,
-      /account[_-]?number/i,
-      /bank[_-]?account/i,
-      /dob/i,
-      /date[_-]?of[_-]?birth/i,
-      /birthdate/i,
-      /tax[_-]?id/i,
-      /ein/i,
-      /driver[_-]?license/i,
-      /passport/i
+      /password/i, /passwd/i, /pwd/i, /secret/i, /token/i,
+      /api[_-]?key/i, /auth/i, /credit[_-]?card/i, /cvv/i,
+      /ssn/i, /social[_-]?security/i, /\bpin\b/i,
+      /routing[_-]?number/i, /account[_-]?number/i,
+      /bank[_-]?account/i, /dob/i,
+      /date[_-]?of[_-]?birth/i, /birthdate/i,
+      /tax[_-]?id/i, /ein/i, /driver[_-]?license/i, /passport/i
     ];
 
     // PII detection patterns — stored WITHOUT /g to avoid lastIndex state.
@@ -53,7 +41,10 @@ class Redactor {
   }
 
   /**
-   * Check if an input field should be ignored / fully redacted.
+   * Check if an input field should be ignored / fully redacted
+   * Considers element type, data attributes, and semantic names
+   * @param {Element} element - Form element to check
+   * @returns {boolean} true if field should be fully redacted
    */
   shouldIgnoreField(element) {
     if (!element) return false;
@@ -75,12 +66,15 @@ class Redactor {
   }
 
   /**
-   * Mask sensitive value.
+   * Mask sensitive value
    *
    * If the field itself is sensitive (password, etc.) the entire value is
    * replaced with dots. Otherwise each replacement runs unconditionally —
    * .replace() is a no-op when the pattern doesn't match, so no .test()
    * guard is needed.
+   * @param {string} value - Value to mask
+   * @param {Element} element - Form element context
+   * @returns {string} Masked value or empty string
    */
   maskValue(value, element) {
     if (!value) return '';
@@ -121,7 +115,7 @@ class Redactor {
       '**** **** **** ****'
     );
 
-    // RED-MED-001: Mask SSN
+    // Mask SSN
     result = result.replace(
       new RegExp(this.ssnPattern.source, 'g'),
       '***-**-****'
@@ -151,7 +145,9 @@ class Redactor {
   }
 
   /**
-   * Redact sensitive data from a recorded step object.
+   * Redact sensitive data from a recorded step object
+   * @param {Object} step - Step object to redact
+   * @returns {Object} Redacted step object
    */
   redactStep(step) {
     if (!step) return step;
@@ -170,4 +166,8 @@ if (typeof window !== 'undefined') {
   if (!window.Redactor) {
     window.Redactor = Redactor;
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { Redactor };
 }

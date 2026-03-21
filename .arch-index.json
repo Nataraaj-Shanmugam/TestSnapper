@@ -1,0 +1,128 @@
+{
+  "verdict": "NEEDS WORK",
+  "date": "2026-03-21",
+  "scope": "src/",
+  "files_analyzed": 14,
+  "totals": { "critical": 0, "high": 4, "medium": 8, "low": 5, "total": 17 },
+  "issues": [
+    {
+      "id": "HIGH-001",
+      "severity": "high",
+      "title": "Duplicated Image Compression Logic (3 Implementations)",
+      "category": "duplication",
+      "files": ["src/storage.js", "src/core/export-service.js"]
+    },
+    {
+      "id": "HIGH-002",
+      "severity": "high",
+      "title": "Duplicated Utility Functions Across Modules",
+      "category": "duplication",
+      "files": ["src/core/utils.js", "src/core/export-service.js", "src/ui/popup/popup.js"]
+    },
+    {
+      "id": "HIGH-003",
+      "severity": "high",
+      "title": "Inconsistent Storage Layer Usage",
+      "category": "layer-violation",
+      "files": ["src/background/background.js", "src/core/fs-storage.js"]
+    },
+    {
+      "id": "HIGH-004",
+      "severity": "high",
+      "title": "Content Scripts Rely on Implicit Global Coupling",
+      "category": "fragile-coupling",
+      "files": ["src/content/content.js", "src/content/selector.js", "src/content/redactor.js", "src/content/field-name-resolver.js"]
+    },
+    {
+      "id": "MED-001",
+      "severity": "medium",
+      "title": "Orphan Module — export.js Unused at Runtime",
+      "category": "dead-code",
+      "files": ["src/export.js"]
+    },
+    {
+      "id": "MED-002",
+      "severity": "medium",
+      "title": "StorageManager is a God Class (914 Lines, 7+ Responsibilities)",
+      "category": "cohesion",
+      "files": ["src/storage.js"]
+    },
+    {
+      "id": "MED-003",
+      "severity": "medium",
+      "title": "ExportService Mixes Image Processing with Document Generation (858 Lines)",
+      "category": "cohesion",
+      "files": ["src/core/export-service.js"]
+    },
+    {
+      "id": "MED-004",
+      "severity": "medium",
+      "title": "storage.js and export.js Placed at Root Instead of core/",
+      "category": "organization",
+      "files": ["src/storage.js", "src/export.js"]
+    },
+    {
+      "id": "MED-005",
+      "severity": "medium",
+      "title": "FSStorageManager Duplicates Every StorageManager Method",
+      "category": "boilerplate",
+      "files": ["src/core/fs-storage.js"]
+    },
+    {
+      "id": "MED-006",
+      "severity": "medium",
+      "title": "High Fan-In on utils.js — Coupling Hotspot",
+      "category": "coupling",
+      "files": ["src/core/utils.js"]
+    },
+    {
+      "id": "MED-007",
+      "severity": "medium",
+      "title": "Inconsistent Theme Implementation Across UI Files",
+      "category": "duplication",
+      "files": ["src/ui/popup/popup.js", "src/ui/review/review-standalone.js"]
+    },
+    {
+      "id": "MED-008",
+      "severity": "medium",
+      "title": "Excessive Console Logging (180 Occurrences Across 13 Files)",
+      "category": "pattern-inconsistency",
+      "files": ["*"]
+    },
+    {
+      "id": "LOW-001",
+      "severity": "low",
+      "title": "injected.js has no static reference from source",
+      "category": "orphan",
+      "files": ["src/injected.js"]
+    },
+    {
+      "id": "LOW-002",
+      "severity": "low",
+      "title": "Background bypasses FSStorageManager (justified)",
+      "category": "layer-skip",
+      "files": ["src/background/background.js"]
+    },
+    {
+      "id": "LOW-003",
+      "severity": "low",
+      "title": "ExportService directly accesses chrome.storage.local for settings",
+      "category": "hidden-dependency",
+      "files": ["src/core/export-service.js"]
+    },
+    {
+      "id": "LOW-004",
+      "severity": "low",
+      "title": "Deprecated _resizeImageForExport kept without removal",
+      "category": "dead-code",
+      "files": ["src/core/export-service.js"]
+    },
+    {
+      "id": "LOW-005",
+      "severity": "low",
+      "title": "Mixed module patterns: ES modules + window globals",
+      "category": "pattern-inconsistency",
+      "files": ["src/core/utils.js", "src/content/content.js"]
+    }
+  ]
+}

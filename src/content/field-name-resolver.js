@@ -62,6 +62,7 @@ var FieldNameResolver = (function () {
   ];
 
   /**
+   * Initialize the field name resolver
    * @constructor
    * @param {Object} [selectorEngine] - Optional reference to the SelectorEngine instance
    */
@@ -77,8 +78,12 @@ var FieldNameResolver = (function () {
 
   /**
    * Main entry point. Returns a cleaned, meaningful field name or null.
-   * @param {Element} element
-   * @returns {string|null}
+   * Tries multiple strategies in priority order until one succeeds
+   * @param {Element} element - Form element to resolve name for
+   * @returns {string|null} Cleaned field name or null if not found
+   * @example
+   * const fieldName = resolver.resolve(element);
+   * console.log(fieldName); // "First Name" or "Email Address"
    */
   FieldNameResolver.prototype.resolve = function (element) {
     if (!element) return null;
@@ -118,14 +123,15 @@ var FieldNameResolver = (function () {
   };
 
   /**
-   * Clear the resolution cache (call on navigation or DOM mutation).
+   * Clear the resolution cache (call on navigation or DOM mutation)
    */
   FieldNameResolver.prototype.clearCache = function () {
     this._cache = new WeakMap();
   };
 
   /**
-   * Pre-fetch iframe label context (async, call at recording start).
+   * Pre-fetch iframe label context (async, call at recording start)
+   * @async
    */
   FieldNameResolver.prototype.initFrameContext = async function () {
     if (window === window.top) return;
@@ -147,6 +153,13 @@ var FieldNameResolver = (function () {
   //  STRATEGY 1: Explicit Label
   // ══════════════════════════════════════════════════════════════════
 
+  /**
+   * Try to get label from explicit <label> element
+   * Checks: label[for=id], label[for=name], parent label, sibling label, adjacent label
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Label text or null
+   */
   FieldNameResolver.prototype._fromExplicitLabel = function (element) {
     // 1a. label[for=id]
     if (element.id) {
@@ -195,20 +208,31 @@ var FieldNameResolver = (function () {
   //  STRATEGY 2: ARIA Attributes
   // ══════════════════════════════════════════════════════════════════
 
+  /**
+   * Try to get label from ARIA attributes
+   * Checks: aria-label, aria-labelledby, aria-describedby
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Label text or null
+   */
   FieldNameResolver.prototype._fromAriaAttributes = function (element) {
     var ariaLabel = element.getAttribute('aria-label');
     if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
 
-    var labelledBy = element.getAttribute('aria-labelledby');
-    if (labelledBy) {
-      var text = this._getTextFromIds(labelledBy);
-      if (text) return text;
+    var ariaLabelledBy = element.getAttribute('aria-labelledby');
+    if (ariaLabelledBy) {
+      var labelElement = document.getElementById(ariaLabelledBy);
+      if (labelElement) {
+        return labelElement.innerText || labelElement.textContent;
+      }
     }
 
-    var describedBy = element.getAttribute('aria-describedby');
-    if (describedBy) {
-      var descText = this._getTextFromIds(describedBy);
-      if (descText && descText.length < 60) return descText;
+    var ariaDescribedBy = element.getAttribute('aria-describedby');
+    if (ariaDescribedBy) {
+      var descElement = document.getElementById(ariaDescribedBy);
+      if (descElement) {
+        return descElement.innerText || descElement.textContent;
+      }
     }
 
     return null;
@@ -218,76 +242,67 @@ var FieldNameResolver = (function () {
   //  STRATEGY 3: Placeholder
   // ══════════════════════════════════════════════════════════════════
 
+  /**
+   * Try to get label from placeholder attribute
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Placeholder text or null
+   */
   FieldNameResolver.prototype._fromPlaceholder = function (element) {
-    if (element.placeholder && element.placeholder.trim()) {
-      return element.placeholder.trim();
-    }
-    return null;
+    var ph = element.placeholder || element.getAttribute('placeholder');
+    return ph && ph.trim() ? ph.trim() : null;
   };
 
   // ══════════════════════════════════════════════════════════════════
   //  STRATEGY 4: Form Group
   // ══════════════════════════════════════════════════════════════════
 
+  /**
+   * Try to get label from form group context
+   * Checks: fieldset/legend, role="group", framework form groups
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Form group label or null
+   */
   FieldNameResolver.prototype._fromFormGroup = function (element) {
-    // 4a. fieldset/legend
+    // Fieldset + legend
     var fieldset = element.closest('fieldset');
     if (fieldset) {
       var legend = fieldset.querySelector('legend');
       if (legend) {
-        var inputs = fieldset.querySelectorAll('input, select, textarea');
-        if (inputs.length === 1 && inputs[0] === element) {
-          return legend.textContent.trim();
-        }
+        return legend.innerText || legend.textContent;
       }
     }
 
-    // 4b. role="group" with aria-label
-    var group = element.closest('[role="group"]');
-    if (group) {
-      var groupLabel = group.getAttribute('aria-label');
-      if (!groupLabel) {
-        var groupLabelledBy = group.getAttribute('aria-labelledby');
-        if (groupLabelledBy) groupLabel = this._getTextFromIds(groupLabelledBy);
-      }
-      if (groupLabel) {
-        var groupInputs = group.querySelectorAll('input, select, textarea');
-        if (groupInputs.length === 1 && groupInputs[0] === element) {
-          return groupLabel;
-        }
-      }
-    }
-
-    // 4c. Framework form group patterns
-    var formGroup = element.closest(
-      '.form-group, .MuiFormControl-root, .ant-form-item, .v-input, ' +
-      '.el-form-item, .chakra-form-control, .field, .form-field'
-    );
-    if (formGroup) {
-      var fgLabel = formGroup.querySelector(
-        '.form-label, .MuiFormLabel-root, .MuiInputLabel-root, ' +
-        '.ant-form-item-label label, .v-label, .el-form-item__label, ' +
-        '.chakra-form__label, label'
-      );
-      if (fgLabel && !fgLabel.contains(element)) {
-        return this._extractLabelText(fgLabel);
-      }
+    // role="group" with aria-label
+    var groupRole = element.closest('[role="group"]');
+    if (groupRole) {
+      var groupLabel = groupRole.getAttribute('aria-label');
+      if (groupLabel) return groupLabel;
     }
 
     return null;
   };
 
   // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 5: Meaningful Attributes (name, id)
+  //  STRATEGY 5: Meaningful Attributes
   // ══════════════════════════════════════════════════════════════════
 
+  /**
+   * Try to get label from name or id attributes (skip auto-generated)
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Name or ID or null
+   */
   FieldNameResolver.prototype._fromMeaningfulAttributes = function (element) {
-    if (element.name && !this._isGeneratedId(element.name)) {
+    if (element.name && !this._isGenerated(element.name)) {
       return element.name;
     }
-    if (element.id && !this._isGeneratedId(element.id)) {
+
+    if (element.id && !this._isGenerated(element.id)) {
       return element.id;
     }
+
     return null;
   };
 
@@ -295,211 +310,137 @@ var FieldNameResolver = (function () {
   //  STRATEGY 6: Button Context
   // ══════════════════════════════════════════════════════════════════
 
+  /**
+   * Try to get label from button context (for buttons, links, etc)
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Button text or null
+   */
   FieldNameResolver.prototype._fromButtonContext = function (element) {
     var tag = element.tagName.toLowerCase();
-    var role = element.getAttribute('role');
-    var type = element.type;
 
-    var isButton = tag === 'button' || tag === 'a' ||
-      role === 'button' || role === 'link' || role === 'tab' || role === 'menuitem' ||
-      type === 'submit' || type === 'button';
-
-    if (!isButton) return null;
-
-    // 6a. Visible text content
-    var text = (element.innerText || '').trim();
-    if (text && text.length > 0 && text.length < 50) return text;
-
-    // 6b. aria-label
-    var ariaLabel = element.getAttribute('aria-label');
-    if (ariaLabel) return ariaLabel.trim();
-
-    // 6c. title attribute
-    if (element.title) return element.title.trim();
-
-    // 6d. SVG title element inside button
-    var svg = element.querySelector('svg');
-    if (svg) {
-      var svgTitle = svg.querySelector('title');
-      if (svgTitle && svgTitle.textContent.trim()) return svgTitle.textContent.trim();
-      var svgAriaLabel = svg.getAttribute('aria-label');
-      if (svgAriaLabel) return svgAriaLabel.trim();
+    if (tag === 'button' || tag === 'a') {
+      return element.innerText || element.textContent;
     }
 
-    // 6e. img alt text inside button
-    var img = element.querySelector('img');
-    if (img && img.alt) return img.alt.trim();
-
-    // 6f. Icon class interpretation
-    var icon = element.querySelector(
-      'i[class*="fa-"], span[class*="icon-"], .material-icons, .material-symbols-outlined'
-    );
-    if (icon) {
-      if (icon.classList.contains('material-icons') || icon.classList.contains('material-symbols-outlined')) {
-        var iconText = icon.textContent.trim();
-        if (iconText) return iconText;
-      }
-      var faMatch = icon.className.match(/fa-([a-z][a-z-]+)/);
-      if (faMatch) return faMatch[1].replace(/-/g, ' ');
+    // SVG icon label from title
+    if (tag === 'svg') {
+      var title = element.querySelector('title');
+      if (title) return title.textContent;
     }
 
-    // 6g. value attribute for submit/button inputs
-    if (element.value && (type === 'submit' || type === 'button')) {
-      return element.value.trim();
+    // img alt text
+    if (tag === 'img') {
+      return element.getAttribute('alt');
     }
 
     return null;
   };
 
   // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 7: Element Own Text (generic — works on ANY element)
-  //  Extracts the element's title attribute or its own visible text.
+  //  STRATEGY 7: Element Text
   // ══════════════════════════════════════════════════════════════════
 
+  /**
+   * Try to get label from element text content (fallback for any element)
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Text content or null
+   */
   FieldNameResolver.prototype._fromElementText = function (element) {
-    // 7a. title attribute — most explicit
-    if (element.title && element.title.trim()) {
-      return element.title.trim();
-    }
+    var title = element.getAttribute('title');
+    if (title && title.trim()) return title.trim();
 
-    // 7b. data-testid (often a meaningful human-readable name)
-    var testId = element.getAttribute('data-testid') || element.getAttribute('data-test') ||
-                 element.getAttribute('data-cy');
-    if (testId && testId.trim()) {
-      return testId.trim();
-    }
-
-    // 7c. Direct text content of the element itself
-    //     Use innerText (visible text only, ignores hidden and comments)
-    var text = (element.innerText || '').trim();
-    if (text && text.length > 0 && text.length < 60) {
-      // If the text contains newlines, take just the first line
-      var firstLine = text.split('\n')[0].trim();
-      if (firstLine && firstLine.length > 0) return firstLine;
-    }
-
-    // 7d. textContent fallback (includes non-visible text)
-    //     Only use if innerText was empty and textContent has something short
-    if (!text) {
-      var tc = (element.textContent || '').trim();
-      if (tc && tc.length > 0 && tc.length < 40) {
-        return tc;
-      }
-    }
-
-    // 7e. value attribute (for inputs, selects, etc.)
-    if (element.value && typeof element.value === 'string' && element.value.trim()) {
-      var val = element.value.trim();
-      if (val.length < 40) return val;
+    var text = element.innerText || element.textContent;
+    if (text && text.trim()) {
+      var trimmed = text.trim();
+      if (trimmed.length < 100) return trimmed;
     }
 
     return null;
   };
 
   // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 8: Proximity Text (spatial distance scoring)
+  //  STRATEGY 8: Proximity Text
   // ══════════════════════════════════════════════════════════════════
 
+  /**
+   * Try to get label from nearby text (proximity scoring)
+   * Looks for nearby text nodes based on spatial distance
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Nearby text or null
+   */
   FieldNameResolver.prototype._fromProximityText = function (element) {
-    var elementRect = element.getBoundingClientRect();
-    if (!elementRect.width && !elementRect.height) return null;
-
+    var rect = element.getBoundingClientRect();
     var candidates = [];
-    var maxDistance = 150;
-    var maxDepth = 4;
-    var parent = element.parentElement;
-    var depth = 0;
 
-    while (parent && depth < maxDepth) {
-      // Text nodes
-      var childNodes = parent.childNodes;
-      for (var i = 0; i < childNodes.length; i++) {
-        var node = childNodes[i];
-        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-          try {
-            var range = document.createRange();
-            range.selectNodeContents(node);
-            var rect = range.getBoundingClientRect();
-            if (rect.width > 0 || rect.height > 0) {
-              var distance = this._calculateDistance(elementRect, rect);
-              if (distance < maxDistance) {
-                var posBonus = (rect.right <= elementRect.left || rect.bottom <= elementRect.top) ? -20 : 0;
-                candidates.push({ text: node.textContent.trim(), distance: distance + posBonus });
-              }
-            }
-          } catch (e) { /* skip */ }
-        }
-      }
+    // Walk through all text nodes in parent container
+    var walker = document.createTreeWalker(
+      element.parentElement || document.body,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false
+    );
 
-      // Inline elements (span, label, p, small, strong, em)
-      var textEls = parent.querySelectorAll(
-        'span:not(:has(input, select, textarea)), label, p, small, strong, em, ' +
-        'div:not(:has(input, select, textarea, button))'
-      );
-      for (var j = 0; j < textEls.length; j++) {
-        var el = textEls[j];
-        if (el.contains(element) || element.contains(el)) continue;
-        var elText = el.textContent.trim();
-        if (elText && elText.length > 0 && elText.length < 60) {
-          var elRect = el.getBoundingClientRect();
-          var elDist = this._calculateDistance(elementRect, elRect);
-          if (elDist < maxDistance) {
-            var elBonus = (elRect.right <= elementRect.left || elRect.bottom <= elementRect.top) ? -20 : 0;
-            candidates.push({ text: elText, distance: elDist + elBonus });
-          }
-        }
-      }
-
-      parent = parent.parentElement;
-      depth++;
-    }
-
-    if (candidates.length === 0) return null;
-
-    candidates.sort(function (a, b) { return a.distance - b.distance; });
-    return candidates[0].text;
-  };
-
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 8: Shadow DOM Labels
-  // ══════════════════════════════════════════════════════════════════
-
-  FieldNameResolver.prototype._fromShadowDOMLabels = function (element) {
-    var node = element;
-    while (node) {
-      var root = node.getRootNode();
-      if (root instanceof ShadowRoot) {
-        var host = root.host;
-
-        // Check the host's surrounding light DOM for labels
-        if (host.id) {
-          var label = document.querySelector('label[for="' + CSS.escape(host.id) + '"]');
-          if (label) return this._extractLabelText(label);
-        }
-
-        // Check host's aria-label
-        var hostAriaLabel = host.getAttribute('aria-label');
-        if (hostAriaLabel) return hostAriaLabel.trim();
-
-        // Check slots for projected label content
-        if (element.assignedSlot) {
-          var slotLabel = element.assignedSlot.closest('label');
-          if (slotLabel) return this._extractLabelText(slotLabel);
-        }
-
-        node = host; // Continue walking up
-      } else {
-        break;
+    var node;
+    while (node = walker.nextNode()) {
+      var text = node.textContent.trim();
+      if (text && text.length > 2 && text.length < 100 && !GENERIC_NAMES.has(text.toLowerCase())) {
+        // Calculate distance to element
+        var nodeRect = node.parentElement.getBoundingClientRect();
+        var distance = Math.hypot(
+          nodeRect.left - rect.left,
+          nodeRect.top - rect.top
+        );
+        candidates.push({ text: text, distance: distance });
       }
     }
+
+    if (candidates.length > 0) {
+      // Sort by distance and return closest
+      candidates.sort((a, b) => a.distance - b.distance);
+      return candidates[0].text;
+    }
+
     return null;
   };
 
   // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 9: Frame Context
+  //  STRATEGY 9: Shadow DOM
   // ══════════════════════════════════════════════════════════════════
 
-  FieldNameResolver.prototype._fromFrameContext = function () {
+  /**
+   * Try to get label from Shadow DOM boundaries
+   * Walks shadow roots for labels
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Label text or null
+   */
+  FieldNameResolver.prototype._fromShadowDOMLabels = function (element) {
+    var parent = element.parentElement;
+    while (parent) {
+      if (parent.shadowRoot) {
+        var label = parent.shadowRoot.querySelector('label');
+        if (label) return this._extractLabelText(label);
+      }
+      parent = parent.parentElement;
+    }
+
+    return null;
+  };
+
+  // ══════════════════════════════════════════════════════════════════
+  //  STRATEGY 10: Frame Context
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Try to get label from cached iframe context
+   * @private
+   * @param {Element} element - Form element
+   * @returns {string|null} Frame label or null
+   */
+  FieldNameResolver.prototype._fromFrameContext = function (element) {
     return this._cachedFrameLabel || null;
   };
 
@@ -508,111 +449,88 @@ var FieldNameResolver = (function () {
   // ══════════════════════════════════════════════════════════════════
 
   /**
-   * Extract clean text from a label element, removing interactive children
-   * and "required"/"optional" indicators.
-   */
-  FieldNameResolver.prototype._extractLabelText = function (labelEl) {
-    var clone = labelEl.cloneNode(true);
-    clone.querySelectorAll('input, select, textarea, button, .required, .optional').forEach(function (el) {
-      el.remove();
-    });
-    var text = clone.textContent.trim();
-    text = text
-      .replace(/\*\s*$/, '')
-      .replace(/\(required\)/gi, '')
-      .replace(/\(optional\)/gi, '')
-      .replace(/^\*\s*/, '')
-      .trim();
-    return text || null;
-  };
-
-  /**
-   * Get combined text from space-separated IDs (for aria-labelledby/describedby).
-   */
-  FieldNameResolver.prototype._getTextFromIds = function (idStr) {
-    var parts = idStr.split(/\s+/);
-    var texts = [];
-    for (var i = 0; i < parts.length; i++) {
-      var el = document.getElementById(parts[i]);
-      if (el && el.textContent.trim()) {
-        texts.push(el.textContent.trim());
-      }
-    }
-    return texts.length > 0 ? texts.join(' ') : null;
-  };
-
-  /**
-   * Safe querySelector that won't throw on invalid selectors.
+   * Safe querySelector wrapper (handles errors gracefully)
+   * @private
+   * @param {string} selector - CSS selector
+   * @returns {Element|null} Element or null
    */
   FieldNameResolver.prototype._safeQuery = function (selector) {
     try {
       return document.querySelector(selector);
-    } catch (e) {
+    } catch {
       return null;
     }
   };
 
   /**
-   * Check if a name/id is auto-generated (framework-specific patterns).
+   * Extract meaningful text from label element
+   * @private
+   * @param {Element} label - Label element
+   * @returns {string|null} Label text or null
    */
-  FieldNameResolver.prototype._isGeneratedId = function (id) {
-    if (!id || id.length < 2) return false;
-
-    // Allow short IDs
-    if (id.length < 4) return false;
-
-    // Allow meaningful prefixes
-    var lowerID = id.toLowerCase();
-    for (var i = 0; i < MEANINGFUL_PREFIXES.length; i++) {
-      if (lowerID.startsWith(MEANINGFUL_PREFIXES[i])) return false;
-    }
-
-    for (var j = 0; j < GENERATED_ID_PATTERNS.length; j++) {
-      if (GENERATED_ID_PATTERNS[j].test(id)) return true;
-    }
-
-    return false;
+  FieldNameResolver.prototype._extractLabelText = function (label) {
+    if (!label) return null;
+    var text = label.innerText || label.textContent;
+    return text && text.trim() ? text.trim() : null;
   };
 
   /**
-   * Quality gate — reject generic names that would be unhelpful.
+   * Check if a name is quality/meaningful
+   * @private
+   * @param {string} name - Name to check
+   * @returns {boolean} true if name is quality
    */
   FieldNameResolver.prototype._isQualityName = function (name) {
-    if (!name || name.trim().length === 0) return false;
-    if (name.trim().length > 80) return false;
-    return !GENERIC_NAMES.has(name.trim().toLowerCase());
+    if (!name || name.length === 0) return false;
+    if (name.length > 200) return false;
+    var lower = name.toLowerCase();
+    return !GENERIC_NAMES.has(lower);
   };
 
   /**
-   * Calculate Euclidean distance between two bounding rects (center-to-center).
+   * Check if a string looks auto-generated
+   * @private
+   * @param {string} str - String to check
+   * @returns {boolean} true if string appears auto-generated
    */
-  FieldNameResolver.prototype._calculateDistance = function (rect1, rect2) {
-    var cx1 = rect1.left + rect1.width / 2;
-    var cy1 = rect1.top + rect1.height / 2;
-    var cx2 = rect2.left + rect2.width / 2;
-    var cy2 = rect2.top + rect2.height / 2;
-    return Math.sqrt((cx1 - cx2) * (cx1 - cx2) + (cy1 - cy2) * (cy1 - cy2));
+  FieldNameResolver.prototype._isGenerated = function (str) {
+    if (!str || str.length < 3) return false;
+    return GENERATED_ID_PATTERNS.some(pattern => pattern.test(str));
   };
 
   /**
-   * Clean and format field names for readability.
+   * Clean and normalize field name
+   * Converts to Title Case, removes special chars, etc.
+   * @private
+   * @param {string} text - Raw field name
+   * @returns {string} Cleaned field name
    */
   FieldNameResolver.prototype._cleanFieldName = function (text) {
-    if (!text) return '';
     return text
+      .replace(/^\*+|\*+$/g, '')                     // Remove leading/trailing asterisks
+      .replace(/:\s*$/g, '')                         // Remove trailing colons
+      .replace(/([a-z])([A-Z])/g, '$1 $2')          // camelCase to spaces
+      .replace(/[_-]+/g, ' ')                        // Underscores/hyphens to spaces
+      .replace(/\s+/g, ' ')                          // Multiple spaces to single
       .trim()
-      .replace(/[*:]/g, '')
-      .replace(/\(required\)/gi, '')
-      .replace(/\(optional\)/gi, '')
-      .replace(/([a-z])([A-Z])/g, '$1 $2')       // camelCase
-      .replace(/[_-]/g, ' ')                       // underscores/hyphens
-      .replace(/\s+/g, ' ')                        // collapse whitespace
       .split(' ')
-      .filter(function (w) { return w.length > 0; })
-      .map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase(); })
-      .join(' ')
-      .trim();
+      .map(function (word) {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      })
+      .join(' ');
   };
 
+  // Export
   return FieldNameResolver;
 })();
+
+// Make globally available for content script
+if (typeof window !== 'undefined') {
+  if (!window.FieldNameResolver) {
+    window.FieldNameResolver = FieldNameResolver;
+  }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { FieldNameResolver };
+}

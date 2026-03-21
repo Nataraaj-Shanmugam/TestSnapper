@@ -12,9 +12,24 @@
  * - Added storage quota monitoring and notifications
  */
 
-import { StorageManager } from '../storage.js';
+import { StorageManager } from '../core/storage.js';
 import { ExportService } from '../core/export-service.js';
 import { Utils } from '../core/utils.js';
+import { addPendingFlush, removePendingFlush } from '../core/flush-utils.js';
+
+// ==================== Broadcast Helpers ====================
+
+/**
+ * Notify popup / review page that session data changed,
+ * so they can sync to the file system.
+ */
+function broadcastSessionChange(sessionId, changeType) {
+  chrome.runtime.sendMessage({
+    action: 'sessionDataChanged',
+    sessionId,
+    changeType  // 'created' | 'updated' | 'deleted' | 'steps_changed'
+  }).catch(() => { }); // Ignore if no listeners
+}
 
 // ==================== State Management ====================
 
@@ -403,6 +418,15 @@ class BadgeManager {
   }
 }
 
+// ==================== Pending Flush Management ====================
+// addPendingFlush / removePendingFlush imported from ../core/flush-utils.js
+
+async function clearBufferForSession(sessionId) {
+  await storage.clearSession(sessionId);
+  await removePendingFlush(sessionId);
+  console.log(`[Background] Cleared buffer for session ${sessionId}`);
+}
+
 // ==================== Session Management ====================
 
 async function createSession(tabInfo) {
@@ -662,7 +686,18 @@ async function stopRecording(tabId) {
       console.warn('Post-recording cleanup failed:', err);
     }
 
+    // Add to pending flush list so window contexts know to flush to disk
+    if (sessionId) {
+      await addPendingFlush(sessionId);
+      // Broadcast flush request to any open popup/review pages
+      chrome.runtime.sendMessage({
+        action: 'flushRecordingBuffer',
+        sessionId
+      }).catch(() => { }); // No listeners is fine — safety net on next popup open
+    }
+
     console.log('✅ Recording stopped:', sessionId);
+    broadcastSessionChange(sessionId, 'created');
 
     if (sessionId) {
       const reviewUrl = chrome.runtime.getURL(
@@ -863,7 +898,9 @@ async function exportSession(sessionId, format = 'json') {
 
 // ==================== Message Handler Helpers ====================
 
-async function getSenderTabId(sender) {
+async function getSenderTabId(sender, message) {
+  // Explicit tabId in message takes priority (used by tests and programmatic callers)
+  if (message?.tabId) return message.tabId;
   if (sender?.tab?.id) return sender.tab.id;
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return activeTab?.id;
@@ -893,7 +930,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     try {
       let response;
-      const tabId = await getSenderTabId(sender);
+      const tabId = await getSenderTabId(sender, message);
 
       switch (message.action) {
         case 'startRecording':
@@ -971,6 +1008,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'deleteSession':
           await storage.clearSession(message.sessionId);
+          broadcastSessionChange(message.sessionId, 'deleted');
           response = { success: true };
           break;
 
@@ -978,6 +1016,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const allSessions = await storage.getAllSessions();
           for (const sessionItem of allSessions) {
             await storage.clearSession(sessionItem.sessionId);
+            broadcastSessionChange(sessionItem.sessionId, 'deleted');
           }
           response = { success: true };
           break;
@@ -989,11 +1028,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sessionId: message.sessionId,
             sessionName: message.sessionName
           }).catch(() => { });
+          broadcastSessionChange(message.sessionId, 'updated');
           response = { success: true };
           break;
 
         case 'updateAllSteps':
           await storage.updateAllSteps(message.sessionId, message.steps);
+          broadcastSessionChange(message.sessionId, 'steps_changed');
           response = { success: true };
           break;
 
@@ -1023,6 +1064,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await storage.importAllData(message.data);
           response = { success: true };
           break;
+
+        // Filesystem storage: clear buffer after successful flush to disk
+        case 'clearBuffer':
+          await clearBufferForSession(message.sessionId);
+          response = { success: true };
+          break;
+
+        // Filesystem storage: get buffered session data for flushing
+        case 'getBufferedSession':
+          const bufferedSession = await storage.getSession(message.sessionId);
+          if (bufferedSession) {
+            const bufferedSteps = bufferedSession.steps || await storage.getSteps(message.sessionId);
+            const bufferedAssets = bufferedSession.assets || await storage.getAllAssets(message.sessionId);
+            response = { success: true, session: bufferedSession, steps: bufferedSteps, assets: bufferedAssets };
+          } else {
+            response = { success: false, error: 'Session not found in buffer' };
+          }
+          break;
+
+        // Filesystem storage: get pending flush list
+        case 'getPendingFlush': {
+          const flushResult = await chrome.storage.local.get(PENDING_FLUSH_KEY);
+          response = { success: true, pending: flushResult[PENDING_FLUSH_KEY] || [] };
+          break;
+        }
 
         // Cross-frame label resolution: relay request to main frame
         case 'getFrameLabel':

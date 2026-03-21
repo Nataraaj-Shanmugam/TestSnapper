@@ -36,8 +36,15 @@ export const Utils = {
   blobToDataURL(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
+      reader.onloadend = () => {
+        const result = reader.result;
+        reader.abort();
+        resolve(result);
+      };
+      reader.onerror = () => {
+        reader.abort();
+        reject(reader.error);
+      };
       reader.readAsDataURL(blob);
     });
   },
@@ -59,36 +66,6 @@ export const Utils = {
     } catch (error) {
       console.error('Failed to convert dataURL to Blob:', error);
       throw error;
-    }
-  },
-
-  /**
-   * Download file in browser
-   */
-  downloadFile(content, filename, mimeType) {
-    const base64Content = btoa(unescape(encodeURIComponent(content)));
-    const dataUrl = `data:${mimeType};base64,${base64Content}`;
-
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  },
-
-  /**
-   * Show toast message (for use in HTML pages)
-   */
-  showMessage(messageDiv, text, type = 'info', duration = 3000) {
-    messageDiv.textContent = text;
-    messageDiv.className = `message ${type}`;
-    messageDiv.style.display = 'block';
-
-    if (duration > 0 && (type === 'success' || type === 'error')) {
-      setTimeout(() => {
-        messageDiv.style.display = 'none';
-      }, duration);
     }
   },
 
@@ -120,6 +97,53 @@ export const Utils = {
   truncate(text, maxLength = 50) {
     if (!text || text.length <= maxLength) return text;
     return text.substring(0, maxLength) + '...';
+  },
+
+  /**
+   * Generate a natural, human-readable sentence describing a recorded step.
+   * Returns plain text — callers are responsible for HTML escaping.
+   */
+  generateStepDescription(step) {
+    const action = (step.action || 'action').toLowerCase();
+    const field  = (step.fieldName || '').trim();
+    const value  = (step.value || '').trim();
+
+    switch (action) {
+      case 'type':
+        if (value && field) return `Entered "${value}" in ${field} field`;
+        if (value)          return `Entered "${value}"`;
+        if (field)          return `Typed in ${field} field`;
+        return 'Typed in field';
+
+      case 'click':
+        return field ? `Clicked on ${field}` : 'Clicked on element';
+
+      case 'select':
+        if (value && field) return `Selected "${value}" from ${field} dropdown`;
+        if (value)          return `Selected "${value}" from dropdown`;
+        if (field)          return `Selected from ${field} dropdown`;
+        return 'Selected from dropdown';
+
+      case 'check':
+        return field ? `Checked the ${field} checkbox` : 'Checked checkbox';
+
+      case 'uncheck':
+        return field ? `Unchecked the ${field} checkbox` : 'Unchecked checkbox';
+
+      case 'submit':
+        return field ? `Submitted the ${field} form` : 'Submitted the form';
+
+      case 'navigate':
+        return value ? `Navigated to ${value}` : 'Navigated to page';
+
+      case 'screenshot':
+        return step.isManual ? 'Manual screenshot taken' : 'Auto screenshot captured';
+
+      default:
+        if (field && value) return `${action} "${value}" on ${field}`;
+        if (field)          return `${action} on ${field}`;
+        return action;
+    }
   }
 };
 
