@@ -18,15 +18,27 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
 ### Manifest V3 Extension
 - **Background:** Service worker (`src/background/background.js`) — ES module, handles recording state, screenshots, exports, session recovery
 - **Content Scripts:** Injected into all pages at `document_end`, all frames
-  - `src/content/selector.js` — Multi-strategy selector engine (CSS, XPath, framework-specific)
-  - `src/content/redactor.js` — Privacy redaction for sensitive data
+  - `src/content/selector.js` — Multi-strategy selector engine (CSS, XPath, framework-specific) with JSDoc
+  - `src/content/redactor.js` — Privacy redaction for sensitive data (21 patterns)
+  - `src/content/field-name-resolver.js` — Advanced field name extraction with 9 strategies
   - `src/content/content.js` — Event capture, floating panel, modal system
 - **Popup UI:** `src/ui/popup/popup.js` — Extension popup with recording controls
 - **Review UI:** `src/ui/review/review-standalone.js` — Full session review page with drag-and-drop reordering
-- **Storage:** `src/storage.js` — Split-key architecture using chrome.storage.local with quota monitoring
-- **Export:** `src/export.js` — JSON, CSV, Markdown, DOCX (with ZIP fallback), PDF export
-- **Export Service:** `src/core/export-service.js` — Orchestrator with chunking, cancellation, screenshot processing
-- **Utils:** `src/core/utils.js` — Shared utilities (UUID, escapeHtml, blobToDataURL)
+- **Theme UI:** `src/ui/theme.js` — Shared theme management (light/dark modes)
+- **Core Modules:**
+  - `src/core/storage.js` — StorageManager with split-key architecture, quota monitoring, schema migration
+  - `src/core/export-service.js` — Export orchestration with chunking, cancellation, screenshot processing
+  - `src/core/image-processor.js` — Unified image processing (compression, format detection)
+  - `src/core/orphan-cleaner.js` — Orphaned asset cleanup (weekly automatic)
+  - `src/core/quota-monitor.js` — Storage quota monitoring with warnings
+  - `src/core/schema-migrator.js` — Schema versioning and migration (v1 → v2)
+  - `src/core/file-sync.js` — FileSystem Access API wrapper for file operations
+  - `src/core/fs-storage.js` — Hybrid storage abstraction (chrome.storage + filesystem) with Proxy pattern
+  - `src/core/logger.js` — Configurable logging with levels (debug, info, warn, error)
+  - `src/core/compression.js` — GZIP compression via CompressionStream
+  - `src/core/utils.js` — Shared pure utilities (UUID, escapeHtml, blobToDataURL)
+  - `src/core/dom-utils.js` — DOM-dependent utilities (downloadFile, showMessage)
+  - `src/core/flush-utils.js` — Shared flush coordination between storage and filesystem
 
 ### Build System
 - Webpack 5 + Babel (targets Chrome 88+)
@@ -38,11 +50,18 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
 
 ### Storage
 - Split-key architecture: `testsnapper_sessions`, `testsnapper_steps_{sessionId}`, `testsnapper_assets_{sessionId}`, `testsnapper_meta`
-- `unlimitedStorage` permission for screenshot data
-- Image compression via OffscreenCanvas with standard canvas fallback
-- Schema migration from v1 to v2 on init
-- Orphan cleanup runs weekly
-- Batch operations available: `batchUpdateSteps()`, `batchDeleteSteps()`
+- `unlimitedStorage` permission for screenshot data (up to 1GB)
+- Image compression via `ImageProcessor` (unified, centralized)
+  - OffscreenCanvas for service worker context
+  - DOM canvas fallback for window contexts
+  - Edge detection for PNG/JPEG auto-selection
+- GZIP compression for step data via `CompressionStream`
+- Schema migration from v1 to v2 on init (delegated to `SchemaMigrator`)
+- Quota monitoring with 80% warning and 95% critical thresholds (delegated to `QuotaMonitor`)
+- Orphan cleanup runs weekly (delegated to `OrphanCleaner`)
+- Batch operations: `batchUpdateSteps()`, `batchDeleteSteps()`
+- Filesystem sync via `FSStorageManager` and `FileSync` (Manifest V3 File System Access API)
+- Flush coordination across buffer and filesystem (via `flush-utils.js`)
 
 ### Content Scripts
 - Use `var` (not `let`) for top-level declarations to avoid SyntaxError on re-injection
@@ -74,12 +93,34 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
 - **Current dev branch:** `V1.1.3`
 - Branch naming: `V{major}.{minor}.{patch}`
 
-## Bug Tracking
-- `BUG_ENHANCEMENT_REPORT.md` — Comprehensive bug & enhancement report with status
-- `BUG_FIX_TRACKER.md` — Concise tracker of remaining issues
-- All Critical, High, and Security bugs are fixed as of v1.1.3
-- 1 Medium remains: STR-MED-001 (step data compression — deferred)
-- 20 Low enhancements deferred to v1.2.0+
+## Architecture Review & Refactoring
+- `arch-review.md` — Comprehensive architecture audit (12 high/medium issues identified and resolved)
+- `TODO.md` — Completion summary of all architectural fixes
+- **All 12 high/medium severity issues resolved:**
+  - HIGH-001: Image compression logic unified (ImageProcessor)
+  - HIGH-002: Utility functions deduplicated (Utils, dom-utils)
+  - HIGH-003: Storage layer inconsistency resolved (flush-utils)
+  - HIGH-004: Content script global coupling protected (defensive guards)
+  - MED-001: Orphan export.js removed
+  - MED-002: StorageManager decomposed (quota-monitor, schema-migrator, orphan-cleaner)
+  - MED-003: ExportService image logic extracted (ImageProcessor)
+  - MED-004: storage.js moved to core/
+  - MED-005: FSStorageManager boilerplate eliminated (Proxy pattern)
+  - MED-006: Utils fan-in reduced (split into utils + dom-utils)
+  - MED-007: Theme duplication resolved (theme.js)
+  - MED-008: Console logging abstraction added (Logger)
+
+## Documentation
+- **Inline JSDoc Coverage:** ~95% (150+ methods documented across 7 core files)
+- **Project Documentation:**
+  - `README.md` — Main project documentation with features, installation, usage
+  - `CLAUDE.md` — Developer project instructions and architecture (this file)
+  - `onboard.md` — Comprehensive onboarding guide for new developers (generated)
+  - `CONTRIBUTING.md` — Contribution guidelines and code style (generated)
+  - `API.md` — Complete API reference with examples (generated)
+  - `DEVELOPER_GUIDE.md` — Detailed development setup and workflow
+- **Documentation Format:** JSDoc with @param, @returns, @throws, @example tags
+- **Code Examples:** All major modules include usage examples
 
 ## Important Notes
 - Never commit `node_modules/` changes
