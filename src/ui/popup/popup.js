@@ -45,6 +45,7 @@ const viewStepsBtn = document.getElementById("viewStepsBtn");
 const closeStepsBtn = document.getElementById("closeStepsBtn");
 const deleteSessionBtn = document.getElementById("deleteSessionBtn");
 const clearAllBtn = document.getElementById("clearAllBtn");
+const stateIndicator = document.getElementById("stateIndicator");
 const stateDot = document.getElementById("stateDot");
 const stateText = document.getElementById("stateText");
 const stepCount = document.getElementById("stepCount");
@@ -87,6 +88,7 @@ let currentSessionId = null;
 async function init() {
   setupTabs();
   setupEventListeners();
+  setupCustomDropdown();
   setupTheme();
   await fsStorage.init();
   await updateState();
@@ -182,23 +184,25 @@ function setupEventListeners() {
   document.getElementById("onboardingReauthBtn")?.addEventListener("click", handleReauthorize);
 
   // Settings interactivity
+  // BUG-005 FIX: captureApiCalls, captureFailedCalls, captureAllCalls, includeTimestamp, apiCallsOptions
+  // have no corresponding HTML elements — all inner references use optional chaining to avoid crashes.
   captureApiCalls?.addEventListener("change", (e) => {
-    apiCallsOptions.style.display = e.target.checked ? "block" : "none";
+    if (apiCallsOptions) apiCallsOptions.style.display = e.target.checked ? "block" : "none";
     if (!e.target.checked) {
-      captureFailedCalls.checked = false;
-      captureAllCalls.checked = false;
+      if (captureFailedCalls) captureFailedCalls.checked = false;
+      if (captureAllCalls) captureAllCalls.checked = false;
     }
   });
 
   autoScreenshot?.addEventListener("change", (e) => {
-    screenshotInterval.style.display = e.target.checked ? "block" : "none";
+    if (screenshotInterval) screenshotInterval.style.display = e.target.checked ? "block" : "none";
   });
 
   captureFailedCalls?.addEventListener("change", (e) => {
-    if (e.target.checked) captureAllCalls.checked = false;
+    if (e.target.checked && captureAllCalls) captureAllCalls.checked = false;
   });
   captureAllCalls?.addEventListener("change", (e) => {
-    if (e.target.checked) captureFailedCalls.checked = false;
+    if (e.target.checked && captureFailedCalls) captureFailedCalls.checked = false;
   });
 
   // POP-MED-003: Save export format when changed
@@ -277,35 +281,9 @@ function setupKeyboardNavigation() {
 // =====================
 // Storage Usage Indicator
 // =====================
-async function updateStorageUsage() {
-  const usageBar = document.getElementById('storageUsageBar');
-  const usageText = document.getElementById('storageUsageText');
-  if (!usageBar || !usageText) return;
-
-  const fsReady = await fsStorage.isFilesystemReady();
-  if (fsReady) {
-    // Filesystem has no quota — show a simple status
-    usageBar.style.width = '0%';
-    usageBar.className = 'storage-usage-bar storage-ok';
-    usageText.textContent = 'Filesystem storage (no limit)';
-  } else {
-    // Still using chrome.storage buffer — show quota
-    try {
-      const response = await chrome.runtime.sendMessage({ action: "getStorageUsage" });
-      if (response?.success) {
-        const { percentage, error: err, warning, used, total } = response.usage;
-        const pct = (percentage * 100).toFixed(1);
-        usageBar.style.width = `${pct}%`;
-        usageBar.className = 'storage-usage-bar' + (err ? ' storage-critical' : warning ? ' storage-warning' : ' storage-ok');
-        const usedMB = (used / 1024 / 1024).toFixed(1);
-        const totalMB = (total / 1024 / 1024).toFixed(0);
-        usageText.textContent = `${usedMB} MB / ${totalMB} MB (${pct}%)`;
-      }
-    } catch (e) {
-      console.error('Failed to update storage usage:', e);
-    }
-  }
-}
+// Storage usage bar removed — filesystem storage has no quota limits.
+// This function is kept as a no-op so existing callers don't break.
+async function updateStorageUsage() { }
 
 // =====================
 // Chrome Messaging Logic
@@ -410,6 +388,8 @@ async function handleExport() {
   const sessionId = sessionDropdown.value;
   if (!sessionId) return showMessage("Select a session first", "error");
 
+  if (exportBtn) exportBtn.disabled = true;
+
   const format = document.querySelector('input[name="format"]:checked')?.value || 'json';
   showMessage("Exporting...", "info");
 
@@ -432,10 +412,13 @@ async function handleExport() {
     }
 
     await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
+    if (result.blob) URL.revokeObjectURL(downloadUrl);
     showMessage(`Exported as ${filename}`, "success");
   } catch (err) {
     console.error("Export failed:", err);
     showMessage("Export failed: " + err.message, "error");
+  } finally {
+    if (exportBtn) exportBtn.disabled = false;
   }
 }
 
@@ -629,9 +612,20 @@ async function handleSaveSettings() {
 
 async function loadSessions() {
   try {
+    // Check if filesystem is ready — if not, sessions may exist but can't be read
+    const fsReady = await fsStorage.isFilesystemReady();
+    if (!fsReady && await fileSync.isConfigured()) {
+      // Folder is configured but permission isn't granted — sessions are on disk
+      // but inaccessible until the user clicks Re-authorize
+      renderCustomDropdown([], true);
+      return;
+    }
+
     // Read directly from filesystem (or buffer for active/pending sessions)
     const sessions = await fsStorage.getAllSessions();
     sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    // Update hidden native select for compatibility
     sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
     sessions.forEach((s) => {
       const opt = document.createElement("option");
@@ -640,11 +634,130 @@ async function loadSessions() {
       opt.textContent = `${sessionName} (${s.stepCount || 0} steps)`;
       sessionDropdown.appendChild(opt);
     });
-    if (currentSessionId) sessionDropdown.value = currentSessionId;
+
+    // Update custom dropdown
+    renderCustomDropdown(sessions);
+
+    if (currentSessionId) {
+      sessionDropdown.value = currentSessionId;
+      selectCustomDropdownItem(currentSessionId);
+    }
     handleSessionSelect();
   } catch (e) {
     console.error("Load sessions failed:", e);
   }
+}
+
+function renderCustomDropdown(sessions, needsReauth = false) {
+  const list = document.getElementById("sessionDropdownList");
+  const trigger = document.getElementById("sessionSelectTrigger");
+
+  if (needsReauth) {
+    list.innerHTML = `
+      <div class="empty-state" style="padding: 20px 16px;">
+        <svg class="empty-state-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span class="empty-state-title">Re-authorization needed</span>
+        <span class="empty-state-desc">Click <strong>Re-authorize</strong> in the Folder & Sessions section to access your saved sessions</span>
+      </div>`;
+    trigger.innerHTML = `<span class="session-placeholder">Re-authorize to view sessions</span>
+      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    return;
+  }
+
+  if (!sessions.length) {
+    list.innerHTML = `
+      <div class="empty-state" style="padding: 20px 16px;">
+        <svg class="empty-state-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+        <span class="empty-state-title">No sessions yet</span>
+        <span class="empty-state-desc">Start recording to create your first test session</span>
+      </div>`;
+    trigger.innerHTML = `<span class="session-placeholder">No sessions available</span>
+      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    return;
+  }
+
+  list.innerHTML = sessions.map((s) => {
+    const name = Utils.escapeHtml(s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`);
+    const date = new Date(s.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const steps = s.stepCount || 0;
+    return `
+      <div class="session-dropdown-item" data-value="${s.sessionId}" role="option">
+        <span class="item-name">${name}</span>
+        <span class="item-meta">
+          <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> ${steps} steps</span>
+          <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${date}</span>
+        </span>
+      </div>`;
+  }).join("");
+}
+
+function selectCustomDropdownItem(value) {
+  const wrapper = document.getElementById("sessionSelectWrapper");
+  const trigger = document.getElementById("sessionSelectTrigger");
+  const items = wrapper.querySelectorAll(".session-dropdown-item");
+  let found = false;
+
+  items.forEach((item) => {
+    const isMatch = item.dataset.value === value;
+    item.classList.toggle("selected", isMatch);
+    if (isMatch) {
+      found = true;
+      const name = item.querySelector(".item-name")?.textContent || "";
+      const meta = item.querySelector(".item-meta")?.innerHTML || "";
+      trigger.innerHTML = `
+        <span class="session-info">
+          <span class="session-name">${Utils.escapeHtml(name)}</span>
+          <span class="session-meta">${meta}</span>
+        </span>
+        <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    }
+  });
+
+  if (!found) {
+    trigger.innerHTML = `<span class="session-placeholder">Select a session...</span>
+      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+  }
+}
+
+function setupCustomDropdown() {
+  const wrapper = document.getElementById("sessionSelectWrapper");
+  const trigger = document.getElementById("sessionSelectTrigger");
+  const list = document.getElementById("sessionDropdownList");
+
+  trigger.addEventListener("click", () => {
+    const isOpen = wrapper.classList.toggle("open");
+    trigger.setAttribute("aria-expanded", isOpen);
+  });
+
+  list.addEventListener("click", (e) => {
+    const item = e.target.closest(".session-dropdown-item");
+    if (!item) return;
+    const value = item.dataset.value;
+    sessionDropdown.value = value;
+    selectCustomDropdownItem(value);
+    wrapper.classList.remove("open");
+    trigger.setAttribute("aria-expanded", "false");
+    handleSessionSelect();
+  });
+
+  // Close on outside click
+  document.addEventListener("click", (e) => {
+    if (!wrapper.contains(e.target)) {
+      wrapper.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  // Keyboard support
+  trigger.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      trigger.click();
+    } else if (e.key === "Escape") {
+      wrapper.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  });
 }
 
 function handleSessionSelect() {
@@ -670,6 +783,12 @@ async function loadSettings() {
     if (screenshotSeconds) screenshotSeconds.value = s.screenshotSeconds || 5;
     if (autoSave) autoSave.checked = s.autoSave !== false;
     if (maxSessions) maxSessions.value = s.maxSessions || 25;
+
+    const captureOnNavigationInput = document.getElementById('captureOnNavigation');
+    if (captureOnNavigationInput) captureOnNavigationInput.checked = s.captureOnNavigation !== false;
+
+    const smartDedupInput = document.getElementById('smartDedup');
+    if (smartDedupInput) smartDedupInput.checked = s.smartDedup !== false;
 
     const screenshotFormatInput = document.getElementById('screenshotFormat');
     if (screenshotFormatInput) screenshotFormatInput.value = s.screenshotFormat || 'png';
@@ -718,14 +837,52 @@ async function updateState() {
     if (response) {
       currentState = response.state;
       currentSessionId = response.session?.sessionId || null;
-      stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
-      stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
-      stepCount.textContent = response.stepCount || 0;
+      // BUG-008 FIX: null-guard all DOM element accesses to avoid crashes if
+      // an element is ever missing from the DOM.
+      if (stateText) {
+        stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
+        stateText.classList.toggle("recording", currentState === "recording");
+        stateText.classList.toggle("paused", currentState === "paused");
+      }
+      if (stateDot) {
+        stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
+      }
+      if (stateIndicator) {
+        stateIndicator.classList.toggle("is-recording", currentState === "recording");
+        stateIndicator.classList.toggle("is-paused", currentState === "paused");
+      }
 
-      // Update screenshot count
+      // Animate stat values
+      const newStepCount = response.stepCount || 0;
+      const newScreenshotCount = response.screenshotCount || 0;
       const screenshotCountEl = document.getElementById('screenshotCount');
-      if (screenshotCountEl) {
-        screenshotCountEl.textContent = response.screenshotCount || 0;
+
+      if (_isFirstStateUpdate) {
+        // Count-up animation on first load
+        _isFirstStateUpdate = false;
+        if (stepCount) animateCountUp(stepCount, newStepCount);
+        if (screenshotCountEl) animateCountUp(screenshotCountEl, newScreenshotCount);
+      } else {
+        // Bump animation on subsequent changes
+        if (stepCount) {
+          const prevStepCount = stepCount.textContent;
+          stepCount.textContent = newStepCount;
+          if (String(newStepCount) !== prevStepCount) {
+            stepCount.classList.remove("bumped");
+            void stepCount.offsetWidth;
+            stepCount.classList.add("bumped");
+          }
+        }
+
+        if (screenshotCountEl) {
+          const prevScreenshots = screenshotCountEl.textContent;
+          screenshotCountEl.textContent = newScreenshotCount;
+          if (String(newScreenshotCount) !== prevScreenshots) {
+            screenshotCountEl.classList.remove("bumped");
+            void screenshotCountEl.offsetWidth;
+            screenshotCountEl.classList.add("bumped");
+          }
+        }
       }
 
       // Update session duration
@@ -758,16 +915,21 @@ async function updateLiveSteps() {
 }
 
 function updateButtonStates() {
-  startBtn.disabled = currentState !== "idle";
-  pauseBtn.disabled = currentState !== "recording";
-  resumeBtn.disabled = currentState !== "paused";
-  stopBtn.disabled = currentState === "idle";
-  screenshotBtn.disabled = currentState !== "recording";
+  if (startBtn) startBtn.disabled = currentState !== "idle";
+  if (pauseBtn) pauseBtn.disabled = currentState !== "recording";
+  if (resumeBtn) resumeBtn.disabled = currentState !== "paused";
+  if (stopBtn) stopBtn.disabled = currentState === "idle";
+  if (screenshotBtn) screenshotBtn.disabled = currentState !== "recording";
 }
 
 function displaySteps(steps, target = stepsList) {
   if (!steps?.length) {
-    target.innerHTML = `<p style="text-align:center;color:var(--text-muted);font-size:11px;">No steps recorded</p>`;
+    target.innerHTML = `
+      <div class="empty-state">
+        <svg class="empty-state-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        <span class="empty-state-title">No steps yet</span>
+        <span class="empty-state-desc">Interact with the page to start capturing test steps</span>
+      </div>`;
     return;
   }
   target.innerHTML = steps
@@ -776,7 +938,7 @@ function displaySteps(steps, target = stepsList) {
     <div class="step-item">
       <div class="step-header">
         <span class="step-number">Step ${i + 1}</span>
-        <span class="step-action">${Utils.escapeHtml(step.action)}</span>
+        <span class="step-action" data-action="${Utils.escapeHtml(step.action.toLowerCase())}">${Utils.escapeHtml(step.action)}</span>
       </div>
       <div class="step-details">
         ${step.fieldName ? `<div><strong>Field:</strong> ${Utils.escapeHtml(step.fieldName)}</div>` : ""}
@@ -789,11 +951,43 @@ function displaySteps(steps, target = stepsList) {
 }
 
 
+const _toastIcons = {
+  success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  error: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+};
+let _toastTimer = null;
+let _isFirstStateUpdate = true;
+
+function animateCountUp(el, target, durationMs = 400) {
+  const start = parseInt(el.textContent) || 0;
+  if (start === target || target === 0) { el.textContent = target; return; }
+  const startTime = performance.now();
+  function tick(now) {
+    const progress = Math.min((now - startTime) / durationMs, 1);
+    const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+    el.textContent = Math.round(start + (target - start) * eased);
+    if (progress < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
 function showMessage(text, type = "info", duration = 3000) {
-  messageDiv.textContent = text;
+  // Clear any pending dismiss
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+  const icon = _toastIcons[type] || _toastIcons.info;
+  messageDiv.innerHTML = `<span class="toast-icon">${icon}</span><span class="toast-text">${Utils.escapeHtml(text)}</span><span class="toast-progress"></span>`;
   messageDiv.className = "message " + type;
-  messageDiv.style.display = "block";
-  setTimeout(() => (messageDiv.style.display = "none"), duration);
+  messageDiv.style.setProperty("--toast-duration", duration + "ms");
+  messageDiv.style.display = "flex";
+  messageDiv.classList.remove("toast-exit");
+
+  _toastTimer = setTimeout(() => {
+    messageDiv.classList.add("toast-exit");
+    setTimeout(() => { messageDiv.style.display = "none"; messageDiv.classList.remove("toast-exit"); }, 200);
+  }, duration);
 }
 
 // =====================
@@ -813,22 +1007,9 @@ async function checkFileSyncStatus() {
 
     if (permission === 'granted') {
       updateSyncUI('active', folderName || '.TestSnapper');
-    } else if (permission === 'prompt') {
-      // Popup open = user gesture context — silently re-request permission
-      // so the user doesn't have to click a separate "Re-authorize" button.
-      try {
-        const granted = await fileSync.requestPermission();
-        if (granted) {
-          updateSyncUI('active', folderName || '.TestSnapper');
-          await flushAllPending();
-          await loadSessions();
-        } else {
-          updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
-        }
-      } catch {
-        updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
-      }
     } else {
+      // 'prompt' or 'denied' — requestPermission() requires a real user gesture
+      // so we can't silently call it here. Show the re-auth banner instead.
       updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
     }
   } catch (err) {

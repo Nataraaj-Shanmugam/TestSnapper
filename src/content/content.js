@@ -26,6 +26,8 @@ var eventListenerController = null;
 var isModalOpen = false;
 var modalTimeout = null;
 var navigationCheckInterval = null;
+var autoScreenshotInterval = null;
+var sessionSettings = {};
 
 // Track last interactions to prevent duplicates
 var lastInteraction = {
@@ -46,6 +48,9 @@ var modalStates = new Map(); // Track state per modal: { id, overlay, resolver, 
 
 // 🔧 FIX #7: Add heartbeat to detect background script restart
 var sessionValidationInterval = null;
+
+// Track elements hidden before screenshot so they can be restored after
+var hiddenScreenshotElements = [];
 
 // Initialize modules
 function initModules() {
@@ -261,7 +266,7 @@ async function processModalQueue() {
   currentModalId = null;
 
   // Process next in queue
-  setTimeout(() => processModalQueue(), 100);
+  processModalQueue();
 }
 
 function closeModalById(modalId, result) {
@@ -286,6 +291,7 @@ function closeModalById(modalId, result) {
 
   // Clean up state
   modalStates.delete(modalId);
+  if (modalStates.size === 0) isModalOpen = false;
 }
 
 /**
@@ -423,6 +429,7 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     `;
     overlay.appendChild(style);
     overlay.appendChild(modal);
+    isModalOpen = true;
     document.body.appendChild(overlay);
     state.overlay = overlay;
 
@@ -479,29 +486,6 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     }, 30000);
   });
 }
-/**
- * 🔧 FIX #2: Enhanced cleanup
- */
-function closeModal(overlay) {
-  if (modalTimeout) {
-    clearTimeout(modalTimeout);
-    modalTimeout = null;
-  }
-
-  if (overlay && overlay.parentNode) {
-    overlay.style.animation = 'fadeOut 0.2s ease-out';
-    setTimeout(() => {
-      overlay.remove();
-      isModalOpen = false;
-      pendingStep = null;
-      modalResolver = null;
-    }, 200);
-  } else {
-    isModalOpen = false;
-    pendingStep = null;
-    modalResolver = null;
-  }
-}
 
 /**
  * 🔧 FIX #2: Process step with modal pause/resume
@@ -514,6 +498,7 @@ async function processStepWithManualEntry(element, action, stepData) {
 
     const wasRecording = isRecording;
     isRecording = false;
+    isPaused = true;
     updateRecordingIndicator('PAUSED');
 
     fieldName = await showManualEntryModal(element, action, stepData);
@@ -524,12 +509,15 @@ async function processStepWithManualEntry(element, action, stepData) {
       const valid = await validateSession();
       if (valid) {
         isRecording = true;
+        isPaused = false;
         updateRecordingIndicator('RECORDING');
       } else {
         console.error('❌ Session invalidated during modal - stopping recording');
         stopRecording();
         return null;
       }
+    } else {
+      isPaused = false;
     }
 
     if (!fieldName) {
@@ -843,8 +831,7 @@ function handleInput(event) {
 
     pendingInputs.set(elementKey, timeoutId);
   } catch (error) {
-    console.error('❌ Error capturing click:', error);
-    // showErrorNotification('Failed to capture click: ' + error.message);
+    console.error('❌ Error capturing input:', error);
     // Don't stop recording, just log and continue
   }
 }
@@ -876,7 +863,10 @@ async function handleChange(event) {
       value = element.options[element.selectedIndex]?.text || element.value;
     } else {
       action = 'type';
-      const isSensitive = redactor.shouldIgnoreField(element);
+    }
+
+    const isSensitive = action === 'type' ? redactor.shouldIgnoreField(element) : false;
+    if (action === 'type') {
       value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
     }
 
@@ -892,7 +882,7 @@ async function handleChange(event) {
       targetLabel: selectorEngine.getElementText(element),
       url: window.location.href,
       value: value,
-      isSensitive: false
+      isSensitive: isSensitive
     };
 
     stepData = await processStepWithManualEntry(element, action, stepData);
@@ -902,13 +892,12 @@ async function handleChange(event) {
     sendStepToBackground(stepData);
     console.log('Change captured:', stepData.fieldName, value);
   } catch (error) {
-    console.error('❌ Error capturing click:', error);
-    // showErrorNotification('Failed to capture click: ' + error.message);
+    console.error('❌ Error capturing input:', error);
     // Don't stop recording, just log and continue
   }
 }
 
-function handleSubmit(event) {
+async function handleSubmit(event) {
   if (!isRecording || !selectorEngine || isModalOpen) return;
 
   try {
@@ -922,7 +911,7 @@ function handleSubmit(event) {
     const selector = selectorEngine.generateSelector(form);
     const fieldName = selectorEngine.extractFieldName(form) || 'Form';
 
-    const stepData = {
+    let stepData = {
       action: 'submit',
       selector: selector,
       fieldName: fieldName,
@@ -932,12 +921,14 @@ function handleSubmit(event) {
       isSensitive: false
     };
 
+    stepData = await processStepWithManualEntry(form, 'submit', stepData);
+    if (!stepData) return;
+
     updateLastInteraction(form, 'submit');
     sendStepToBackground(stepData);
-    console.log('Submit captured:', fieldName);
+    console.log('Submit captured:', stepData.fieldName);
   } catch (error) {
-    console.error('❌ Error capturing click:', error);
-    // showErrorNotification('Failed to capture click: ' + error.message);
+    console.error('❌ Error capturing submit:', error);
     // Don't stop recording, just log and continue
   }
 }
@@ -962,6 +953,11 @@ function captureNavigation() {
   }
 
   lastNavigationUrl = currentUrl;
+
+  // Capture screenshot before navigation if the setting is enabled
+  if (sessionSettings.captureOnNavigation !== false) {
+    chrome.runtime.sendMessage({ action: 'captureScreenshot', sessionId: currentSessionId });
+  }
 
   const stepData = {
     action: 'navigate',
@@ -1006,12 +1002,24 @@ function sendStepToBackground(stepData) {
   });
 }
 
-function startRecording(sessionId, isRestoring = false, startTimeStr = null) {
+function startAutoScreenshotInterval() {
+  if (autoScreenshotInterval) clearInterval(autoScreenshotInterval);
+  if (!sessionSettings.autoScreenshot) return;
+  const seconds = Math.max(1, Math.min(60, sessionSettings.screenshotSeconds || 5));
+  autoScreenshotInterval = setInterval(() => {
+    if (isRecording && !isPaused) {
+      chrome.runtime.sendMessage({ action: 'captureScreenshot', sessionId: currentSessionId, isManual: false });
+    }
+  }, seconds * 1000);
+}
+
+function startRecording(sessionId, isRestoring = false, startTimeStr = null, settings = {}) {
   if (isRecording) return;
 
   isRecording = true;
   isPaused = false;
   currentSessionId = sessionId;
+  sessionSettings = settings;
 
   if (isRestoring) {
     isInitialNavigation = false;
@@ -1071,14 +1079,17 @@ function startRecording(sessionId, isRestoring = false, startTimeStr = null) {
 
   // Start navigation monitoring
   if (!navigationCheckInterval) {
-    lastUrl = window.location.href;
+    lastNavigationUrl = window.location.href;
     navigationCheckInterval = setInterval(() => {
-      if (isRecording && window.location.href !== lastUrl) {
-        lastUrl = window.location.href;
+      if (isRecording && window.location.href !== lastNavigationUrl) {
+        lastNavigationUrl = window.location.href;
         captureNavigation();
       }
     }, 1000);
   }
+
+  // Start auto-screenshot interval if enabled
+  startAutoScreenshotInterval();
 
   console.log('Content script: Recording started');
 }
@@ -1087,6 +1098,10 @@ function pauseRecording() {
   if (!isRecording) return;
   isRecording = false;
   isPaused = true;
+  if (autoScreenshotInterval) {
+    clearInterval(autoScreenshotInterval);
+    autoScreenshotInterval = null;
+  }
   updateRecordingIndicator('PAUSED');
   console.log('Content script: Recording paused');
 }
@@ -1095,6 +1110,7 @@ function resumeRecording() {
   if (isRecording) return;
   isRecording = true;
   isPaused = false;
+  startAutoScreenshotInterval();
   updateRecordingIndicator('RECORDING');
   console.log('Content script: Recording resumed');
 }
@@ -1116,10 +1132,9 @@ function stopRecording() {
 
   lastInteraction = { element: null, action: null, timestamp: 0, value: null };
 
-  // 🔧 FIX #2: Force close modal if open
-  const modal = document.getElementById('testsnapper-modal-overlay');
-  if (modal) {
-    closeModal(modal);
+  // 🔧 FIX #2: Force close all open modals
+  for (const [id] of modalStates) {
+    closeModalById(id, null);
   }
 
   if (modalTimeout) {
@@ -1138,6 +1153,13 @@ function stopRecording() {
     clearInterval(navigationCheckInterval);
     navigationCheckInterval = null;
   }
+
+  // Clear auto-screenshot interval
+  if (autoScreenshotInterval) {
+    clearInterval(autoScreenshotInterval);
+    autoScreenshotInterval = null;
+  }
+  sessionSettings = {};
 
   removeRecordingIndicator();
   removeHighlight();
@@ -1441,7 +1463,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   switch (message.action) {
     case 'startRecording':
-      startRecording(message.sessionId, false, message.session?.createdAt);
+      startRecording(message.sessionId, false, message.session?.createdAt, message.settings || {});
+      sendResponse({ success: true });
+      break;
+
+    // BUG-004 FIX: Handle session restore after service worker restart
+    case 'restoreRecording':
+      startRecording(message.sessionId, true, message.session?.createdAt, message.settings || {});
       sendResponse({ success: true });
       break;
 
@@ -1461,15 +1489,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'beforeScreenshot':
-      if (floatingPanelContainer) floatingPanelContainer.style.display = 'none';
+      hiddenScreenshotElements = [];
       document.querySelectorAll('[id^="testsnapper-"]').forEach(el => {
         el.style.display = 'none';
+        hiddenScreenshotElements.push(el);
       });
       sendResponse({ success: true });
       break;
 
     case 'afterScreenshot':
-      if (floatingPanelContainer) floatingPanelContainer.style.display = 'block';
+      hiddenScreenshotElements.forEach(el => { el.style.display = ''; });
+      hiddenScreenshotElements = [];
       sendResponse({ success: true });
       break;
 

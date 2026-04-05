@@ -78,7 +78,7 @@ vi.mock('../../src/core/file-sync.js', () => ({
   FileSync: vi.fn(() => mockFileSync),
 }));
 
-vi.mock('../../src/storage.js', () => ({
+vi.mock('../../src/core/storage.js', () => ({
   StorageManager: vi.fn(() => mockBuffer),
 }));
 

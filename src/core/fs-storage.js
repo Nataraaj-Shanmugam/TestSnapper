@@ -183,6 +183,10 @@ export class FSStorageManager {
     }
   }
 
+  async addPendingFlush(sessionId) { return addPendingFlush(sessionId); }
+  async getPendingFlush() { return getPendingFlush(); }
+  async removePendingFlush(sessionId) { return removePendingFlush(sessionId); }
+
   // ════════════════════════════════════════════════════════════════
   // Session operations
   // ════════════════════════════════════════════════════════════════

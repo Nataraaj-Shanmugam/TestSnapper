@@ -277,6 +277,7 @@ export class ExportService {
             const cdnScript = document.createElement('script');
             cdnScript.src = 'https://unpkg.com/docx@7.8.2/build/index.js';
             cdnScript.crossOrigin = 'anonymous';
+            // SRI hash verified for docx@7.8.2 (unpkg.com/docx@7.8.2/build/index.js)
             cdnScript.integrity = 'sha384-zjTqOObJTD6OT6CUn8mSpDY+crIiP0cX457OjcZosSATiUFbmdXa9KRScjfLVxFH';
             cdnScript.onload = () => {
               console.log('Loaded docx library from CDN');
@@ -299,9 +300,8 @@ export class ExportService {
     // Load user's export quality preference
     let exportFormat = 'auto';
     try {
-      const settingsResult = await chrome.storage.local.get('settings');
-      const settings = settingsResult.settings || {};
-      exportFormat = settings.exportImageQuality || 'auto';
+      const settings = await this.storage.getSettings();
+      exportFormat = settings.exportImageQuality || settings.imageQuality || 'auto';
     } catch (e) { /* use default */ }
 
     notify({ percent: 30, status: 'Loading screenshots...' });
@@ -447,8 +447,6 @@ export class ExportService {
 
         processedCount++;
       }
-
-      chunk.length = 0;
 
       if (chunkEnd < totalSteps) {
         const pct = 75 + Math.floor((processedCount / totalSteps) * 15);
@@ -614,8 +612,6 @@ export class ExportService {
         <w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Value: </w:t></w:r>
           <w:r><w:t>${val}</w:t></w:r></w:p>`;
       }
-
-      chunk.length = 0;
 
       if (chunkEnd < totalSteps) {
         const pct = 75 + Math.floor((chunkEnd / totalSteps) * 15);
