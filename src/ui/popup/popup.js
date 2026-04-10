@@ -82,6 +82,70 @@ const maxSessions = document.getElementById("maxSessions");
 let currentState = "idle";
 let currentSessionId = null;
 
+// R-007: Settings profiles
+const SETTING_PROFILES = {
+  fast: { screenshotSeconds: 0, screenshotMode: 'events', autoScreenshot: false },
+  docs: { screenshotSeconds: 3, screenshotMode: 'both', autoScreenshot: true }
+};
+
+function applyProfileToForm(preset) {
+  const fields = SETTING_PROFILES[preset];
+  if (!fields) return;
+  if (fields.screenshotSeconds !== undefined && screenshotSeconds) screenshotSeconds.value = fields.screenshotSeconds;
+  if (fields.screenshotMode !== undefined) { const el = document.getElementById('screenshotMode'); if (el) el.value = fields.screenshotMode; }
+  if (fields.autoScreenshot !== undefined && autoScreenshot) {
+    autoScreenshot.checked = fields.autoScreenshot;
+    if (screenshotInterval) screenshotInterval.style.display = fields.autoScreenshot ? 'block' : 'none';
+  }
+}
+
+// R-009: Format bytes helper
+function _formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// R-009: Load storage breakdown
+async function loadStorageBreakdown() {
+  const list = document.getElementById('storageBreakdownList');
+  if (!list) return;
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const { usage, quota } = await navigator.storage.estimate();
+      if (quota && usage / quota > 0.85) {
+        const banner = document.getElementById('storageWarningBanner');
+        if (banner) banner.style.display = 'block';
+      }
+    }
+    const { testsnapper_sessions } = await chrome.storage.local.get('testsnapper_sessions');
+    const sessions = (testsnapper_sessions || []).slice(0, 10);
+    const withSizes = await Promise.all(sessions.map(async s => {
+      const sid = s.sessionId;
+      const [stepsD, assetsD] = await Promise.all([
+        chrome.storage.local.get(`testsnapper_steps_${sid}`),
+        chrome.storage.local.get(`testsnapper_assets_${sid}`)
+      ]);
+      const totalBytes = JSON.stringify(stepsD[`testsnapper_steps_${sid}`] || []).length
+        + JSON.stringify(assetsD[`testsnapper_assets_${sid}`] || []).length;
+      return { ...s, totalBytes };
+    }));
+    withSizes.sort((a, b) => b.totalBytes - a.totalBytes);
+    const top5 = withSizes.slice(0, 5);
+    if (!top5.length) { list.textContent = 'No sessions found.'; return; }
+    const maxBytes = top5[0].totalBytes || 1;
+    list.innerHTML = top5.map(s => {
+      const pct = Math.round((s.totalBytes / maxBytes) * 100);
+      return `<div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;font-size:12px"><span>${Utils.escapeHtml(s.sessionName || s.sessionId)}</span><span>${_formatBytes(s.totalBytes)}</span></div>
+        <div style="height:4px;background:var(--border);border-radius:2px;margin-top:3px"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:2px"></div></div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (list) list.textContent = 'Could not load breakdown.';
+  }
+}
+
 // =====================
 // Initialization
 // =====================
@@ -99,6 +163,7 @@ async function init() {
   await loadExportFormat(); // POP-MED-003: Load saved export format
   await updateStorageUsage(); // BUG FIX: POP-003
   setupKeyboardShortcuts(); // BUG FIX: POP-006
+  loadStorageBreakdown(); // R-009: non-blocking
 }
 
 // setupTheme / applyTheme imported from ../theme.js
@@ -216,6 +281,68 @@ function setupEventListeners() {
 
   // POP-MED-001: Keyboard navigation
   setupKeyboardNavigation();
+
+  // R-007: Settings profiles
+  document.getElementById('settingsProfile')?.addEventListener('change', (e) => {
+    if (e.target.value !== 'custom') applyProfileToForm(e.target.value);
+  });
+  document.getElementById('exportSettingsBtn')?.addEventListener('click', async () => {
+    const { settings } = await chrome.storage.local.get('settings');
+    const blob = new Blob([JSON.stringify(settings || {}, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'testsnapper-settings.json'; a.click();
+    URL.revokeObjectURL(url);
+  });
+  document.getElementById('importSettingsBtn')?.addEventListener('click', () => {
+    document.getElementById('importSettingsFile')?.click();
+  });
+  document.getElementById('importSettingsFile')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const imported = JSON.parse(text);
+      if (typeof imported !== 'object' || Array.isArray(imported)) throw new Error('Invalid format');
+      await chrome.runtime.sendMessage({ action: 'saveSettings', settings: imported });
+      await loadSettings();
+      showMessage('Settings imported!', 'success');
+    } catch(err) {
+      showMessage('Import failed: ' + err.message, 'error');
+    }
+    e.target.value = '';
+  });
+
+  // R-003: URL params toggle
+  document.getElementById('redactUrlParams')?.addEventListener('change', (e) => {
+    const row = document.getElementById('urlParamDenylistRow');
+    if (row) row.style.display = e.target.checked ? 'block' : 'none';
+  });
+
+  // R-009: Smart cleanup
+  document.getElementById('smartCleanupBtn')?.addEventListener('click', async () => {
+    const { testsnapper_sessions } = await chrome.storage.local.get('testsnapper_sessions');
+    const sessions = testsnapper_sessions || [];
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const old = sessions.filter(s => s.createdAt && new Date(s.createdAt).getTime() < cutoff);
+    if (!old.length) { showMessage('No sessions older than 30 days.', 'info'); return; }
+    const withSizes = await Promise.all(old.map(async s => {
+      const sid = s.sessionId;
+      const [stepsD, assetsD] = await Promise.all([
+        chrome.storage.local.get(`testsnapper_steps_${sid}`),
+        chrome.storage.local.get(`testsnapper_assets_${sid}`)
+      ]);
+      return { ...s, totalBytes: JSON.stringify(stepsD[`testsnapper_steps_${sid}`]||[]).length + JSON.stringify(assetsD[`testsnapper_assets_${sid}`]||[]).length };
+    }));
+    const totalSize = withSizes.reduce((acc, s) => acc + s.totalBytes, 0);
+    if (!confirm(`Delete ${old.length} session(s) older than 30 days? (~${_formatBytes(totalSize)} freed)`)) return;
+    for (const s of old) {
+      await chrome.runtime.sendMessage({ action: 'deleteSession', sessionId: s.sessionId });
+    }
+    showMessage(`Cleaned up ${old.length} session(s).`, 'success');
+    await loadSessions();
+    await loadStorageBreakdown();
+  });
 }
 
 // =====================
@@ -581,6 +708,7 @@ async function handleSaveSettings() {
     const settings = {
       autoScreenshot: autoScreenshot?.checked || false,
       screenshotSeconds: screenshotSecondsValue,
+      screenshotMode: document.getElementById('screenshotMode')?.value || 'interval', // R-010
       captureOnNavigation: document.getElementById('captureOnNavigation')?.checked !== false,
       smartDedup: document.getElementById('smartDedup')?.checked !== false,
       autoSave: autoSave?.checked !== false,
@@ -591,7 +719,12 @@ async function handleSaveSettings() {
       captureApiCalls: captureApiCalls?.checked || false,
       captureFailedCalls: captureFailedCalls?.checked || false,
       captureAllCalls: captureAllCalls?.checked || false,
-      includeTimestamp: includeTimestamp?.checked !== false
+      includeTimestamp: includeTimestamp?.checked !== false,
+      // R-003: Privacy settings
+      customRedactionPatterns: (document.getElementById('customRedactionPatterns')?.value || '')
+        .split('\n').map(p => p.trim()).filter(Boolean).map(p => ({ pattern: p, flags: 'i' })),
+      redactUrlParams: document.getElementById('redactUrlParams')?.checked || false,
+      urlParamDenylist: document.getElementById('urlParamDenylist')?.value || ''
     };
 
     const res = await chrome.runtime.sendMessage({
@@ -635,7 +768,10 @@ async function loadSessions() {
       sessionDropdown.appendChild(opt);
     });
 
-    // Update custom dropdown
+    // R-006: Compute size labels asynchronously (non-blocking)
+    calculateAllSessionSizes(sessions).then(() => renderCustomDropdown(sessions));
+
+    // Update custom dropdown (immediate, sizes populate after)
     renderCustomDropdown(sessions);
 
     if (currentSessionId) {
@@ -646,6 +782,47 @@ async function loadSessions() {
   } catch (e) {
     console.error("Load sessions failed:", e);
   }
+}
+
+// R-006: Format bytes to human-readable KB/MB
+function _formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// R-006: Calculate and annotate session sizes (mutates session objects with _sizeLabel)
+async function calculateAllSessionSizes(sessions) {
+  for (const s of sessions) {
+    try {
+      const assets = await fsStorage.getAllAssets(s.sessionId);
+      let total = 0;
+      assets.forEach(a => { if (a.dataUrl) total += a.dataUrl.length * 0.75; }); // base64 → bytes approx
+      s._sizeLabel = _formatBytes(total);
+    } catch (e) { s._sizeLabel = ''; }
+  }
+}
+
+// R-006: Archive or unarchive a session
+async function handleArchiveSession(sessionId, archive) {
+  try {
+    await fsStorage.updateSession(sessionId, { archived: archive });
+    await loadSessions();
+    showMessage(archive ? 'Session archived' : 'Session unarchived', 'success');
+  } catch (e) {
+    showMessage('Failed to update session', 'error');
+  }
+}
+
+// R-006: Filter visible dropdown items by search query
+function filterSessionsDropdown(query) {
+  const list = document.getElementById('sessionDropdownList');
+  if (!list) return;
+  const q = query.toLowerCase().trim();
+  list.querySelectorAll('.session-dropdown-item').forEach(item => {
+    const name = (item.querySelector('.item-name') || {}).textContent || '';
+    item.style.display = (!q || name.toLowerCase().includes(q)) ? '' : 'none';
+  });
 }
 
 function renderCustomDropdown(sessions, needsReauth = false) {
@@ -676,19 +853,62 @@ function renderCustomDropdown(sessions, needsReauth = false) {
     return;
   }
 
-  list.innerHTML = sessions.map((s) => {
-    const name = Utils.escapeHtml(s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`);
-    const date = new Date(s.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const steps = s.stepCount || 0;
-    return `
-      <div class="session-dropdown-item" data-value="${s.sessionId}" role="option">
-        <span class="item-name">${name}</span>
-        <span class="item-meta">
-          <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> ${steps} steps</span>
-          <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${date}</span>
-        </span>
-      </div>`;
-  }).join("");
+  // R-006: Separate active vs archived
+  const activeSessions = sessions.filter(s => !s.archived);
+  const archivedSessions = sessions.filter(s => s.archived);
+
+  list.innerHTML = activeSessions.map((s) => _renderSessionItem(s)).join('') +
+    (archivedSessions.length ? `
+      <div class="archived-section" id="archivedSection">
+        <button class="archived-toggle" id="archivedToggle" type="button">
+          Archived (${archivedSessions.length}) ▸
+        </button>
+        <div class="archived-list hidden" id="archivedList">
+          ${archivedSessions.map(s => _renderSessionItem(s, true)).join('')}
+        </div>
+      </div>` : '');
+
+  // Wire archive toggle
+  const toggleBtn = list.querySelector('#archivedToggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const archivedList = list.querySelector('#archivedList');
+      const isHidden = archivedList.classList.toggle('hidden');
+      toggleBtn.textContent = `Archived (${archivedSessions.length}) ${isHidden ? '▸' : '▾'}`;
+    });
+  }
+
+  // Wire archive buttons
+  list.querySelectorAll('.session-archive-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const sessionId = btn.dataset.sessionId;
+      const isArchived = btn.dataset.archived === 'true';
+      await handleArchiveSession(sessionId, !isArchived);
+    });
+  });
+}
+
+function _renderSessionItem(s, isArchived = false) {
+  const name = Utils.escapeHtml(s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`);
+  const date = new Date(s.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const steps = s.stepCount || 0;
+  const sizeLabel = s._sizeLabel || '';
+  const archiveTitle = isArchived ? 'Unarchive' : 'Archive';
+  const archiveIcon = isArchived
+    ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-5.5"/></svg>'
+    : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>';
+  return `
+    <div class="session-dropdown-item${isArchived ? ' archived-item' : ''}" data-value="${s.sessionId}" role="option">
+      <span class="item-name">${name}</span>
+      <span class="item-meta">
+        <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> ${steps} steps</span>
+        <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${date}</span>
+        ${sizeLabel ? `<span class="meta-badge session-size-badge">${sizeLabel}</span>` : ''}
+      </span>
+      <button class="session-archive-btn" data-session-id="${s.sessionId}" data-archived="${isArchived}" title="${archiveTitle}" type="button">${archiveIcon}</button>
+    </div>`;
 }
 
 function selectCustomDropdownItem(value) {
@@ -723,6 +943,17 @@ function setupCustomDropdown() {
   const wrapper = document.getElementById("sessionSelectWrapper");
   const trigger = document.getElementById("sessionSelectTrigger");
   const list = document.getElementById("sessionDropdownList");
+
+  // R-006: Session search wiring
+  const searchInput = document.getElementById('sessionSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => filterSessionsDropdown(e.target.value));
+    // Open dropdown when user starts typing
+    searchInput.addEventListener('focus', () => {
+      wrapper.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    });
+  }
 
   trigger.addEventListener("click", () => {
     const isOpen = wrapper.classList.toggle("open");
@@ -781,6 +1012,8 @@ async function loadSettings() {
     if (includeTimestamp) includeTimestamp.checked = s.includeTimestamp !== false;
     if (autoScreenshot) autoScreenshot.checked = s.autoScreenshot || false;
     if (screenshotSeconds) screenshotSeconds.value = s.screenshotSeconds || 5;
+    const screenshotModeEl = document.getElementById('screenshotMode'); // R-010
+    if (screenshotModeEl) screenshotModeEl.value = s.screenshotMode || 'interval';
     if (autoSave) autoSave.checked = s.autoSave !== false;
     if (maxSessions) maxSessions.value = s.maxSessions || 25;
 
@@ -795,6 +1028,18 @@ async function loadSettings() {
 
     const exportImageQualityInput = document.getElementById('exportImageQuality');
     if (exportImageQualityInput) exportImageQualityInput.value = s.exportImageQuality || 'auto';
+
+    // R-003: Privacy fields
+    const patternsEl = document.getElementById('customRedactionPatterns');
+    if (patternsEl) patternsEl.value = (s.customRedactionPatterns || []).map(p => p.pattern).join('\n');
+    const redactUrlParamsEl = document.getElementById('redactUrlParams');
+    if (redactUrlParamsEl) {
+      redactUrlParamsEl.checked = s.redactUrlParams || false;
+      const row = document.getElementById('urlParamDenylistRow');
+      if (row) row.style.display = s.redactUrlParams ? 'block' : 'none';
+    }
+    const denylistEl = document.getElementById('urlParamDenylist');
+    if (denylistEl) denylistEl.value = s.urlParamDenylist || '';
 
     // Update visibility
     if (apiCallsOptions) apiCallsOptions.style.display = captureApiCalls?.checked ? "block" : "none";

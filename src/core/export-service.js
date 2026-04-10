@@ -76,9 +76,14 @@ export class ExportService {
    *   console.log(`${progress.percent}% - ${progress.status}`);
    * });
    */
-  async exportSession(sessionId, format, progressCallback) {
+  async exportSession(sessionId, format, progressCallback, options = {}) {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
+
+    // R-004: Parse export options
+    const includeScreenshots = options.includeScreenshots !== false;
+    const includeSelectors = options.includeSelectors !== false;
+    const onlyFailed = options.onlyFailed === true;
 
     // Clear any previous cancellation
     this._clearCancellation(sessionId);
@@ -98,6 +103,14 @@ export class ExportService {
     let steps = await this.storage.getSteps(sessionId);
     steps.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
 
+    // R-004: Apply step filter
+    if (onlyFailed) steps = steps.filter(s => s.failed === true);
+
+    // R-004: Strip selectors if not included
+    if (!includeSelectors) {
+      steps = steps.map(s => ({ ...s, selector: undefined }));
+    }
+
     notify({
       percent: 20,
       status: 'Steps loaded',
@@ -106,7 +119,8 @@ export class ExportService {
 
     const exportData = {
       session: this._formatSessionData(session, steps.length),
-      steps: steps
+      steps: steps,
+      _includeScreenshots: includeScreenshots
     };
 
     switch (format.toLowerCase()) {
@@ -307,7 +321,9 @@ export class ExportService {
     notify({ percent: 30, status: 'Loading screenshots...' });
 
     // Load screenshots via _resolveAssetUrl (checks dataUrl, then data, then blob)
-    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const screenshotAssets = exportData._includeScreenshots !== false
+      ? await this.storage.getAllAssets(session.id)
+      : [];
     const screenshotMap = new Map();
     const totalScreens = screenshotAssets.length || 1;
     let processed = 0;

@@ -38,6 +38,19 @@ class Redactor {
     this.pinPattern = /\b\d{4,6}\b/; // 4-6 digit PINs
     this.routingPattern = /\b\d{9}\b/; // 9 digit routing numbers
     this.dobPattern = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/; // MM/DD/YYYY or MM-DD-YY
+
+    // R-003: Custom patterns (loaded via loadCustomPatterns)
+    this._customPatterns = [];
+  }
+
+  /**
+   * Load custom redaction patterns from settings
+   * @param {Array<{pattern: string, flags: string}>} patterns
+   */
+  loadCustomPatterns(patterns) {
+    this._customPatterns = (patterns || []).map(function(p) {
+      try { return new RegExp(p.pattern, p.flags || 'i'); } catch(e) { return null; }
+    }).filter(Boolean);
   }
 
   /**
@@ -62,7 +75,14 @@ class Redactor {
       element.className
     ].filter(Boolean).join(' ');
 
-    return this.sensitivePatterns.some(pattern => pattern.test(attributes));
+    if (this.sensitivePatterns.some(pattern => pattern.test(attributes))) return true;
+    // R-003: Check custom patterns
+    if (this._customPatterns && this._customPatterns.length) {
+      for (var i = 0; i < this._customPatterns.length; i++) {
+        if (this._customPatterns[i].test(attributes)) return true;
+      }
+    }
+    return false;
   }
 
   /**

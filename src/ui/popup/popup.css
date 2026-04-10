@@ -1164,6 +1164,79 @@ header h1 {
   gap: 3px;
 }
 
+/* ==================== R-006: SESSION WORKSPACE ==================== */
+.session-search-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: var(--text-body-sm);
+  box-sizing: border-box;
+}
+.session-search-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.session-dropdown-item {
+  position: relative;
+}
+.session-archive-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: opacity 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+}
+.session-dropdown-item:hover .session-archive-btn {
+  opacity: 1;
+}
+.session-archive-btn:hover {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+.session-size-badge {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+.archived-item {
+  opacity: 0.65;
+}
+.archived-section {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+}
+.archived-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+.archived-toggle:hover {
+  color: var(--text-secondary);
+}
+.archived-list.hidden {
+  display: none;
+}
+
 /* ==================== STEPS VIEWER ==================== */
 
 .details-summary {
@@ -1970,4 +2043,13 @@ footer p {
 [data-theme="dark"] .tooltip::after {
   background: var(--neutral-200);
   color: var(--neutral-900);
+}
+/* ==================== R-007: SETTINGS PROFILE ROW ==================== */
+
+.settings-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
 }
