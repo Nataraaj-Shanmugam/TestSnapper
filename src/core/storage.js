@@ -335,8 +335,22 @@ class StorageManager {
       throw new Error('Invalid backup data structure');
     }
 
-    // Clear existing data
-    await chrome.storage.local.clear();
+    for (const [i, s] of data.sessions.entries()) {
+      if (!s || typeof s.sessionId !== 'string') {
+        throw new Error(`Invalid session at index ${i}: missing or invalid sessionId`);
+      }
+      if (s.steps !== undefined && !Array.isArray(s.steps)) {
+        throw new Error(`Invalid session ${s.sessionId}: steps must be an array`);
+      }
+      if (s.assets !== undefined && !Array.isArray(s.assets)) {
+        throw new Error(`Invalid session ${s.sessionId}: assets must be an array`);
+      }
+    }
+
+    // Clear only TestSnapper keys (not all extension storage)
+    const allData = await chrome.storage.local.get(null);
+    const testsnapperKeys = Object.keys(allData).filter(k => k.startsWith('testsnapper_'));
+    await chrome.storage.local.remove(testsnapperKeys);
 
     // Write metadata
     await this._writeMeta(data.meta);
@@ -393,6 +407,8 @@ class StorageManager {
       const stepIdSet = new Set(stepIds);
       let totalDeleted = 0;
 
+      const stepCountUpdates = {};
+
       for (const session of sessions) {
         const steps = await this._readSteps(session.sessionId);
         const beforeCount = steps.length;
@@ -401,21 +417,33 @@ class StorageManager {
 
         if (deleted > 0) {
           await this._writeSteps(session.sessionId, filtered);
-
-          // Update session step count
-          const sessions = await this._readSessions();
-          const idx = this._findSessionIndex(sessions, session.sessionId);
-          if (idx !== -1) {
-            sessions[idx].stepCount = filtered.length;
-            await this._writeSessions(sessions);
-          }
-
+          stepCountUpdates[session.sessionId] = filtered.length;
           totalDeleted += deleted;
         }
       }
 
+      // Single read-modify-write for all stepCount updates
+      if (Object.keys(stepCountUpdates).length > 0) {
+        const allSessions = await this._readSessions();
+        for (const [sessionId, newCount] of Object.entries(stepCountUpdates)) {
+          const idx = this._findSessionIndex(allSessions, sessionId);
+          if (idx !== -1) allSessions[idx].stepCount = newCount;
+        }
+        await this._writeSessions(allSessions);
+      }
+
       return totalDeleted;
     }, 'batchDeleteSteps');
+  }
+
+  /**
+   * Read user settings from storage.
+   * @async
+   * @returns {Promise<Object>} Settings object (empty object if not set)
+   */
+  async getSettings() {
+    const result = await chrome.storage.local.get('settings');
+    return result.settings || {};
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -789,16 +817,19 @@ class StorageManager {
    * @param {string} stepId - Step identifier
    * @returns {Promise<Array>} Array of asset objects for the step
    */
-  async getAssetsByStepId(stepId) {
+  async getAssetsByStepId(stepId, sessionId = null) {
     return this._retryOperation(async () => {
+      if (sessionId) {
+        const assets = await this._readAssets(sessionId);
+        return assets.filter(a => a.stepId === stepId);
+      }
+      // Fallback: scan all sessions
       const sessions = await this._readSessions();
-
       for (const session of sessions) {
         const assets = await this._readAssets(session.sessionId);
         const matched = assets.filter(a => a.stepId === stepId);
         if (matched.length > 0) return matched;
       }
-
       return [];
     }, 'getAssetsByStepId');
   }

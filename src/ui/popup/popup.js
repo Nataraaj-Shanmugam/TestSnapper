@@ -45,6 +45,7 @@ const viewStepsBtn = document.getElementById("viewStepsBtn");
 const closeStepsBtn = document.getElementById("closeStepsBtn");
 const deleteSessionBtn = document.getElementById("deleteSessionBtn");
 const clearAllBtn = document.getElementById("clearAllBtn");
+const stateIndicator = document.getElementById("stateIndicator");
 const stateDot = document.getElementById("stateDot");
 const stateText = document.getElementById("stateText");
 const stepCount = document.getElementById("stepCount");
@@ -81,12 +82,77 @@ const maxSessions = document.getElementById("maxSessions");
 let currentState = "idle";
 let currentSessionId = null;
 
+// R-007: Settings profiles
+const SETTING_PROFILES = {
+  fast: { screenshotSeconds: 0, screenshotMode: 'events', autoScreenshot: false },
+  docs: { screenshotSeconds: 3, screenshotMode: 'both', autoScreenshot: true }
+};
+
+function applyProfileToForm(preset) {
+  const fields = SETTING_PROFILES[preset];
+  if (!fields) return;
+  if (fields.screenshotSeconds !== undefined && screenshotSeconds) screenshotSeconds.value = fields.screenshotSeconds;
+  if (fields.screenshotMode !== undefined) { const el = document.getElementById('screenshotMode'); if (el) el.value = fields.screenshotMode; }
+  if (fields.autoScreenshot !== undefined && autoScreenshot) {
+    autoScreenshot.checked = fields.autoScreenshot;
+    if (screenshotInterval) screenshotInterval.style.display = fields.autoScreenshot ? 'block' : 'none';
+  }
+}
+
+// R-009: Format bytes helper
+function _formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// R-009: Load storage breakdown
+async function loadStorageBreakdown() {
+  const list = document.getElementById('storageBreakdownList');
+  if (!list) return;
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const { usage, quota } = await navigator.storage.estimate();
+      if (quota && usage / quota > 0.85) {
+        const banner = document.getElementById('storageWarningBanner');
+        if (banner) banner.style.display = 'block';
+      }
+    }
+    const { testsnapper_sessions } = await chrome.storage.local.get('testsnapper_sessions');
+    const sessions = (testsnapper_sessions || []).slice(0, 10);
+    const withSizes = await Promise.all(sessions.map(async s => {
+      const sid = s.sessionId;
+      const [stepsD, assetsD] = await Promise.all([
+        chrome.storage.local.get(`testsnapper_steps_${sid}`),
+        chrome.storage.local.get(`testsnapper_assets_${sid}`)
+      ]);
+      const totalBytes = JSON.stringify(stepsD[`testsnapper_steps_${sid}`] || []).length
+        + JSON.stringify(assetsD[`testsnapper_assets_${sid}`] || []).length;
+      return { ...s, totalBytes };
+    }));
+    withSizes.sort((a, b) => b.totalBytes - a.totalBytes);
+    const top5 = withSizes.slice(0, 5);
+    if (!top5.length) { list.textContent = 'No sessions found.'; return; }
+    const maxBytes = top5[0].totalBytes || 1;
+    list.innerHTML = top5.map(s => {
+      const pct = Math.round((s.totalBytes / maxBytes) * 100);
+      return `<div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;font-size:12px"><span>${Utils.escapeHtml(s.sessionName || s.sessionId)}</span><span>${_formatBytes(s.totalBytes)}</span></div>
+        <div style="height:4px;background:var(--border);border-radius:2px;margin-top:3px"><div style="height:100%;width:${pct}%;background:var(--accent);border-radius:2px"></div></div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (list) list.textContent = 'Could not load breakdown.';
+  }
+}
+
 // =====================
 // Initialization
 // =====================
 async function init() {
   setupTabs();
   setupEventListeners();
+  setupCustomDropdown();
   setupTheme();
   await fsStorage.init();
   await updateState();
@@ -97,6 +163,7 @@ async function init() {
   await loadExportFormat(); // POP-MED-003: Load saved export format
   await updateStorageUsage(); // BUG FIX: POP-003
   setupKeyboardShortcuts(); // BUG FIX: POP-006
+  loadStorageBreakdown(); // R-009: non-blocking
 }
 
 // setupTheme / applyTheme imported from ../theme.js
@@ -182,23 +249,25 @@ function setupEventListeners() {
   document.getElementById("onboardingReauthBtn")?.addEventListener("click", handleReauthorize);
 
   // Settings interactivity
+  // BUG-005 FIX: captureApiCalls, captureFailedCalls, captureAllCalls, includeTimestamp, apiCallsOptions
+  // have no corresponding HTML elements — all inner references use optional chaining to avoid crashes.
   captureApiCalls?.addEventListener("change", (e) => {
-    apiCallsOptions.style.display = e.target.checked ? "block" : "none";
+    if (apiCallsOptions) apiCallsOptions.style.display = e.target.checked ? "block" : "none";
     if (!e.target.checked) {
-      captureFailedCalls.checked = false;
-      captureAllCalls.checked = false;
+      if (captureFailedCalls) captureFailedCalls.checked = false;
+      if (captureAllCalls) captureAllCalls.checked = false;
     }
   });
 
   autoScreenshot?.addEventListener("change", (e) => {
-    screenshotInterval.style.display = e.target.checked ? "block" : "none";
+    if (screenshotInterval) screenshotInterval.style.display = e.target.checked ? "block" : "none";
   });
 
   captureFailedCalls?.addEventListener("change", (e) => {
-    if (e.target.checked) captureAllCalls.checked = false;
+    if (e.target.checked && captureAllCalls) captureAllCalls.checked = false;
   });
   captureAllCalls?.addEventListener("change", (e) => {
-    if (e.target.checked) captureFailedCalls.checked = false;
+    if (e.target.checked && captureFailedCalls) captureFailedCalls.checked = false;
   });
 
   // POP-MED-003: Save export format when changed
@@ -212,6 +281,68 @@ function setupEventListeners() {
 
   // POP-MED-001: Keyboard navigation
   setupKeyboardNavigation();
+
+  // R-007: Settings profiles
+  document.getElementById('settingsProfile')?.addEventListener('change', (e) => {
+    if (e.target.value !== 'custom') applyProfileToForm(e.target.value);
+  });
+  document.getElementById('exportSettingsBtn')?.addEventListener('click', async () => {
+    const { settings } = await chrome.storage.local.get('settings');
+    const blob = new Blob([JSON.stringify(settings || {}, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'testsnapper-settings.json'; a.click();
+    URL.revokeObjectURL(url);
+  });
+  document.getElementById('importSettingsBtn')?.addEventListener('click', () => {
+    document.getElementById('importSettingsFile')?.click();
+  });
+  document.getElementById('importSettingsFile')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const imported = JSON.parse(text);
+      if (typeof imported !== 'object' || Array.isArray(imported)) throw new Error('Invalid format');
+      await chrome.runtime.sendMessage({ action: 'saveSettings', settings: imported });
+      await loadSettings();
+      showMessage('Settings imported!', 'success');
+    } catch(err) {
+      showMessage('Import failed: ' + err.message, 'error');
+    }
+    e.target.value = '';
+  });
+
+  // R-003: URL params toggle
+  document.getElementById('redactUrlParams')?.addEventListener('change', (e) => {
+    const row = document.getElementById('urlParamDenylistRow');
+    if (row) row.style.display = e.target.checked ? 'block' : 'none';
+  });
+
+  // R-009: Smart cleanup
+  document.getElementById('smartCleanupBtn')?.addEventListener('click', async () => {
+    const { testsnapper_sessions } = await chrome.storage.local.get('testsnapper_sessions');
+    const sessions = testsnapper_sessions || [];
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const old = sessions.filter(s => s.createdAt && new Date(s.createdAt).getTime() < cutoff);
+    if (!old.length) { showMessage('No sessions older than 30 days.', 'info'); return; }
+    const withSizes = await Promise.all(old.map(async s => {
+      const sid = s.sessionId;
+      const [stepsD, assetsD] = await Promise.all([
+        chrome.storage.local.get(`testsnapper_steps_${sid}`),
+        chrome.storage.local.get(`testsnapper_assets_${sid}`)
+      ]);
+      return { ...s, totalBytes: JSON.stringify(stepsD[`testsnapper_steps_${sid}`]||[]).length + JSON.stringify(assetsD[`testsnapper_assets_${sid}`]||[]).length };
+    }));
+    const totalSize = withSizes.reduce((acc, s) => acc + s.totalBytes, 0);
+    if (!confirm(`Delete ${old.length} session(s) older than 30 days? (~${_formatBytes(totalSize)} freed)`)) return;
+    for (const s of old) {
+      await chrome.runtime.sendMessage({ action: 'deleteSession', sessionId: s.sessionId });
+    }
+    showMessage(`Cleaned up ${old.length} session(s).`, 'success');
+    await loadSessions();
+    await loadStorageBreakdown();
+  });
 }
 
 // =====================
@@ -277,35 +408,9 @@ function setupKeyboardNavigation() {
 // =====================
 // Storage Usage Indicator
 // =====================
-async function updateStorageUsage() {
-  const usageBar = document.getElementById('storageUsageBar');
-  const usageText = document.getElementById('storageUsageText');
-  if (!usageBar || !usageText) return;
-
-  const fsReady = await fsStorage.isFilesystemReady();
-  if (fsReady) {
-    // Filesystem has no quota — show a simple status
-    usageBar.style.width = '0%';
-    usageBar.className = 'storage-usage-bar storage-ok';
-    usageText.textContent = 'Filesystem storage (no limit)';
-  } else {
-    // Still using chrome.storage buffer — show quota
-    try {
-      const response = await chrome.runtime.sendMessage({ action: "getStorageUsage" });
-      if (response?.success) {
-        const { percentage, error: err, warning, used, total } = response.usage;
-        const pct = (percentage * 100).toFixed(1);
-        usageBar.style.width = `${pct}%`;
-        usageBar.className = 'storage-usage-bar' + (err ? ' storage-critical' : warning ? ' storage-warning' : ' storage-ok');
-        const usedMB = (used / 1024 / 1024).toFixed(1);
-        const totalMB = (total / 1024 / 1024).toFixed(0);
-        usageText.textContent = `${usedMB} MB / ${totalMB} MB (${pct}%)`;
-      }
-    } catch (e) {
-      console.error('Failed to update storage usage:', e);
-    }
-  }
-}
+// Storage usage bar removed — filesystem storage has no quota limits.
+// This function is kept as a no-op so existing callers don't break.
+async function updateStorageUsage() { }
 
 // =====================
 // Chrome Messaging Logic
@@ -410,6 +515,8 @@ async function handleExport() {
   const sessionId = sessionDropdown.value;
   if (!sessionId) return showMessage("Select a session first", "error");
 
+  if (exportBtn) exportBtn.disabled = true;
+
   const format = document.querySelector('input[name="format"]:checked')?.value || 'json';
   showMessage("Exporting...", "info");
 
@@ -432,10 +539,13 @@ async function handleExport() {
     }
 
     await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
+    if (result.blob) URL.revokeObjectURL(downloadUrl);
     showMessage(`Exported as ${filename}`, "success");
   } catch (err) {
     console.error("Export failed:", err);
     showMessage("Export failed: " + err.message, "error");
+  } finally {
+    if (exportBtn) exportBtn.disabled = false;
   }
 }
 
@@ -598,6 +708,7 @@ async function handleSaveSettings() {
     const settings = {
       autoScreenshot: autoScreenshot?.checked || false,
       screenshotSeconds: screenshotSecondsValue,
+      screenshotMode: document.getElementById('screenshotMode')?.value || 'interval', // R-010
       captureOnNavigation: document.getElementById('captureOnNavigation')?.checked !== false,
       smartDedup: document.getElementById('smartDedup')?.checked !== false,
       autoSave: autoSave?.checked !== false,
@@ -608,7 +719,12 @@ async function handleSaveSettings() {
       captureApiCalls: captureApiCalls?.checked || false,
       captureFailedCalls: captureFailedCalls?.checked || false,
       captureAllCalls: captureAllCalls?.checked || false,
-      includeTimestamp: includeTimestamp?.checked !== false
+      includeTimestamp: includeTimestamp?.checked !== false,
+      // R-003: Privacy settings
+      customRedactionPatterns: (document.getElementById('customRedactionPatterns')?.value || '')
+        .split('\n').map(p => p.trim()).filter(Boolean).map(p => ({ pattern: p, flags: 'i' })),
+      redactUrlParams: document.getElementById('redactUrlParams')?.checked || false,
+      urlParamDenylist: document.getElementById('urlParamDenylist')?.value || ''
     };
 
     const res = await chrome.runtime.sendMessage({
@@ -629,9 +745,20 @@ async function handleSaveSettings() {
 
 async function loadSessions() {
   try {
+    // Check if filesystem is ready — if not, sessions may exist but can't be read
+    const fsReady = await fsStorage.isFilesystemReady();
+    if (!fsReady && await fileSync.isConfigured()) {
+      // Folder is configured but permission isn't granted — sessions are on disk
+      // but inaccessible until the user clicks Re-authorize
+      renderCustomDropdown([], true);
+      return;
+    }
+
     // Read directly from filesystem (or buffer for active/pending sessions)
     const sessions = await fsStorage.getAllSessions();
     sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    // Update hidden native select for compatibility
     sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
     sessions.forEach((s) => {
       const opt = document.createElement("option");
@@ -640,11 +767,228 @@ async function loadSessions() {
       opt.textContent = `${sessionName} (${s.stepCount || 0} steps)`;
       sessionDropdown.appendChild(opt);
     });
-    if (currentSessionId) sessionDropdown.value = currentSessionId;
+
+    // R-006: Compute size labels asynchronously (non-blocking)
+    calculateAllSessionSizes(sessions).then(() => renderCustomDropdown(sessions));
+
+    // Update custom dropdown (immediate, sizes populate after)
+    renderCustomDropdown(sessions);
+
+    if (currentSessionId) {
+      sessionDropdown.value = currentSessionId;
+      selectCustomDropdownItem(currentSessionId);
+    }
     handleSessionSelect();
   } catch (e) {
     console.error("Load sessions failed:", e);
   }
+}
+
+// R-006: Format bytes to human-readable KB/MB
+function _formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// R-006: Calculate and annotate session sizes (mutates session objects with _sizeLabel)
+async function calculateAllSessionSizes(sessions) {
+  for (const s of sessions) {
+    try {
+      const assets = await fsStorage.getAllAssets(s.sessionId);
+      let total = 0;
+      assets.forEach(a => { if (a.dataUrl) total += a.dataUrl.length * 0.75; }); // base64 → bytes approx
+      s._sizeLabel = _formatBytes(total);
+    } catch (e) { s._sizeLabel = ''; }
+  }
+}
+
+// R-006: Archive or unarchive a session
+async function handleArchiveSession(sessionId, archive) {
+  try {
+    await fsStorage.updateSession(sessionId, { archived: archive });
+    await loadSessions();
+    showMessage(archive ? 'Session archived' : 'Session unarchived', 'success');
+  } catch (e) {
+    showMessage('Failed to update session', 'error');
+  }
+}
+
+// R-006: Filter visible dropdown items by search query
+function filterSessionsDropdown(query) {
+  const list = document.getElementById('sessionDropdownList');
+  if (!list) return;
+  const q = query.toLowerCase().trim();
+  list.querySelectorAll('.session-dropdown-item').forEach(item => {
+    const name = (item.querySelector('.item-name') || {}).textContent || '';
+    item.style.display = (!q || name.toLowerCase().includes(q)) ? '' : 'none';
+  });
+}
+
+function renderCustomDropdown(sessions, needsReauth = false) {
+  const list = document.getElementById("sessionDropdownList");
+  const trigger = document.getElementById("sessionSelectTrigger");
+
+  if (needsReauth) {
+    list.innerHTML = `
+      <div class="empty-state" style="padding: 20px 16px;">
+        <svg class="empty-state-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span class="empty-state-title">Re-authorization needed</span>
+        <span class="empty-state-desc">Click <strong>Re-authorize</strong> in the Folder & Sessions section to access your saved sessions</span>
+      </div>`;
+    trigger.innerHTML = `<span class="session-placeholder">Re-authorize to view sessions</span>
+      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    return;
+  }
+
+  if (!sessions.length) {
+    list.innerHTML = `
+      <div class="empty-state" style="padding: 20px 16px;">
+        <svg class="empty-state-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+        <span class="empty-state-title">No sessions yet</span>
+        <span class="empty-state-desc">Start recording to create your first test session</span>
+      </div>`;
+    trigger.innerHTML = `<span class="session-placeholder">No sessions available</span>
+      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    return;
+  }
+
+  // R-006: Separate active vs archived
+  const activeSessions = sessions.filter(s => !s.archived);
+  const archivedSessions = sessions.filter(s => s.archived);
+
+  list.innerHTML = activeSessions.map((s) => _renderSessionItem(s)).join('') +
+    (archivedSessions.length ? `
+      <div class="archived-section" id="archivedSection">
+        <button class="archived-toggle" id="archivedToggle" type="button">
+          Archived (${archivedSessions.length}) ▸
+        </button>
+        <div class="archived-list hidden" id="archivedList">
+          ${archivedSessions.map(s => _renderSessionItem(s, true)).join('')}
+        </div>
+      </div>` : '');
+
+  // Wire archive toggle
+  const toggleBtn = list.querySelector('#archivedToggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const archivedList = list.querySelector('#archivedList');
+      const isHidden = archivedList.classList.toggle('hidden');
+      toggleBtn.textContent = `Archived (${archivedSessions.length}) ${isHidden ? '▸' : '▾'}`;
+    });
+  }
+
+  // Wire archive buttons
+  list.querySelectorAll('.session-archive-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const sessionId = btn.dataset.sessionId;
+      const isArchived = btn.dataset.archived === 'true';
+      await handleArchiveSession(sessionId, !isArchived);
+    });
+  });
+}
+
+function _renderSessionItem(s, isArchived = false) {
+  const name = Utils.escapeHtml(s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`);
+  const date = new Date(s.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const steps = s.stepCount || 0;
+  const sizeLabel = s._sizeLabel || '';
+  const archiveTitle = isArchived ? 'Unarchive' : 'Archive';
+  const archiveIcon = isArchived
+    ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-5.5"/></svg>'
+    : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>';
+  return `
+    <div class="session-dropdown-item${isArchived ? ' archived-item' : ''}" data-value="${s.sessionId}" role="option">
+      <span class="item-name">${name}</span>
+      <span class="item-meta">
+        <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> ${steps} steps</span>
+        <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${date}</span>
+        ${sizeLabel ? `<span class="meta-badge session-size-badge">${sizeLabel}</span>` : ''}
+      </span>
+      <button class="session-archive-btn" data-session-id="${s.sessionId}" data-archived="${isArchived}" title="${archiveTitle}" type="button">${archiveIcon}</button>
+    </div>`;
+}
+
+function selectCustomDropdownItem(value) {
+  const wrapper = document.getElementById("sessionSelectWrapper");
+  const trigger = document.getElementById("sessionSelectTrigger");
+  const items = wrapper.querySelectorAll(".session-dropdown-item");
+  let found = false;
+
+  items.forEach((item) => {
+    const isMatch = item.dataset.value === value;
+    item.classList.toggle("selected", isMatch);
+    if (isMatch) {
+      found = true;
+      const name = item.querySelector(".item-name")?.textContent || "";
+      const meta = item.querySelector(".item-meta")?.innerHTML || "";
+      trigger.innerHTML = `
+        <span class="session-info">
+          <span class="session-name">${Utils.escapeHtml(name)}</span>
+          <span class="session-meta">${meta}</span>
+        </span>
+        <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    }
+  });
+
+  if (!found) {
+    trigger.innerHTML = `<span class="session-placeholder">Select a session...</span>
+      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+  }
+}
+
+function setupCustomDropdown() {
+  const wrapper = document.getElementById("sessionSelectWrapper");
+  const trigger = document.getElementById("sessionSelectTrigger");
+  const list = document.getElementById("sessionDropdownList");
+
+  // R-006: Session search wiring
+  const searchInput = document.getElementById('sessionSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => filterSessionsDropdown(e.target.value));
+    // Open dropdown when user starts typing
+    searchInput.addEventListener('focus', () => {
+      wrapper.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    });
+  }
+
+  trigger.addEventListener("click", () => {
+    const isOpen = wrapper.classList.toggle("open");
+    trigger.setAttribute("aria-expanded", isOpen);
+  });
+
+  list.addEventListener("click", (e) => {
+    const item = e.target.closest(".session-dropdown-item");
+    if (!item) return;
+    const value = item.dataset.value;
+    sessionDropdown.value = value;
+    selectCustomDropdownItem(value);
+    wrapper.classList.remove("open");
+    trigger.setAttribute("aria-expanded", "false");
+    handleSessionSelect();
+  });
+
+  // Close on outside click
+  document.addEventListener("click", (e) => {
+    if (!wrapper.contains(e.target)) {
+      wrapper.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  // Keyboard support
+  trigger.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      trigger.click();
+    } else if (e.key === "Escape") {
+      wrapper.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  });
 }
 
 function handleSessionSelect() {
@@ -668,14 +1012,34 @@ async function loadSettings() {
     if (includeTimestamp) includeTimestamp.checked = s.includeTimestamp !== false;
     if (autoScreenshot) autoScreenshot.checked = s.autoScreenshot || false;
     if (screenshotSeconds) screenshotSeconds.value = s.screenshotSeconds || 5;
+    const screenshotModeEl = document.getElementById('screenshotMode'); // R-010
+    if (screenshotModeEl) screenshotModeEl.value = s.screenshotMode || 'interval';
     if (autoSave) autoSave.checked = s.autoSave !== false;
     if (maxSessions) maxSessions.value = s.maxSessions || 25;
+
+    const captureOnNavigationInput = document.getElementById('captureOnNavigation');
+    if (captureOnNavigationInput) captureOnNavigationInput.checked = s.captureOnNavigation !== false;
+
+    const smartDedupInput = document.getElementById('smartDedup');
+    if (smartDedupInput) smartDedupInput.checked = s.smartDedup !== false;
 
     const screenshotFormatInput = document.getElementById('screenshotFormat');
     if (screenshotFormatInput) screenshotFormatInput.value = s.screenshotFormat || 'png';
 
     const exportImageQualityInput = document.getElementById('exportImageQuality');
     if (exportImageQualityInput) exportImageQualityInput.value = s.exportImageQuality || 'auto';
+
+    // R-003: Privacy fields
+    const patternsEl = document.getElementById('customRedactionPatterns');
+    if (patternsEl) patternsEl.value = (s.customRedactionPatterns || []).map(p => p.pattern).join('\n');
+    const redactUrlParamsEl = document.getElementById('redactUrlParams');
+    if (redactUrlParamsEl) {
+      redactUrlParamsEl.checked = s.redactUrlParams || false;
+      const row = document.getElementById('urlParamDenylistRow');
+      if (row) row.style.display = s.redactUrlParams ? 'block' : 'none';
+    }
+    const denylistEl = document.getElementById('urlParamDenylist');
+    if (denylistEl) denylistEl.value = s.urlParamDenylist || '';
 
     // Update visibility
     if (apiCallsOptions) apiCallsOptions.style.display = captureApiCalls?.checked ? "block" : "none";
@@ -718,14 +1082,52 @@ async function updateState() {
     if (response) {
       currentState = response.state;
       currentSessionId = response.session?.sessionId || null;
-      stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
-      stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
-      stepCount.textContent = response.stepCount || 0;
+      // BUG-008 FIX: null-guard all DOM element accesses to avoid crashes if
+      // an element is ever missing from the DOM.
+      if (stateText) {
+        stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
+        stateText.classList.toggle("recording", currentState === "recording");
+        stateText.classList.toggle("paused", currentState === "paused");
+      }
+      if (stateDot) {
+        stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
+      }
+      if (stateIndicator) {
+        stateIndicator.classList.toggle("is-recording", currentState === "recording");
+        stateIndicator.classList.toggle("is-paused", currentState === "paused");
+      }
 
-      // Update screenshot count
+      // Animate stat values
+      const newStepCount = response.stepCount || 0;
+      const newScreenshotCount = response.screenshotCount || 0;
       const screenshotCountEl = document.getElementById('screenshotCount');
-      if (screenshotCountEl) {
-        screenshotCountEl.textContent = response.screenshotCount || 0;
+
+      if (_isFirstStateUpdate) {
+        // Count-up animation on first load
+        _isFirstStateUpdate = false;
+        if (stepCount) animateCountUp(stepCount, newStepCount);
+        if (screenshotCountEl) animateCountUp(screenshotCountEl, newScreenshotCount);
+      } else {
+        // Bump animation on subsequent changes
+        if (stepCount) {
+          const prevStepCount = stepCount.textContent;
+          stepCount.textContent = newStepCount;
+          if (String(newStepCount) !== prevStepCount) {
+            stepCount.classList.remove("bumped");
+            void stepCount.offsetWidth;
+            stepCount.classList.add("bumped");
+          }
+        }
+
+        if (screenshotCountEl) {
+          const prevScreenshots = screenshotCountEl.textContent;
+          screenshotCountEl.textContent = newScreenshotCount;
+          if (String(newScreenshotCount) !== prevScreenshots) {
+            screenshotCountEl.classList.remove("bumped");
+            void screenshotCountEl.offsetWidth;
+            screenshotCountEl.classList.add("bumped");
+          }
+        }
       }
 
       // Update session duration
@@ -758,16 +1160,21 @@ async function updateLiveSteps() {
 }
 
 function updateButtonStates() {
-  startBtn.disabled = currentState !== "idle";
-  pauseBtn.disabled = currentState !== "recording";
-  resumeBtn.disabled = currentState !== "paused";
-  stopBtn.disabled = currentState === "idle";
-  screenshotBtn.disabled = currentState !== "recording";
+  if (startBtn) startBtn.disabled = currentState !== "idle";
+  if (pauseBtn) pauseBtn.disabled = currentState !== "recording";
+  if (resumeBtn) resumeBtn.disabled = currentState !== "paused";
+  if (stopBtn) stopBtn.disabled = currentState === "idle";
+  if (screenshotBtn) screenshotBtn.disabled = currentState !== "recording";
 }
 
 function displaySteps(steps, target = stepsList) {
   if (!steps?.length) {
-    target.innerHTML = `<p style="text-align:center;color:var(--text-muted);font-size:11px;">No steps recorded</p>`;
+    target.innerHTML = `
+      <div class="empty-state">
+        <svg class="empty-state-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        <span class="empty-state-title">No steps yet</span>
+        <span class="empty-state-desc">Interact with the page to start capturing test steps</span>
+      </div>`;
     return;
   }
   target.innerHTML = steps
@@ -776,7 +1183,7 @@ function displaySteps(steps, target = stepsList) {
     <div class="step-item">
       <div class="step-header">
         <span class="step-number">Step ${i + 1}</span>
-        <span class="step-action">${Utils.escapeHtml(step.action)}</span>
+        <span class="step-action" data-action="${Utils.escapeHtml(step.action.toLowerCase())}">${Utils.escapeHtml(step.action)}</span>
       </div>
       <div class="step-details">
         ${step.fieldName ? `<div><strong>Field:</strong> ${Utils.escapeHtml(step.fieldName)}</div>` : ""}
@@ -789,11 +1196,43 @@ function displaySteps(steps, target = stepsList) {
 }
 
 
+const _toastIcons = {
+  success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  error: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+};
+let _toastTimer = null;
+let _isFirstStateUpdate = true;
+
+function animateCountUp(el, target, durationMs = 400) {
+  const start = parseInt(el.textContent) || 0;
+  if (start === target || target === 0) { el.textContent = target; return; }
+  const startTime = performance.now();
+  function tick(now) {
+    const progress = Math.min((now - startTime) / durationMs, 1);
+    const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+    el.textContent = Math.round(start + (target - start) * eased);
+    if (progress < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
 function showMessage(text, type = "info", duration = 3000) {
-  messageDiv.textContent = text;
+  // Clear any pending dismiss
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+  const icon = _toastIcons[type] || _toastIcons.info;
+  messageDiv.innerHTML = `<span class="toast-icon">${icon}</span><span class="toast-text">${Utils.escapeHtml(text)}</span><span class="toast-progress"></span>`;
   messageDiv.className = "message " + type;
-  messageDiv.style.display = "block";
-  setTimeout(() => (messageDiv.style.display = "none"), duration);
+  messageDiv.style.setProperty("--toast-duration", duration + "ms");
+  messageDiv.style.display = "flex";
+  messageDiv.classList.remove("toast-exit");
+
+  _toastTimer = setTimeout(() => {
+    messageDiv.classList.add("toast-exit");
+    setTimeout(() => { messageDiv.style.display = "none"; messageDiv.classList.remove("toast-exit"); }, 200);
+  }, duration);
 }
 
 // =====================
@@ -813,22 +1252,9 @@ async function checkFileSyncStatus() {
 
     if (permission === 'granted') {
       updateSyncUI('active', folderName || '.TestSnapper');
-    } else if (permission === 'prompt') {
-      // Popup open = user gesture context — silently re-request permission
-      // so the user doesn't have to click a separate "Re-authorize" button.
-      try {
-        const granted = await fileSync.requestPermission();
-        if (granted) {
-          updateSyncUI('active', folderName || '.TestSnapper');
-          await flushAllPending();
-          await loadSessions();
-        } else {
-          updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
-        }
-      } catch {
-        updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
-      }
     } else {
+      // 'prompt' or 'denied' — requestPermission() requires a real user gesture
+      // so we can't silently call it here. Show the re-auth banner instead.
       updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
     }
   } catch (err) {

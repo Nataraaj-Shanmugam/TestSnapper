@@ -55,6 +55,24 @@
                     </div>
                 </div>
 
+                <!-- R-004: Export Config -->
+                <details id="exportConfigDetails" style="margin-top:12px">
+                    <summary style="cursor:pointer;font-weight:600;font-size:13px;padding:4px 0">⚙ Configure Export</summary>
+                    <div class="export-config-body">
+                        <label class="export-config-label"><input type="checkbox" id="ecIncludeScreenshots" checked> Include screenshots</label>
+                        <label class="export-config-label"><input type="checkbox" id="ecIncludeSelectors" checked> Include selectors</label>
+                        <label class="export-config-label"><input type="checkbox" id="ecOnlyFailed"> Only failed steps</label>
+                        <label class="export-config-label" style="flex-direction:column;align-items:flex-start;gap:4px">Screenshot size
+                            <select id="ecScreenshotSize" class="select-styled" style="margin-top:4px;font-size:12px">
+                                <option value="full">Full</option>
+                                <option value="medium" selected>Medium (800px)</option>
+                                <option value="small">Small (400px)</option>
+                            </select>
+                        </label>
+                        <button id="previewExportBtn" class="btn btn-secondary" style="margin-top:4px;width:100%;font-size:12px">Preview (first 5)</button>
+                    </div>
+                </details>
+
                 <div class="sidebar-actions">
                     <button id="saveExportBtn" class="btn btn-primary">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Documentation
@@ -110,6 +128,12 @@
                     <option value="screenshot">Screenshot</option>
                 </select>
                 <button id="clearFiltersBtn" class="btn btn-secondary">Clear</button>
+                <div class="view-toggle-group">
+                    <button id="viewCardsBtn" class="view-toggle-btn active" title="Card view">☰ Cards</button>
+                    <button id="viewTableBtn" class="view-toggle-btn" title="Table view">⊞ Table</button>
+                </div>
+                <button id="rememberAllFieldsBtn" class="btn btn-secondary" title="Save all field names to memory">Remember Fields</button>
+                <button id="privacyAuditBtn" class="btn btn-secondary" title="View privacy audit report">🔒 Privacy Audit</button>
             </section>
 
             <div id="stepResultsSummary"></div>
@@ -118,6 +142,9 @@
             <div id="stepsContainer" class="steps-container">
                 <div class="loading" style="text-align: center; padding: 40px;">Loading documented steps...</div>
             </div>
+
+            <!-- Table View -->
+            <div id="tableContainer" style="display:none;overflow-x:auto"></div>
 
             <div id="noResultsMsg" class="hidden" style="text-align: center; padding: 60px; color: var(--text-muted);">
                 <span style="display: block; margin-bottom: 16px; color: var(--text-disabled);"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
@@ -187,6 +214,28 @@
                 export...</p>
 
             <button id="cancelExportBtn" class="btn btn-danger" style="width: 100%;">Cancel Export</button>
+        </div>
+    </div>
+
+    <!-- R-004: Export Preview Modal -->
+    <div id="exportPreviewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;align-items:center;justify-content:center">
+        <div style="background:var(--bg-card);border-radius:8px;padding:24px;max-width:720px;width:90%;max-height:80vh;overflow-y:auto;border:1px solid var(--border-default)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <strong style="font-size:15px">Export Preview (first 5 steps)</strong>
+                <button id="closeExportPreview" style="background:none;border:none;cursor:pointer;font-size:20px;color:var(--text-muted)">×</button>
+            </div>
+            <div id="exportPreviewContent"></div>
+        </div>
+    </div>
+
+    <!-- R-003: Privacy Audit Modal -->
+    <div id="privacyAuditModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;align-items:center;justify-content:center">
+        <div style="background:var(--bg-card);border-radius:8px;padding:24px;max-width:620px;width:90%;max-height:80vh;overflow-y:auto;border:1px solid var(--border-default)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <strong style="font-size:15px">🔒 Privacy Audit Report</strong>
+                <button id="closePrivacyAudit" style="background:none;border:none;cursor:pointer;font-size:20px;color:var(--text-muted)">×</button>
+            </div>
+            <div id="privacyAuditContent"></div>
         </div>
     </div>
 

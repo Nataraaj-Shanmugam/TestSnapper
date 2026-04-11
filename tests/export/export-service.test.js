@@ -1,33 +1,32 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ExportService } from '../../src/core/export-service.js';
+import { Utils } from '../../src/core/utils.js';
 
 // ExportService requires a storage instance in the constructor,
 // but the pure methods we test here don't use it.
 const fakeStorage = {};
 
-describe('ExportService._escapeHtml', () => {
-  let service;
-  beforeEach(() => { service = new ExportService(fakeStorage); });
-
+// _escapeHtml was moved to Utils.escapeHtml during architecture refactor
+describe('Utils.escapeHtml (formerly ExportService._escapeHtml)', () => {
   it('escapes ampersand', () => {
-    expect(service._escapeHtml('a & b')).toBe('a &amp; b');
+    expect(Utils.escapeHtml('a & b')).toBe('a &amp; b');
   });
 
   it('escapes less-than', () => {
-    expect(service._escapeHtml('<div>')).toContain('&lt;');
+    expect(Utils.escapeHtml('<div>')).toContain('&lt;');
   });
 
   it('escapes greater-than', () => {
-    expect(service._escapeHtml('<div>')).toContain('&gt;');
+    expect(Utils.escapeHtml('<div>')).toContain('&gt;');
   });
 
   it('returns empty string for null/undefined', () => {
-    expect(service._escapeHtml(null)).toBe('');
-    expect(service._escapeHtml(undefined)).toBe('');
+    expect(Utils.escapeHtml(null)).toBe('');
+    expect(Utils.escapeHtml(undefined)).toBe('');
   });
 
   it('returns plain text unchanged', () => {
-    expect(service._escapeHtml('hello')).toBe('hello');
+    expect(Utils.escapeHtml('hello')).toBe('hello');
   });
 });
 

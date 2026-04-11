@@ -26,6 +26,40 @@ var eventListenerController = null;
 var isModalOpen = false;
 var modalTimeout = null;
 var navigationCheckInterval = null;
+var autoScreenshotInterval = null;
+var sessionSettings = {};
+var modalObserver = null; // R-010: MutationObserver for modal detection
+
+// R-003: Privacy settings for URL redaction
+var _tsPrivacySettings = { redactUrlParams: false, urlParamDenylist: [] };
+
+// R-008: Field name fingerprint helper
+function _getFieldFingerprint(element) {
+  if (!element) return null;
+  var tag = (element.tagName || '').toLowerCase();
+  var id = element.id || '';
+  var name = element.name || element.getAttribute('name') || '';
+  var type = element.type || element.getAttribute('type') || '';
+  var cls = (element.className && typeof element.className === 'string')
+    ? element.className.trim().split(/\s+/).slice(0, 3).join(' ')
+    : '';
+  var host = location.hostname;
+  return tag + ':' + id + ':' + name + ':' + type + ':' + cls + '@' + host;
+}
+
+// R-003: URL param redaction
+function redactUrl(url, denylist) {
+  if (!url || !denylist || !denylist.length) return url;
+  try {
+    var u = new URL(url);
+    for (var i = 0; i < denylist.length; i++) {
+      if (u.searchParams.has(denylist[i])) {
+        u.searchParams.set(denylist[i], '[REDACTED]');
+      }
+    }
+    return u.toString();
+  } catch(e) { return url; }
+}
 
 // Track last interactions to prevent duplicates
 var lastInteraction = {
@@ -46,6 +80,9 @@ var modalStates = new Map(); // Track state per modal: { id, overlay, resolver, 
 
 // 🔧 FIX #7: Add heartbeat to detect background script restart
 var sessionValidationInterval = null;
+
+// Track elements hidden before screenshot so they can be restored after
+var hiddenScreenshotElements = [];
 
 // Initialize modules
 function initModules() {
@@ -261,7 +298,7 @@ async function processModalQueue() {
   currentModalId = null;
 
   // Process next in queue
-  setTimeout(() => processModalQueue(), 100);
+  processModalQueue();
 }
 
 function closeModalById(modalId, result) {
@@ -286,6 +323,7 @@ function closeModalById(modalId, result) {
 
   // Clean up state
   modalStates.delete(modalId);
+  if (modalStates.size === 0) isModalOpen = false;
 }
 
 /**
@@ -423,6 +461,7 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     `;
     overlay.appendChild(style);
     overlay.appendChild(modal);
+    isModalOpen = true;
     document.body.appendChild(overlay);
     state.overlay = overlay;
 
@@ -479,29 +518,6 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     }, 30000);
   });
 }
-/**
- * 🔧 FIX #2: Enhanced cleanup
- */
-function closeModal(overlay) {
-  if (modalTimeout) {
-    clearTimeout(modalTimeout);
-    modalTimeout = null;
-  }
-
-  if (overlay && overlay.parentNode) {
-    overlay.style.animation = 'fadeOut 0.2s ease-out';
-    setTimeout(() => {
-      overlay.remove();
-      isModalOpen = false;
-      pendingStep = null;
-      modalResolver = null;
-    }, 200);
-  } else {
-    isModalOpen = false;
-    pendingStep = null;
-    modalResolver = null;
-  }
-}
 
 /**
  * 🔧 FIX #2: Process step with modal pause/resume
@@ -512,8 +528,22 @@ async function processStepWithManualEntry(element, action, stepData) {
   if (!fieldName || fieldName === 'Unknown Field' || fieldName.trim() === '') {
     console.log('⚠️ Field name not detected, requesting manual entry...');
 
+    // R-008: Check field name memory before showing modal
+    var _fpKey = _getFieldFingerprint(element);
+    if (_fpKey) {
+      try {
+        var _memResult = await chrome.runtime.sendMessage({ action: 'getFieldNameMemory', fingerprint: _fpKey });
+        if (_memResult && _memResult.fieldName) {
+          console.log('✅ Field name recalled from memory:', _memResult.fieldName);
+          stepData.fieldName = _memResult.fieldName;
+          return stepData;
+        }
+      } catch(e) {}
+    }
+
     const wasRecording = isRecording;
     isRecording = false;
+    isPaused = true;
     updateRecordingIndicator('PAUSED');
 
     fieldName = await showManualEntryModal(element, action, stepData);
@@ -524,12 +554,15 @@ async function processStepWithManualEntry(element, action, stepData) {
       const valid = await validateSession();
       if (valid) {
         isRecording = true;
+        isPaused = false;
         updateRecordingIndicator('RECORDING');
       } else {
         console.error('❌ Session invalidated during modal - stopping recording');
         stopRecording();
         return null;
       }
+    } else {
+      isPaused = false;
     }
 
     if (!fieldName) {
@@ -538,6 +571,12 @@ async function processStepWithManualEntry(element, action, stepData) {
     }
 
     console.log('✅ Manual field name entered:', fieldName);
+
+    // R-008: Save confirmed field name to memory
+    var _fp = _getFieldFingerprint(element);
+    if (_fp && fieldName) {
+      chrome.runtime.sendMessage({ action: 'saveFieldNameMemory', fingerprint: _fp, fieldName: fieldName }).catch(function(){});
+    }
   }
 
   stepData.fieldName = fieldName;
@@ -694,7 +733,7 @@ async function handleClick(event) {
       selector: selector,
       fieldName: fieldName,
       targetLabel: selectorEngine.getElementText(element),
-      url: window.location.href,
+      url: redactUrl(window.location.href, _tsPrivacySettings.urlParamDenylist),
       value: value,
       isSensitive: false
     };
@@ -826,7 +865,7 @@ function handleInput(event) {
         selector: selector,
         fieldName: fieldName,
         targetLabel: selectorEngine.getElementText(element),
-        url: window.location.href,
+        url: redactUrl(window.location.href, _tsPrivacySettings.urlParamDenylist),
         value: value,
         isSensitive: isSensitive
       };
@@ -843,8 +882,7 @@ function handleInput(event) {
 
     pendingInputs.set(elementKey, timeoutId);
   } catch (error) {
-    console.error('❌ Error capturing click:', error);
-    // showErrorNotification('Failed to capture click: ' + error.message);
+    console.error('❌ Error capturing input:', error);
     // Don't stop recording, just log and continue
   }
 }
@@ -876,7 +914,10 @@ async function handleChange(event) {
       value = element.options[element.selectedIndex]?.text || element.value;
     } else {
       action = 'type';
-      const isSensitive = redactor.shouldIgnoreField(element);
+    }
+
+    const isSensitive = action === 'type' ? redactor.shouldIgnoreField(element) : false;
+    if (action === 'type') {
       value = isSensitive ? redactor.maskValue(element.value, element) : element.value;
     }
 
@@ -890,9 +931,9 @@ async function handleChange(event) {
       selector: selector,
       fieldName: fieldName,
       targetLabel: selectorEngine.getElementText(element),
-      url: window.location.href,
+      url: redactUrl(window.location.href, _tsPrivacySettings.urlParamDenylist),
       value: value,
-      isSensitive: false
+      isSensitive: isSensitive
     };
 
     stepData = await processStepWithManualEntry(element, action, stepData);
@@ -902,14 +943,21 @@ async function handleChange(event) {
     sendStepToBackground(stepData);
     console.log('Change captured:', stepData.fieldName, value);
   } catch (error) {
-    console.error('❌ Error capturing click:', error);
-    // showErrorNotification('Failed to capture click: ' + error.message);
+    console.error('❌ Error capturing input:', error);
     // Don't stop recording, just log and continue
   }
 }
 
-function handleSubmit(event) {
+async function handleSubmit(event) {
   if (!isRecording || !selectorEngine || isModalOpen) return;
+
+  // R-010: Event-triggered screenshot on form submit
+  chrome.runtime.sendMessage({
+    action: 'captureScreenshot',
+    sessionId: currentSessionId,
+    isManual: false,
+    trigger: 'form-submit'
+  });
 
   try {
     const form = event.target;
@@ -922,22 +970,24 @@ function handleSubmit(event) {
     const selector = selectorEngine.generateSelector(form);
     const fieldName = selectorEngine.extractFieldName(form) || 'Form';
 
-    const stepData = {
+    let stepData = {
       action: 'submit',
       selector: selector,
       fieldName: fieldName,
       targetLabel: 'Submit Form',
-      url: window.location.href,
+      url: redactUrl(window.location.href, _tsPrivacySettings.urlParamDenylist),
       value: null,
       isSensitive: false
     };
 
+    stepData = await processStepWithManualEntry(form, 'submit', stepData);
+    if (!stepData) return;
+
     updateLastInteraction(form, 'submit');
     sendStepToBackground(stepData);
-    console.log('Submit captured:', fieldName);
+    console.log('Submit captured:', stepData.fieldName);
   } catch (error) {
-    console.error('❌ Error capturing click:', error);
-    // showErrorNotification('Failed to capture click: ' + error.message);
+    console.error('❌ Error capturing submit:', error);
     // Don't stop recording, just log and continue
   }
 }
@@ -962,6 +1012,11 @@ function captureNavigation() {
   }
 
   lastNavigationUrl = currentUrl;
+
+  // Capture screenshot before navigation if the setting is enabled
+  if (sessionSettings.captureOnNavigation !== false) {
+    chrome.runtime.sendMessage({ action: 'captureScreenshot', sessionId: currentSessionId });
+  }
 
   const stepData = {
     action: 'navigate',
@@ -1006,12 +1061,25 @@ function sendStepToBackground(stepData) {
   });
 }
 
-function startRecording(sessionId, isRestoring = false, startTimeStr = null) {
+function startAutoScreenshotInterval() {
+  if (autoScreenshotInterval) clearInterval(autoScreenshotInterval);
+  updateScreenshotModeIndicator(null); // R-005: refresh indicator whenever interval changes
+  if (!sessionSettings.autoScreenshot) return;
+  const seconds = Math.max(1, Math.min(60, sessionSettings.screenshotSeconds || 5));
+  autoScreenshotInterval = setInterval(() => {
+    if (isRecording && !isPaused) {
+      chrome.runtime.sendMessage({ action: 'captureScreenshot', sessionId: currentSessionId, isManual: false });
+    }
+  }, seconds * 1000);
+}
+
+function startRecording(sessionId, isRestoring = false, startTimeStr = null, settings = {}) {
   if (isRecording) return;
 
   isRecording = true;
   isPaused = false;
   currentSessionId = sessionId;
+  sessionSettings = settings;
 
   if (isRestoring) {
     isInitialNavigation = false;
@@ -1071,14 +1139,54 @@ function startRecording(sessionId, isRestoring = false, startTimeStr = null) {
 
   // Start navigation monitoring
   if (!navigationCheckInterval) {
-    lastUrl = window.location.href;
+    lastNavigationUrl = window.location.href;
     navigationCheckInterval = setInterval(() => {
-      if (isRecording && window.location.href !== lastUrl) {
-        lastUrl = window.location.href;
+      if (isRecording && window.location.href !== lastNavigationUrl) {
+        lastNavigationUrl = window.location.href;
         captureNavigation();
       }
     }, 1000);
   }
+
+  // Start auto-screenshot interval if enabled
+  startAutoScreenshotInterval();
+
+  // R-010: Modal detection via MutationObserver
+  if (!modalObserver) {
+    modalObserver = new MutationObserver(function(mutations) {
+      if (!isRecording || isPaused) return;
+      mutations.forEach(function(m) {
+        m.addedNodes.forEach(function(n) {
+          if (n.nodeType !== 1) return;
+          var role = n.getAttribute && n.getAttribute('role');
+          var cls = n.className || '';
+          if (role === 'dialog' || role === 'alertdialog' ||
+              (typeof cls === 'string' && /\bmodal\b/.test(cls)) ||
+              n.getAttribute('aria-modal') === 'true') {
+            chrome.runtime.sendMessage({
+              action: 'captureScreenshot',
+              sessionId: currentSessionId,
+              isManual: false,
+              trigger: 'modal-open'
+            });
+          }
+        });
+      });
+    });
+    modalObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // R-003: Load privacy settings for URL redaction
+  chrome.storage.local.get('settings', function(res) {
+    var s = res.settings || {};
+    _tsPrivacySettings = {
+      redactUrlParams: s.redactUrlParams || false,
+      urlParamDenylist: (s.urlParamDenylist || '').split(',').map(function(p){ return p.trim(); }).filter(Boolean)
+    };
+    if (typeof redactor !== 'undefined' && redactor && s.customRedactionPatterns && s.customRedactionPatterns.length) {
+      redactor.loadCustomPatterns(s.customRedactionPatterns);
+    }
+  });
 
   console.log('Content script: Recording started');
 }
@@ -1087,6 +1195,10 @@ function pauseRecording() {
   if (!isRecording) return;
   isRecording = false;
   isPaused = true;
+  if (autoScreenshotInterval) {
+    clearInterval(autoScreenshotInterval);
+    autoScreenshotInterval = null;
+  }
   updateRecordingIndicator('PAUSED');
   console.log('Content script: Recording paused');
 }
@@ -1095,6 +1207,7 @@ function resumeRecording() {
   if (isRecording) return;
   isRecording = true;
   isPaused = false;
+  startAutoScreenshotInterval();
   updateRecordingIndicator('RECORDING');
   console.log('Content script: Recording resumed');
 }
@@ -1116,10 +1229,9 @@ function stopRecording() {
 
   lastInteraction = { element: null, action: null, timestamp: 0, value: null };
 
-  // 🔧 FIX #2: Force close modal if open
-  const modal = document.getElementById('testsnapper-modal-overlay');
-  if (modal) {
-    closeModal(modal);
+  // 🔧 FIX #2: Force close all open modals
+  for (const [id] of modalStates) {
+    closeModalById(id, null);
   }
 
   if (modalTimeout) {
@@ -1137,6 +1249,19 @@ function stopRecording() {
   if (navigationCheckInterval) {
     clearInterval(navigationCheckInterval);
     navigationCheckInterval = null;
+  }
+
+  // Clear auto-screenshot interval
+  if (autoScreenshotInterval) {
+    clearInterval(autoScreenshotInterval);
+    autoScreenshotInterval = null;
+  }
+  sessionSettings = {};
+
+  // R-010: Disconnect modal observer
+  if (modalObserver) {
+    modalObserver.disconnect();
+    modalObserver = null;
   }
 
   removeRecordingIndicator();
@@ -1263,10 +1388,60 @@ function addRecordingIndicator(startTime = Date.now()) {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
     }
+    .panel-footer {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+    .last-step-preview {
+      font-size: 10px;
+      max-width: 160px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      opacity: 0.75;
+    }
+    .theme-light .last-step-preview { color: #6c757d; }
+    .theme-dark .last-step-preview { color: #71717a; }
+    .screenshot-mode {
+      font-size: 9px;
+      opacity: 0.55;
+    }
+    .theme-light .screenshot-mode { color: #868e96; }
+    .theme-dark .screenshot-mode { color: #52525b; }
+    .btn:hover.note { color: #7c3aed; }
+    .note-input-wrap {
+      display: none;
+      padding: 4px 6px;
+      border-top: 1px solid;
+    }
+    .theme-light .note-input-wrap { border-color: #dee2e6; }
+    .theme-dark .note-input-wrap { border-color: #2e2e35; }
+    .note-input {
+      width: 160px;
+      font-size: 11px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      border: 1px solid;
+      outline: none;
+    }
+    .theme-light .note-input { background: #f8f9fa; border-color: #ced4da; color: #212529; }
+    .theme-dark .note-input { background: #27272a; border-color: #3f3f46; color: #e4e4e7; }
   `;
 
   const panel = document.createElement('div');
   panel.className = 'panel theme-' + panelTheme;
+
+  // Restore sticky position from storage
+  chrome.storage.local.get('testsnapper_panel_position', function(res) {
+    if (res && res.testsnapper_panel_position) {
+      var pos = res.testsnapper_panel_position;
+      panelContainer.style.transform = 'none';
+      panelContainer.style.left = pos.left;
+      panelContainer.style.top = pos.top;
+    }
+  });
 
   panel.innerHTML = `
     <div class="status-container">
@@ -1284,9 +1459,20 @@ function addRecordingIndicator(startTime = Date.now()) {
       <button class="btn screenshot" id="btn-screenshot" title="Screenshot">
            <svg viewBox="0 0 24 24"><path d="M12 12m-3.2 0a3.2 3.2 0 1 0 6.4 0a3.2 3.2 0 1 0 -6.4 0"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5s5 2.24 5 5s-2.24 5-5 5z"/></svg>
       </button>
+      <button class="btn note" id="btn-note" title="Add note to last step">
+        <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+      </button>
       <button class="btn stop" id="btn-stop" title="Stop">
           <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
       </button>
+    </div>
+    <div class="divider"></div>
+    <div class="panel-footer">
+      <div class="last-step-preview" id="last-step-preview">No steps yet</div>
+      <div class="screenshot-mode" id="screenshot-mode-indicator"></div>
+    </div>
+    <div class="note-input-wrap" id="note-input-wrap">
+      <input class="note-input" id="note-input" type="text" placeholder="Add note… (Enter to save)">
     </div>
   `;
 
@@ -1360,6 +1546,12 @@ function addRecordingIndicator(startTime = Date.now()) {
     isDragging = false;
     document.removeEventListener('mousemove', handleMouseMove);
     document.removeEventListener('mouseup', handleMouseUp);
+    // R-005: Save sticky position
+    if (panelContainer.style.left) {
+      chrome.storage.local.set({
+        testsnapper_panel_position: { left: panelContainer.style.left, top: panelContainer.style.top }
+      });
+    }
   };
 
   panel.addEventListener('mousedown', handleMouseDown);
@@ -1381,6 +1573,37 @@ function addRecordingIndicator(startTime = Date.now()) {
     e.stopPropagation();
     chrome.runtime.sendMessage({ action: 'captureScreenshot' });
   };
+
+  // R-005: Quick note button
+  shadow.getElementById('btn-note').onclick = (e) => {
+    e.stopPropagation();
+    var wrap = shadow.getElementById('note-input-wrap');
+    var input = shadow.getElementById('note-input');
+    if (wrap.style.display === 'flex') {
+      wrap.style.display = 'none';
+    } else {
+      wrap.style.display = 'flex';
+      setTimeout(() => { if (input) input.focus(); }, 50);
+    }
+  };
+
+  shadow.getElementById('note-input').onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      var note = e.target.value.trim();
+      if (note) {
+        chrome.runtime.sendMessage({ action: 'addNoteToLastStep', sessionId: currentSessionId, note: note });
+      }
+      e.target.value = '';
+      shadow.getElementById('note-input-wrap').style.display = 'none';
+    } else if (e.key === 'Escape') {
+      e.target.value = '';
+      shadow.getElementById('note-input-wrap').style.display = 'none';
+    }
+  };
+
+  // R-005: Update screenshot mode indicator
+  updateScreenshotModeIndicator(shadow);
 
   // --- Timer ---
   recordingSeconds = Math.floor((Date.now() - startTime) / 1000);
@@ -1436,12 +1659,43 @@ function removeRecordingIndicator() {
   }
 }
 
+// R-005: Update last-step-preview text in the floating panel
+function updateLastStepPreview(action, fieldName) {
+  if (!floatingPanelContainer || !floatingPanelContainer.shadowRoot) return;
+  var el = floatingPanelContainer.shadowRoot.getElementById('last-step-preview');
+  if (!el) return;
+  var actionLabel = action || 'action';
+  var fieldLabel = fieldName ? ' on "' + fieldName + '"' : '';
+  el.textContent = actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1) + fieldLabel;
+}
+
+// R-005: Update screenshot mode indicator text
+function updateScreenshotModeIndicator(shadow) {
+  var el = shadow ? shadow.getElementById('screenshot-mode-indicator')
+    : (floatingPanelContainer && floatingPanelContainer.shadowRoot
+        ? floatingPanelContainer.shadowRoot.getElementById('screenshot-mode-indicator')
+        : null);
+  if (!el) return;
+  if (sessionSettings.autoScreenshot) {
+    var secs = sessionSettings.screenshotSeconds || 5;
+    el.textContent = 'Auto: ' + secs + 's';
+  } else {
+    el.textContent = 'Manual only';
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Content script received message:', message.action);
 
   switch (message.action) {
     case 'startRecording':
-      startRecording(message.sessionId, false, message.session?.createdAt);
+      startRecording(message.sessionId, false, message.session?.createdAt, message.settings || {});
+      sendResponse({ success: true });
+      break;
+
+    // BUG-004 FIX: Handle session restore after service worker restart
+    case 'restoreRecording':
+      startRecording(message.sessionId, true, message.session?.createdAt, message.settings || {});
       sendResponse({ success: true });
       break;
 
@@ -1461,15 +1715,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     case 'beforeScreenshot':
-      if (floatingPanelContainer) floatingPanelContainer.style.display = 'none';
+      hiddenScreenshotElements = [];
       document.querySelectorAll('[id^="testsnapper-"]').forEach(el => {
         el.style.display = 'none';
+        hiddenScreenshotElements.push(el);
       });
       sendResponse({ success: true });
       break;
 
     case 'afterScreenshot':
-      if (floatingPanelContainer) floatingPanelContainer.style.display = 'block';
+      hiddenScreenshotElements.forEach(el => { el.style.display = ''; });
+      hiddenScreenshotElements = [];
       sendResponse({ success: true });
       break;
 
@@ -1480,6 +1736,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     // Cross-frame label resolution: find aria-label/title of an iframe element
+    // R-005: Update floating panel last-step preview
+    case 'stepRecorded':
+      updateLastStepPreview(message.step && message.step.action, message.step && message.step.fieldName);
+      sendResponse({ success: true });
+      break;
+
     case 'getIframeLabel': {
       let iframeLabel = null;
       const iframes = document.querySelectorAll('iframe');

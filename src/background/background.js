@@ -15,7 +15,7 @@
 import { StorageManager } from '../core/storage.js';
 import { ExportService } from '../core/export-service.js';
 import { Utils } from '../core/utils.js';
-import { addPendingFlush, removePendingFlush } from '../core/flush-utils.js';
+import { addPendingFlush, removePendingFlush, PENDING_FLUSH_KEY } from '../core/flush-utils.js';
 
 // ==================== Broadcast Helpers ====================
 
@@ -41,6 +41,7 @@ class RecordingStateManager {
     this.sequenceLock = Promise.resolve();
     this.lastScreenshotTime = 0; // BUG FIX: BG-002
     this.screenshotDebounceMs = 1000; // 1 second minimum between screenshots
+    this.lastScreenshotHash = null; // R-010: Smart dedup
   }
 
   startRecording(session) {
@@ -81,9 +82,17 @@ class RecordingStateManager {
 
   /**
    * BUG FIX: Fixed missing releaseLock variable declaration
+   * BUG-007 FIX: Added 10-second timeout to prevent deadlock if the lock chain
+   * is ever broken (e.g. by an unhandled rejection replacing the promise).
    */
   async incrementStepCount() {
-    await this.sequenceLock;
+    const lockTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('sequenceLock timeout after 10s')), 10000)
+    );
+    await Promise.race([this.sequenceLock, lockTimeout]).catch((err) => {
+      console.warn('[StateManager] sequenceLock timed out, resetting:', err.message);
+      this.sequenceLock = Promise.resolve(); // reset so future calls aren't permanently stuck
+    });
 
     let releaseLock;
     this.sequenceLock = new Promise(resolve => {
@@ -127,6 +136,11 @@ class RecordingStateManager {
   markScreenshotTaken() {
     this.lastScreenshotTime = Date.now();
   }
+
+  // R-010: Quick visual hash using last 200 chars of base64 payload
+  simpleHash(dataUrl) {
+    return dataUrl ? dataUrl.slice(-200) : null;
+  }
 }
 
 // ==================== Settings Management ====================
@@ -143,9 +157,15 @@ class SettingsManager {
       captureFailedCalls: false,
       captureAllCalls: false,
       autoScreenshot: false,
+      captureOnNavigation: true,
+      smartDedup: true,
       imageQuality: 0.92,
       screenshotFormat: 'png',
-      exportImageQuality: 'auto'
+      exportImageQuality: 'auto',
+      screenshotMode: 'interval',  // R-010: 'interval' | 'events' | 'both'
+      customRedactionPatterns: [],  // R-003
+      redactUrlParams: false,        // R-003
+      urlParamDenylist: ''           // R-003
     };
   }
 
@@ -218,13 +238,31 @@ class SettingsManager {
       validated.imageQuality = Math.max(0.1, Math.min(1.0, parseFloat(validated.imageQuality)));
     }
 
-    await chrome.storage.local.set({ settings: validated });
-    this.cache = validated;
+    if (validated.screenshotFormat !== undefined) {
+      const validFormats = ['png', 'jpeg-high'];
+      if (!validFormats.includes(validated.screenshotFormat)) {
+        validated.screenshotFormat = this.defaults.screenshotFormat;
+      }
+    }
+
+    if (validated.exportImageQuality !== undefined) {
+      const validExportQualities = ['auto', 'png', 'jpeg-high', 'jpeg-standard'];
+      if (!validExportQualities.includes(validated.exportImageQuality)) {
+        validated.exportImageQuality = this.defaults.exportImageQuality;
+      }
+    }
+
+    this.cache = { ...this.defaults, ...validated };
+    await chrome.storage.local.set({ settings: this.cache });
   }
 
   clearCache() {
     this.cache = null;
   }
+}
+
+function sameOrigin(a, b) {
+  try { return new URL(a).origin === new URL(b).origin; } catch { return false; }
 }
 
 // ==================== Initialize Services ====================
@@ -233,8 +271,6 @@ const storage = new StorageManager();
 const exportService = new ExportService(storage);
 const stateManager = new RecordingStateManager();
 const settingsManager = new SettingsManager();
-
-storage.init().catch(console.error);
 
 // SEC-012: Set uninstall URL and handle install/update events
 chrome.runtime.onInstalled.addListener((details) => {
@@ -296,7 +332,7 @@ storage.onQuotaWarning((usage) => {
         // Check if we stored the tab ID
         if (session.tabId) {
           const tab = await chrome.tabs.get(session.tabId);
-          if (tab && tab.url === session.env?.url) {
+          if (tab && sameOrigin(tab.url, session.env?.url)) {
             recordingTab = tab;
           }
         }
@@ -327,11 +363,20 @@ storage.onQuotaWarning((usage) => {
           await new Promise(resolve => setTimeout(resolve, 200));
 
           // Restore recording state in content script
+          // BUG-006 FIX: Guard settingsManager.get() so a settings failure
+          // doesn't abort the entire recovery path and mark the session incomplete
+          let restoreSettings = {};
+          try {
+            restoreSettings = await settingsManager.get();
+          } catch (settingsErr) {
+            console.warn('[BG] Failed to load settings during restore, using defaults:', settingsErr);
+          }
           await chrome.tabs.sendMessage(recordingTab.id, {
             action: 'restoreRecording',
             sessionId: session.sessionId,
             session: session,
-            state: activeRecording.state
+            state: activeRecording.state,
+            settings: restoreSettings
           });
 
           // Restore state manager
@@ -471,7 +516,7 @@ async function persistActiveRecording() {
  * BUG FIX: BG-002 - Added rate limiting
  * BUG FIX: BUG-006 - Validated screenshot serialization (using dataUrl)
  */
-async function captureScreenshot(tabId, isManual = true) {
+async function captureScreenshot(tabId, isManual = true, trigger = 'manual') {
   console.log('📸 Screenshot capture requested for tab:', tabId, 'manual:', isManual);
 
   if (!stateManager.isRecording()) {
@@ -493,6 +538,19 @@ async function captureScreenshot(tabId, isManual = true) {
     return { success: false, error: 'Rate limited' };
   }
 
+  // R-010: Check screenshotMode gate for auto-captures
+  const _trigger = trigger || (isManual ? 'manual' : 'interval');
+  if (!isManual) {
+    const _modeSettings = await settingsManager.get();
+    const _mode = _modeSettings.screenshotMode || 'interval';
+    if (_mode === 'interval' && _trigger !== 'interval') {
+      return { success: false, error: 'Event captures disabled (mode=interval)' };
+    }
+    if (_mode === 'events' && _trigger === 'interval') {
+      return { success: false, error: 'Interval captures disabled (mode=events)' };
+    }
+  }
+
   try {
     const tab = await chrome.tabs.get(tabId);
 
@@ -500,8 +558,10 @@ async function captureScreenshot(tabId, isManual = true) {
       throw new Error('Invalid tab or window ID');
     }
 
-    await chrome.tabs.update(tab.id, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
+    if (isManual) {
+      await chrome.tabs.update(tab.id, { active: true });
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
 
     await chrome.tabs.sendMessage(tabId, { action: 'beforeScreenshot' }).catch(() => { });
     await new Promise(resolve => setTimeout(resolve, 150));
@@ -535,6 +595,16 @@ async function captureScreenshot(tabId, isManual = true) {
     // BUG FIX: BG-002 - Mark screenshot taken for rate limiting
     stateManager.markScreenshotTaken();
 
+    // R-010: Smart dedup — skip identical consecutive auto-captures
+    if (!isManual) {
+      const newHash = stateManager.simpleHash(dataUrl);
+      if (newHash && newHash === stateManager.lastScreenshotHash) {
+        console.log('⏭️ Screenshot skipped — screen unchanged (smart dedup)');
+        return { success: false, error: 'Duplicate screen' };
+      }
+      stateManager.lastScreenshotHash = newHash;
+    }
+
     const sequence = await stateManager.incrementStepCount();
 
     const step = {
@@ -543,7 +613,7 @@ async function captureScreenshot(tabId, isManual = true) {
       sequence: sequence,
       action: 'screenshot',
       fieldName: 'Screenshot',
-      targetLabel: isManual ? 'Manual Screenshot' : 'Auto Screenshot',
+      targetLabel: isManual ? 'Manual Screenshot' : (_trigger === 'form-submit' ? 'Form Submit' : _trigger === 'modal-open' ? 'Modal Opened' : 'Auto Screenshot'),
       url: tab.url,
       value: null,
       isSensitive: false,
@@ -564,6 +634,7 @@ async function captureScreenshot(tabId, isManual = true) {
       stepId: step.id,
       type: 'screenshot',
       dataUrl: dataUrl,
+      trigger: _trigger, // R-010: what triggered this capture
       createdAt: new Date().toISOString()
     });
 
@@ -610,10 +681,12 @@ async function startRecording(tabId, tabInfo) {
 
     await new Promise(resolve => setTimeout(resolve, 100));
 
+    const settings = await settingsManager.get();
     await chrome.tabs.sendMessage(tabId, {
       action: 'startRecording',
       sessionId: session.sessionId,
-      session: session
+      session: session,
+      settings: settings
     });
 
     console.log('✅ Recording started:', session.sessionId);
@@ -686,10 +759,44 @@ async function stopRecording(tabId) {
       console.warn('Post-recording cleanup failed:', err);
     }
 
+    // Check autoSave — if disabled, discard the session immediately
+    const settings = await settingsManager.get();
+    if (settings.autoSave === false) {
+      console.log('⚠️ autoSave=false — discarding session:', sessionId);
+      try {
+        await storage.clearSession(sessionId);
+      } catch (err) {
+        console.warn('Failed to discard session after stop:', err);
+      }
+      broadcastSessionChange(sessionId, 'deleted');
+      return { success: true, sessionId, discarded: true };
+    }
+
+    // Enforce maxSessions limit — delete oldest sessions beyond the cap
+    try {
+      const allSessions = await storage.getAllSessions();
+      const maxSessions = settings.maxSessions || 25;
+      if (allSessions.length > maxSessions) {
+        const sorted = allSessions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        const toDelete = sorted.slice(0, allSessions.length - maxSessions);
+        for (const old of toDelete) {
+          console.warn(`⚠️ maxSessions limit (${maxSessions}) reached — pruning session: ${old.sessionId} (created: ${old.createdAt})`);
+          await storage.clearSession(old.sessionId);
+          broadcastSessionChange(old.sessionId, 'deleted');
+          console.log('🗑️ Pruned old session:', old.sessionId);
+        }
+      }
+    } catch (err) {
+      console.warn('Session limit enforcement failed:', err);
+    }
+
     // Add to pending flush list so window contexts know to flush to disk
     if (sessionId) {
       await addPendingFlush(sessionId);
-      // Broadcast flush request to any open popup/review pages
+      // Broadcast flush request to any already-open popup/review pages.
+      // The review tab created below opens AFTER this broadcast and will not
+      // receive it; instead it reads PENDING_FLUSH_KEY via getPendingFlush on
+      // load, which is why addPendingFlush must be awaited before tab creation.
       chrome.runtime.sendMessage({
         action: 'flushRecordingBuffer',
         sessionId
@@ -753,13 +860,13 @@ async function addStep(stepData) {
   }
 
   try {
-    // Server-side consecutive duplicate detection
-    if (_isConsecutiveDuplicate(stepData)) {
+    const settings = await settingsManager.get();
+
+    // Server-side consecutive duplicate detection (gated on smartDedup setting)
+    if (settings.smartDedup !== false && _isConsecutiveDuplicate(stepData)) {
       console.log('⏭️ Skipping consecutive duplicate step:', stepData.action, stepData.fieldName);
       return { success: true, skipped: true };
     }
-
-    const settings = await settingsManager.get();
     const sequence = await stateManager.incrementStepCount();
 
     const step = {
@@ -949,17 +1056,68 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = await stopRecording(tabId);
           break;
 
-        case 'addStep':
+        case 'addStep': {
           response = await addStep(message.stepData);
+          // R-005: Broadcast to content script so floating panel can show last step
+          if (response && response.success && response.step && !response.skipped) {
+            chrome.tabs.sendMessage(tabId, {
+              action: 'stepRecorded',
+              step: { action: response.step.action, fieldName: response.step.fieldName }
+            }).catch(() => {});
+          }
           break;
+        }
+
+        // R-005: Append a quick note to the last recorded step
+        case 'addNoteToLastStep': {
+          if (_lastAddedStep && stateManager.session) {
+            try {
+              const sessionId = stateManager.session.sessionId;
+              const steps = await storage.getSteps(sessionId);
+              if (steps && steps.length > 0) {
+                const lastStep = steps[steps.length - 1];
+                const existingNotes = lastStep.notes || '';
+                lastStep.notes = existingNotes ? existingNotes + ' | ' + message.note : message.note;
+                await storage.updateStep(sessionId, lastStep);
+                response = { success: true };
+              } else {
+                response = { success: false, error: 'No steps found' };
+              }
+            } catch (err) {
+              response = { success: false, error: err.message };
+            }
+          } else {
+            response = { success: false, error: 'No active session or step' };
+          }
+          break;
+        }
 
         case 'getState':
           response = stateManager.getState();
           break;
 
+        // R-008: Field name memory
+        case 'saveFieldNameMemory': {
+          const _mem = (await chrome.storage.local.get('testsnapper_fieldname_memory'))['testsnapper_fieldname_memory'] || {};
+          _mem[message.fingerprint] = message.fieldName;
+          const _keys = Object.keys(_mem);
+          if (_keys.length > 500) delete _mem[_keys[0]];
+          await chrome.storage.local.set({ 'testsnapper_fieldname_memory': _mem });
+          sendResponse({ success: true });
+          return true;
+        }
+
+        case 'getFieldNameMemory': {
+          const _mem2 = (await chrome.storage.local.get('testsnapper_fieldname_memory'))['testsnapper_fieldname_memory'] || {};
+          sendResponse({ fieldName: _mem2[message.fingerprint] || null });
+          return true;
+        }
+
         case 'captureScreenshot':
           if (!tabId) throw new Error('No tab context for screenshot');
-          response = await captureScreenshot(tabId, true);
+          // message.isManual is false for auto-screenshot interval, true (default) for manual
+          // R-010: pass trigger type as 3rd arg
+          response = await captureScreenshot(tabId, message.isManual !== false, message.trigger || (message.isManual !== false ? 'manual' : 'interval'));
           break;
 
         case 'exportSession':
@@ -1061,7 +1219,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
 
         case 'importAllData':
-          await storage.importAllData(message.data);
+          if (!message.data || !message.data.sessions || !message.data.meta) {
+            response = { success: false, error: 'Invalid import data: missing required fields' };
+            break;
+          }
+          await storage.importData(message.data);
           response = { success: true };
           break;
 
@@ -1162,6 +1324,7 @@ chrome.commands?.onCommand.addListener(async (command) => {
 
 chrome.runtime.onSuspend.addListener(() => {
   console.log('⚠️ Service worker suspending - persisting state');
+  // Best-effort: onSuspend cannot be awaited; state changes persist eagerly on each mutation
   persistActiveRecording();
 });
 

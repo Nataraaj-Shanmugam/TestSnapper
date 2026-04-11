@@ -22,20 +22,25 @@ export class QuotaMonitor {
     try {
       const bytesInUse = await chrome.storage.local.getBytesInUse();
 
-      // BUG FIX: STR-CRIT-001 - Check if unlimitedStorage permission is granted
-      let QUOTA_BYTES;
+      let hasUnlimited = false;
+      let QUOTA_BYTES = 10485760; // 10MB default (no unlimitedStorage)
       try {
-        const hasUnlimited = await chrome.permissions.contains({ permissions: ['unlimitedStorage'] });
-        if (hasUnlimited) {
-          // With unlimitedStorage, quota is much larger (typically 1GB+)
-          QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 1073741824; // 1GB
-        } else {
-          // Without unlimitedStorage, limited to 10MB
-          QUOTA_BYTES = 10485760; // 10MB
+        hasUnlimited = await chrome.permissions.contains({ permissions: ['unlimitedStorage'] });
+        if (!hasUnlimited) {
+          QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 10485760;
         }
       } catch (err) {
-        // Fallback if permissions API fails
         QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 10485760;
+      }
+
+      if (hasUnlimited) {
+        return {
+          used: bytesInUse,
+          total: Infinity,
+          percentage: 0,
+          warning: false,
+          error: false
+        };
       }
 
       const percentage = bytesInUse / QUOTA_BYTES;

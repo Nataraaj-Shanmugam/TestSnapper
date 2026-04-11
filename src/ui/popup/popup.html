@@ -113,9 +113,22 @@
 
         <div class="form-group">
           <label>Select Session:</label>
-          <select id="sessionDropdown" class="select" data-testid="session-dropdown">
+          <!-- Hidden native select for form compatibility -->
+          <select id="sessionDropdown" class="select" data-testid="session-dropdown" style="display:none;">
             <option value="">Select a session...</option>
           </select>
+          <!-- R-006: Session search -->
+          <input type="text" id="sessionSearch" class="session-search-input" placeholder="Search sessions…" autocomplete="off" aria-label="Search sessions">
+          <!-- Custom styled dropdown -->
+          <div class="session-select-wrapper" id="sessionSelectWrapper">
+            <div class="session-select-custom" id="sessionSelectTrigger" tabindex="0" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+              <span class="session-placeholder">Select a session...</span>
+              <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="session-dropdown-list" id="sessionDropdownList" role="listbox">
+              <!-- R-006: Archived sessions section appended dynamically -->
+            </div>
+          </div>
         </div>
 
         <div class="form-group">
@@ -123,15 +136,27 @@
           <div class="format-options">
             <label class="radio-label">
               <input type="radio" name="format" value="docx" checked data-testid="format-docx">
-              <span>DOCX</span>
+              <span>
+                <svg class="format-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span class="format-name">DOCX</span>
+                <span class="format-desc">Word doc</span>
+              </span>
             </label>
             <label class="radio-label">
               <input type="radio" name="format" value="json" data-testid="format-json">
-              <span>JSON</span>
+              <span>
+                <svg class="format-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg>
+                <span class="format-name">JSON</span>
+                <span class="format-desc">Raw data</span>
+              </span>
             </label>
             <label class="radio-label">
               <input type="radio" name="format" value="csv" data-testid="format-csv">
-              <span>CSV</span>
+              <span>
+                <svg class="format-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                <span class="format-name">CSV</span>
+                <span class="format-desc">Spreadsheet</span>
+              </span>
             </label>
           </div>
         </div>
@@ -149,13 +174,7 @@
       </div>
 
       <div class="storage-section">
-        <h3><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> Storage Management</h3>
-        <div class="storage-usage">
-          <div class="storage-bar-container">
-            <div class="storage-usage-bar storage-ok" id="storageUsageBar" style="width: 0%" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
-          </div>
-          <span class="storage-usage-text" id="storageUsageText">Calculating...</span>
-        </div>
+        <h3><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Folder & Sessions</h3>
 
         <div class="file-sync-status" id="fileSyncStatus">
           <span class="sync-indicator" id="syncIndicator"></span>
@@ -186,6 +205,25 @@
 
     <!-- Settings Tab -->
     <div class="tab-content" id="settings-tab" role="tabpanel" aria-labelledby="tab-settings">
+
+      <!-- R-009: Storage Warning Banner -->
+      <div id="storageWarningBanner" style="display:none;background:#fef3c7;color:#92400e;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">
+        ⚠ Storage above 85% — consider cleaning up old sessions.
+      </div>
+
+      <!-- R-007: Settings Profile Row -->
+      <div class="settings-profile-row">
+        <label for="settingsProfile" style="font-size:12px;font-weight:600">Profile:</label>
+        <select id="settingsProfile" class="select" style="flex:1;font-size:12px">
+          <option value="custom">Custom</option>
+          <option value="fast">Fast Mode</option>
+          <option value="docs">Documentation Mode</option>
+        </select>
+        <button id="exportSettingsBtn" class="btn-sm">↓ Export</button>
+        <button id="importSettingsBtn" class="btn-sm">↑ Import</button>
+        <input type="file" id="importSettingsFile" accept=".json" style="display:none">
+      </div>
+
       <div class="export-section">
         <h3><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Recording Settings</h3>
 
@@ -201,6 +239,15 @@
               <input type="number" id="screenshotSeconds" min="1" max="60" value="5">
               <label>seconds</label>
             </div>
+            <!-- R-010: Screenshot capture mode -->
+            <div class="input-group" style="margin-top:8px;">
+              <label>Capture mode:</label>
+              <select id="screenshotMode" class="select" style="flex:1;">
+                <option value="interval">Interval only</option>
+                <option value="events">Events only (submit, modal)</option>
+                <option value="both">Both</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -215,6 +262,34 @@
           <label class="checkbox-label">
             <input type="checkbox" id="smartDedup" checked>
             <span>Smart Duplicate Detection</span>
+          </label>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="captureApiCalls">
+            <span>Capture API Calls</span>
+          </label>
+          <div id="apiCallsOptions" class="sub-settings" style="display: none;">
+            <div class="setting-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="captureFailedCalls">
+                <span>Capture Failed Calls Only</span>
+              </label>
+            </div>
+            <div class="setting-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="captureAllCalls">
+                <span>Capture All Calls</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="includeTimestamp" checked>
+            <span>Include Timestamps</span>
           </label>
         </div>
       </div>
@@ -273,6 +348,34 @@
           </button>
         </div>
         <input type="file" id="restoreFileInput" accept=".json" style="display: none;">
+      </div>
+
+      <!-- R-003: Privacy Rules -->
+      <div class="export-section">
+        <h3>🔒 Privacy Rules</h3>
+        <div class="setting-group">
+          <label class="input-label">Custom redaction patterns (regex, one per line)</label>
+          <textarea id="customRedactionPatterns" rows="3" style="width:100%;font-family:monospace;font-size:11px;resize:vertical;box-sizing:border-box;padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg)" placeholder="api[_-]?key&#10;session[_-]?id"></textarea>
+        </div>
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="redactUrlParams">
+            <span>Redact URL query parameters</span>
+          </label>
+        </div>
+        <div class="setting-group" id="urlParamDenylistRow" style="display:none">
+          <label class="input-label">Params to redact (comma-separated)</label>
+          <input type="text" id="urlParamDenylist" class="input" placeholder="token,session,auth">
+        </div>
+      </div>
+
+      <!-- R-009: Storage Breakdown -->
+      <div class="export-section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <h3 style="margin:0">Storage Breakdown</h3>
+          <button id="smartCleanupBtn" class="btn btn-secondary btn-small">🧹 Smart Cleanup</button>
+        </div>
+        <div id="storageBreakdownList" style="font-size:12px;color:var(--text-secondary)">Loading...</div>
       </div>
 
       <button id="saveSettingsBtn" class="btn btn-info">

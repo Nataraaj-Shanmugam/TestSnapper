@@ -40,6 +40,9 @@ const MAX_HISTORY = 50;
 // Drag state
 let draggedStepId = null;
 
+// View mode (cards | table)
+let currentView = localStorage.getItem('testsnapper_view') || 'cards';
+
 // ==================== Consecutive Duplicate Removal ====================
 // deduplicateConsecutiveSteps is imported from ../../core/step-utils.js
 
@@ -85,6 +88,99 @@ let newStepScreenshotBlob = null;
 let insertAfterStepId = null;
 
 // ==================== Utils ====================
+
+// ==================== Toast Notifications ====================
+
+function showToastNotification(message, type = 'info') {
+  const toast = document.createElement('div');
+  const colors = { success: '#22c55e', error: '#ef4444', warning: '#f59e0b', info: '#3b82f6' };
+  toast.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:9999;padding:10px 16px;border-radius:8px;background:${colors[type]||colors.info};color:#fff;font-size:13px;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.2);transition:opacity 0.3s`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 2800);
+}
+
+// ==================== R-002: Selector Stability ====================
+
+function getSelectorStability(selector) {
+  if (!selector) return { label: 'Unknown', color: '#6b7280', reason: 'No selector' };
+  if (selector.startsWith('#') || /^[a-zA-Z]+$/.test(selector)) return { label: 'Stable', color: '#22c55e', reason: 'ID selector' };
+  if (selector.includes('[data-testid') || selector.includes('[data-test')) return { label: 'Stable', color: '#22c55e', reason: 'Test attribute' };
+  if (selector.startsWith('//*[@id=')) return { label: 'Stable', color: '#22c55e', reason: 'XPath by ID' };
+  if (selector.includes('nth-child') || selector.includes('nth-of-type')) return { label: 'Fragile', color: '#ef4444', reason: 'Position-dependent' };
+  if ((selector.match(/\./g) || []).length >= 4) return { label: 'Fragile', color: '#ef4444', reason: 'Complex class chain' };
+  return { label: 'OK', color: '#f59e0b', reason: 'Attribute/class selector' };
+}
+
+// ==================== R-001: View Toggle ====================
+
+function switchView(view) {
+  currentView = view;
+  try { localStorage.setItem('testsnapper_view', view); } catch(e) {}
+  const cardsContainer = document.getElementById('stepsContainer');
+  const tableContainer = document.getElementById('tableContainer');
+  const cardsBtn = document.getElementById('viewCardsBtn');
+  const tableBtn = document.getElementById('viewTableBtn');
+  if (cardsContainer) cardsContainer.style.display = view === 'cards' ? '' : 'none';
+  if (tableContainer) tableContainer.style.display = view === 'table' ? '' : 'none';
+  if (cardsBtn) cardsBtn.classList.toggle('active', view === 'cards');
+  if (tableBtn) tableBtn.classList.toggle('active', view === 'table');
+}
+
+function renderTableView(steps) {
+  const container = document.getElementById('tableContainer');
+  if (!container) return;
+  if (!steps || steps.length === 0) { container.innerHTML = '<p style="padding:24px;color:var(--text-muted)">No steps to display.</p>'; return; }
+  const rows = steps.map((s, i) => `
+    <tr>
+      <td style="width:36px;text-align:center;color:var(--text-muted)">${i + 1}</td>
+      <td>${Utils.escapeHtml(s.action || '')}</td>
+      <td contenteditable="true" data-step-id="${s.id}" data-field="fieldName" class="table-editable">${Utils.escapeHtml(s.fieldName || '')}</td>
+      <td contenteditable="true" data-step-id="${s.id}" data-field="value" class="table-editable">${Utils.escapeHtml(s.value || '')}</td>
+      <td contenteditable="true" data-step-id="${s.id}" data-field="notes" class="table-editable">${Utils.escapeHtml(s.notes || '')}</td>
+      <td class="table-selector">${Utils.escapeHtml(s.selector?.css || '—')}</td>
+      <td class="table-url">${Utils.escapeHtml((s.url || '').replace(/^https?:\/\/[^/]+/, ''))}</td>
+      <td style="white-space:nowrap;font-size:11px;color:var(--text-muted)">${s.timestamp ? new Date(s.timestamp).toLocaleTimeString() : '—'}</td>
+    </tr>`).join('');
+  container.innerHTML = `
+    <table class="review-table">
+      <thead><tr>
+        <th>#</th><th>Action</th><th>Field Name</th><th>Value</th><th>Notes</th><th>Selector</th><th>URL</th><th>Time</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  container.querySelectorAll('.table-editable').forEach(cell => {
+    cell.addEventListener('blur', handleTableCellEdit);
+  });
+}
+
+async function handleTableCellEdit(e) {
+  const cell = e.target;
+  const stepId = cell.dataset.stepId;
+  const field = cell.dataset.field;
+  const newVal = cell.innerText.trim();
+  const step = stepsData.find(s => s.id === stepId);
+  if (!step || step[field] === newVal) return;
+  try {
+    step[field] = newVal;
+    await fsStorage.updateStep(step);
+  } catch(err) {
+    console.error('Table cell edit failed:', err);
+  }
+}
+
+// ==================== R-004: Export Config ====================
+
+function readExportConfig() {
+  const config = {
+    includeScreenshots: document.getElementById('ecIncludeScreenshots')?.checked !== false,
+    includeSelectors: document.getElementById('ecIncludeSelectors')?.checked !== false,
+    onlyFailed: document.getElementById('ecOnlyFailed')?.checked || false,
+    screenshotSize: document.getElementById('ecScreenshotSize')?.value || 'medium'
+  };
+  try { localStorage.setItem('testsnapper_export_config', JSON.stringify(config)); } catch(e) {}
+  return config;
+}
 
 function debounce(fn, delay = 300) {
   let timer;
@@ -251,6 +347,81 @@ function setupEventListeners() {
     }
   });
 
+  // R-001: View toggle
+  document.getElementById('viewCardsBtn')?.addEventListener('click', () => { switchView('cards'); renderSteps(); });
+  document.getElementById('viewTableBtn')?.addEventListener('click', () => { switchView('table'); renderSteps(); });
+
+  // R-004: Export preview
+  document.getElementById('previewExportBtn')?.addEventListener('click', () => {
+    const config = readExportConfig();
+    let steps = config.onlyFailed ? stepsData.filter(s => s.failed) : stepsData;
+    const preview = steps.slice(0, 5);
+    const rows = preview.map((s, i) => `<tr>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-default)">${i+1}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-default)">${Utils.escapeHtml(s.action||'')}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-default)">${Utils.escapeHtml(s.fieldName||'')}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-default)">${Utils.escapeHtml(s.value||'')}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid var(--border-default)">${Utils.escapeHtml(s.notes||'')}</td>
+    </tr>`).join('');
+    document.getElementById('exportPreviewContent').innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:var(--bg-surface)">
+        <th style="padding:6px 10px;text-align:left;font-weight:600">#</th>
+        <th style="padding:6px 10px;text-align:left;font-weight:600">Action</th>
+        <th style="padding:6px 10px;text-align:left;font-weight:600">Field</th>
+        <th style="padding:6px 10px;text-align:left;font-weight:600">Value</th>
+        <th style="padding:6px 10px;text-align:left;font-weight:600">Notes</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    const modal = document.getElementById('exportPreviewModal');
+    if (modal) modal.style.display = 'flex';
+  });
+  document.getElementById('closeExportPreview')?.addEventListener('click', () => {
+    document.getElementById('exportPreviewModal').style.display = 'none';
+  });
+
+  // R-008: Remember all field names
+  document.getElementById('rememberAllFieldsBtn')?.addEventListener('click', async () => {
+    let count = 0;
+    for (const step of stepsData) {
+      if (step.fieldName && step.selector?.css) {
+        await chrome.runtime.sendMessage({ action: 'saveFieldNameMemory', fingerprint: step.selector.css, fieldName: step.fieldName });
+        count++;
+      }
+    }
+    showToastNotification(`Remembered ${count} field name(s)`, 'success');
+  });
+
+  // R-003: Privacy audit
+  document.getElementById('privacyAuditBtn')?.addEventListener('click', () => {
+    const sensitiveSteps = stepsData.filter(s => s.isSensitive || /password|secret|token|key|auth/i.test(s.fieldName || ''));
+    const redactedSteps = stepsData.filter(s => s.value === '[REDACTED]' || s.value === '***');
+    let html = `<p style="margin-bottom:12px"><strong>${sensitiveSteps.length}</strong> sensitive field(s) &nbsp;|&nbsp; <strong>${redactedSteps.length}</strong> redacted value(s)</p>`;
+    if (sensitiveSteps.length) {
+      html += `<table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:var(--bg-surface)">
+          <th style="padding:6px 10px;text-align:left">Field</th>
+          <th style="padding:6px 10px;text-align:left">Action</th>
+          <th style="padding:6px 10px;text-align:left">Value (preview)</th>
+        </tr></thead><tbody>`;
+      for (const s of sensitiveSteps) {
+        const preview = (s.value || '').length > 20 ? s.value.slice(0, 20) + '…' : (s.value || '—');
+        html += `<tr>
+          <td style="padding:6px 10px;border-bottom:1px solid var(--border-default)">${Utils.escapeHtml(s.fieldName || '—')}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid var(--border-default)">${Utils.escapeHtml(s.action || '—')}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid var(--border-default)"><code>${Utils.escapeHtml(preview)}</code></td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    } else {
+      html += '<p style="color:var(--text-muted)">No sensitive fields detected.</p>';
+    }
+    document.getElementById('privacyAuditContent').innerHTML = html;
+    const modal = document.getElementById('privacyAuditModal');
+    if (modal) modal.style.display = 'flex';
+  });
+  document.getElementById('closePrivacyAudit')?.addEventListener('click', () => {
+    document.getElementById('privacyAuditModal').style.display = 'none';
+  });
+
   // Mobile sidebar toggle
   var sidebarToggle = document.getElementById('sidebarToggle');
   var sidebar = document.getElementById('sidebar');
@@ -309,7 +480,17 @@ async function loadSession() {
     }
 
     await renderSteps();
+    switchView(currentView);
     hideMessage();
+
+    // R-004: Restore export config from localStorage
+    try {
+      const saved = JSON.parse(localStorage.getItem('testsnapper_export_config') || '{}');
+      if (saved.includeScreenshots === false) { const el = document.getElementById('ecIncludeScreenshots'); if (el) el.checked = false; }
+      if (saved.includeSelectors === false) { const el = document.getElementById('ecIncludeSelectors'); if (el) el.checked = false; }
+      if (saved.onlyFailed === true) { const el = document.getElementById('ecOnlyFailed'); if (el) el.checked = true; }
+      if (saved.screenshotSize) { const el = document.getElementById('ecScreenshotSize'); if (el) el.value = saved.screenshotSize; }
+    } catch(e) {}
 
     console.log('✅ Session loaded:', sessionId, 'Steps:', stepsData.length);
   } catch (error) {
@@ -476,6 +657,12 @@ async function renderSteps() {
 
   if (visibleSteps.length === 0) {
     container.innerHTML = '';
+    if (currentView === 'table') renderTableView([]);
+    return;
+  }
+
+  if (currentView === 'table') {
+    renderTableView(visibleSteps);
     return;
   }
 
@@ -522,12 +709,37 @@ async function renderSteps() {
           </div>
 
           <!-- delete button – top-aligned -->
-          <div class="step-actions" style="flex-shrink: 0; padding-top: 4px;">
+          <div class="step-actions" style="flex-shrink: 0; padding-top: 4px; display:flex; flex-direction:column; gap:4px;">
             <button class="delete-btn" title="Delete Step" data-step-id="${step.id}">
               ✕
             </button>
+            <!-- R-010: Retake screenshot -->
+            <button class="retake-screenshot-btn" title="Retake screenshot" data-step-id="${step.id}" style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-muted);padding:2px;">↺</button>
           </div>
         </div>
+        <!-- R-002: Selector Inspector -->
+        ${(() => {
+          const cssSt = getSelectorStability(step.selector?.css || '');
+          const xpathSt = getSelectorStability(step.selector?.xpath || '');
+          return `<div class="selector-inspector">
+            <button class="inspector-toggle-btn">Selector Inspector ▸</button>
+            <div class="inspector-panel" style="display:none">
+              <div class="inspector-row">
+                <span class="inspector-label">CSS</span>
+                <code class="inspector-code">${Utils.escapeHtml(step.selector?.css || '—')}</code>
+                <span class="stability-badge" style="background:${cssSt.color}">${cssSt.label}</span>
+                <button class="copy-selector-btn" data-val="${Utils.escapeHtml(step.selector?.css || '')}">Copy</button>
+              </div>
+              <div class="inspector-row">
+                <span class="inspector-label">XPath</span>
+                <code class="inspector-code">${Utils.escapeHtml(step.selector?.xpath || '—')}</code>
+                <span class="stability-badge" style="background:${xpathSt.color}">${xpathSt.label}</span>
+                <button class="copy-selector-btn" data-val="${Utils.escapeHtml(step.selector?.xpath || '')}">Copy</button>
+              </div>
+              <div class="inspector-reason">${Utils.escapeHtml(cssSt.reason)}</div>
+            </div>
+          </div>`;
+        })()}
       </div>
       ${index === visibleSteps.length - 1 ? `
         <div class="add-between">
@@ -564,6 +776,37 @@ function attachStepEventListeners() {
         const targetId = index > 0 ? stepsData[index - 1].id : null;
         openAddStepModal(targetId);
       }
+    })
+  );
+
+  // R-010: Retake screenshot buttons
+  document.querySelectorAll('.retake-screenshot-btn').forEach(btn =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleRetakeScreenshot(btn.dataset.stepId);
+    })
+  );
+
+  // R-002: Selector inspector toggles
+  document.querySelectorAll('.inspector-toggle-btn').forEach(btn =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = btn.nextElementSibling;
+      const open = panel.style.display !== 'none';
+      panel.style.display = open ? 'none' : 'flex';
+      btn.textContent = open ? 'Selector Inspector ▸' : 'Selector Inspector ▾';
+    })
+  );
+
+  // R-002: Copy selector buttons
+  document.querySelectorAll('.copy-selector-btn').forEach(btn =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(btn.dataset.val || '').then(() => {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      }).catch(() => {});
     })
   );
 
@@ -719,6 +962,22 @@ async function handleConfirmAddStep() {
 }
 
 // ==================== Step Actions ====================
+
+// R-010: Retake screenshot for a specific step
+async function handleRetakeScreenshot(stepId) {
+  try {
+    const result = await chrome.runtime.sendMessage({ action: 'captureScreenshot', trigger: 'manual' });
+    if (result && result.success && result.stepId) {
+      // The background creates a new screenshot step — link the asset to this step instead
+      // For simplicity: show a toast; the new screenshot appears as its own step at the end
+      showToastNotification('Screenshot captured — it appears as the last step', 'info');
+    } else {
+      showToastNotification('Cannot retake: not currently recording', 'warning');
+    }
+  } catch (e) {
+    showToastNotification('Retake failed: ' + e.message, 'error');
+  }
+}
 
 async function handleDeleteStep(stepId) {
   try {
@@ -916,7 +1175,8 @@ async function handleSaveAndExport() {
 
     const progressCallback = (update) => handleExportProgress(update);
 
-    const result = await exportService.exportSession(sessionId, format, progressCallback);
+    const exportOptions = readExportConfig();
+    const result = await exportService.exportSession(sessionId, format, progressCallback, exportOptions);
 
     let downloadUrl;
     let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');

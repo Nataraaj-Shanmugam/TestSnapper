@@ -4,7 +4,7 @@
  * to track which sessions need to be flushed from chrome.storage to the filesystem.
  */
 
-const PENDING_FLUSH_KEY = 'testsnapper_pendingFlush';
+export const PENDING_FLUSH_KEY = 'testsnapper_pendingFlush';
 
 export async function getPendingFlush() {
   const result = await chrome.storage.local.get(PENDING_FLUSH_KEY);
