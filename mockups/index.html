@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TestSnapper UI Mockups</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 32px;
+  }
+
+  /* ── Nav ── */
+  .screen-nav {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 40px;
+    position: sticky; top: 16px; z-index: 100;
+  }
+  .screen-nav button {
+    padding: 8px 16px; border-radius: 20px; border: 1.5px solid #334155;
+    background: #1e293b; color: #94a3b8; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .15s; font-family: inherit;
+  }
+  .screen-nav button.active,
+  .screen-nav button:hover { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  .screen-title {
+    font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: #475569; margin-bottom: 24px;
+  }
+
+  /* ── Popup shell ── */
+  .popup-frame {
+    width: 380px; border-radius: 16px; overflow: hidden;
+    box-shadow: 0 32px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06);
+    background: #111827;
+  }
+
+  /* Design tokens */
+  :root {
+    --accent: #3b82f6;
+    --accent-glow: rgba(59,130,246,.25);
+    --bg: #111827;
+    --bg-card: #1a2234;
+    --bg-surface: #1e293b;
+    --bg-hover: #243047;
+    --border: #1e2d42;
+    --border-soft: #253044;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #475569;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --radius: 10px;
+  }
+
+  /* ── Popup header ── */
+  .popup-header {
+    background: linear-gradient(135deg, #0f1827 0%, #1a2640 100%);
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .popup-logo {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 15px; font-weight: 700; color: var(--text-primary);
+  }
+  .popup-logo svg { color: var(--accent); }
+  .popup-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 20px;
+    background: rgba(59,130,246,.15); color: #60a5fa; letter-spacing: .05em;
+  }
+
+  /* ── Tabs ── */
+  .popup-tabs {
+    display: flex; background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .popup-tab {
+    flex: 1; padding: 10px 4px; font-size: 11px; font-weight: 600;
+    text-align: center; color: var(--text-muted); cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all .15s; letter-spacing: .04em;
+  }
+  .popup-tab.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(59,130,246,.06); }
+
+  /* ── Popup body ── */
+  .popup-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+
+  /* State banner */
+  .state-banner {
+    border-radius: 10px; padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px;
+    background: var(--bg-card); border: 1px solid var(--border);
+  }
+  .state-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    box-shadow: 0 0 0 3px rgba(34,197,94,.2);
+  }
+  .state-dot.recording { background: var(--green); animation: pulse 1.5s infinite; }
+  .state-dot.idle { background: var(--text-muted); box-shadow: none; }
+  .state-dot.paused { background: var(--amber); box-shadow: 0 0 0 3px rgba(245,158,11,.2); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .state-info { flex: 1; }
+  .state-label { font-size: 12px; font-weight: 700; color: var(--text-primary); }
+  .state-sub { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+
+  .timer { font-family: 'Geist Mono', monospace; font-size: 14px; font-weight: 600; color: var(--green); }
+
+  /* Session select */
+  .field-label { font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 6px; }
+  .session-select-wrap {
+    position: relative; border-radius: var(--radius); border: 1.5px solid var(--border);
+    background: var(--bg-card); overflow: hidden;
+  }
+  .session-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; cursor: pointer;
+    transition: background .12s;
+  }
+  .session-item:hover { background: var(--bg-hover); }
+  .session-item.selected { background: rgba(59,130,246,.08); border-bottom: 1px solid rgba(59,130,246,.15); }
+  .session-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+  .session-meta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .session-size { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: var(--bg-surface); color: var(--text-secondary); }
+
+  /* Search bar */
+  .search-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; background: var(--bg-surface);
+    border: 1.5px solid var(--border); border-radius: 8px;
+  }
+  .search-bar input { flex: 1; background: none; border: none; outline: none; font-size: 12px; color: var(--text-primary); font-family: inherit; }
+  .search-bar input::placeholder { color: var(--text-muted); }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: 8px; }
+  .btn {
+    flex: 1; padding: 10px 14px; border-radius: 8px; border: none; cursor: pointer;
+    font-size: 12px; font-weight: 600; font-family: inherit; display: flex;
+    align-items: center; justify-content: center; gap: 6px; transition: all .15s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #2563eb; }
+  .btn-danger { background: rgba(239,68,68,.15); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+  .btn-secondary { background: var(--bg-surface); color: var(--text-secondary); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .btn-ghost { background: none; border: 1.5px solid var(--border); color: var(--text-secondary); }
+  .btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .btn-success { background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
+
+  /* Step count chip */
+  .step-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px;
+  }
+  .step-chip-num { font-family: 'Geist Mono', monospace; font-size: 18px; font-weight: 700; color: var(--accent); }
+  .step-chip-label { font-size: 11px; color: var(--text-secondary); }
+
+  /* ══════ SETTINGS TAB ══════ */
+  .settings-profile-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 14px; background: var(--bg-card);
+    border-radius: 10px; border: 1px solid var(--border);
+  }
+  .profile-label { font-size: 11px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+  .profile-select {
+    flex: 1; background: var(--bg-surface); border: 1.5px solid var(--border);
+    color: var(--text-primary); font-size: 12px; padding: 5px 8px; border-radius: 6px;
+    font-family: inherit; outline: none;
+  }
+  .btn-xs {
+    padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-secondary);
+    cursor: pointer; white-space: nowrap; font-family: inherit;
+  }
+  .btn-xs:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+  .settings-section {
+    background: var(--bg-card); border-radius: 10px; border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .settings-section-header {
+    padding: 10px 14px; display: flex; align-items: center; gap: 7px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px; font-weight: 700; color: var(--text-secondary);
+  }
+  .settings-section-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .setting-name { font-size: 12px; color: var(--text-primary); }
+  .setting-desc { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+  /* Toggle */
+  .toggle-wrap { flex-shrink: 0; }
+  .toggle {
+    width: 34px; height: 18px; background: var(--bg-surface); border-radius: 20px;
+    position: relative; cursor: pointer; border: 1px solid var(--border); transition: background .2s;
+  }
+  .toggle.on { background: var(--accent); border-color: var(--accent); }
+  .toggle::after {
+    content: ''; position: absolute; width: 12px; height: 12px;
+    background: #fff; border-radius: 50%; top: 2px; left: 2px; transition: left .2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  }
+  .toggle.on::after { left: 18px; }
+
+  /* Number input */
+  .num-input {
+    width: 56px; background: var(--bg-surface); border: 1.5px solid var(--border);
+    color: var(--text-primary); font-size: 12px; padding: 4px 8px; border-radius: 6px;
+    text-align: center; font-family: 'Geist Mono', monospace; outline: none;
+  }
+
+  /* Privacy section */
+  .privacy-textarea {
+    width: 100%; background: var(--bg-surface); border: 1.5px solid var(--border);
+    color: var(--text-primary); font-family: 'Geist Mono', monospace; font-size: 11px;
+    padding: 8px; border-radius: 6px; resize: vertical; outline: none; min-height: 54px;
+  }
+
+  /* Storage breakdown */
+  .storage-bar-row { display: flex; flex-direction: column; gap: 3px; }
+  .storage-bar-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); }
+  .storage-bar { height: 4px; background: var(--bg-surface); border-radius: 2px; overflow: hidden; }
+  .storage-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+
+  /* Warning banner */
+  .warning-banner {
+    background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.25);
+    border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #fcd34d;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  /* ══════ REVIEW PAGE ══════ */
+  .review-frame {
+    width: 1100px; height: 700px; border-radius: 16px; overflow: hidden;
+    box-shadow: 0 32px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06);
+    display: flex; background: #0d1421;
+  }
+
+  /* Sidebar */
+  .review-sidebar {
+    width: 240px; flex-shrink: 0; background: #111827;
+    border-right: 1px solid #1a2640; display: flex; flex-direction: column;
+    padding: 20px 16px; gap: 16px; overflow-y: auto;
+  }
+  .sidebar-logo {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 700; color: var(--text-primary);
+    padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  }
+  .sidebar-logo svg { color: var(--accent); }
+
+  .sidebar-field { display: flex; flex-direction: column; gap: 5px; }
+  .sidebar-label { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+  .sidebar-input {
+    background: var(--bg-card); border: 1.5px solid var(--border); color: var(--text-primary);
+    font-size: 12px; padding: 8px 10px; border-radius: 7px; font-family: inherit; outline: none;
+  }
+  .sidebar-select {
+    background: var(--bg-card); border: 1.5px solid var(--border); color: var(--text-primary);
+    font-size: 12px; padding: 8px 10px; border-radius: 7px; font-family: inherit; outline: none;
+  }
+
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .meta-chip {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px;
+    padding: 8px 10px;
+  }
+  .meta-chip-label { font-size: 10px; color: var(--text-muted); font-weight: 600; }
+  .meta-chip-val { font-size: 14px; font-weight: 700; color: var(--text-primary); font-family: 'Geist Mono', monospace; }
+
+  .sidebar-btn {
+    width: 100%; padding: 10px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: all .15s; border: none;
+  }
+  .sidebar-btn-primary { background: var(--accent); color: #fff; }
+  .sidebar-btn-primary:hover { background: #2563eb; }
+  .sidebar-btn-secondary { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border); }
+
+  /* Export config details */
+  .export-config {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  .export-config-summary {
+    padding: 10px 12px; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+    cursor: pointer; display: flex; align-items: center; gap: 6px;
+  }
+  .export-config-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); }
+  .config-check-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+  .config-check-row input[type=checkbox] { accent-color: var(--accent); }
+
+  /* Main content */
+  .review-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Header */
+  .review-header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    background: #111827;
+  }
+  .review-title { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+  .review-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg-card); color: var(--text-secondary); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all .15s;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+  /* Toolbar */
+  .review-toolbar {
+    padding: 12px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: #0f1827;
+  }
+  .toolbar-search {
+    flex: 1; min-width: 200px; display: flex; align-items: center; gap: 8px;
+    background: var(--bg-card); border: 1.5px solid var(--border);
+    border-radius: 8px; padding: 7px 12px;
+  }
+  .toolbar-search input { flex: 1; background: none; border: none; outline: none; font-size: 12px; color: var(--text-primary); font-family: inherit; }
+  .toolbar-search input::placeholder { color: var(--text-muted); }
+
+  .toolbar-select {
+    background: var(--bg-card); border: 1.5px solid var(--border); color: var(--text-secondary);
+    font-size: 12px; padding: 7px 10px; border-radius: 8px; font-family: inherit; outline: none;
+  }
+
+  .view-toggle { display: flex; border: 1.5px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .view-btn {
+    padding: 6px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+    background: var(--bg-card); color: var(--text-muted); border: none; font-family: inherit;
+    transition: all .15s;
+  }
+  .view-btn.active { background: var(--accent); color: #fff; }
+
+  /* Steps */
+  .review-steps { flex: 1; overflow-y: auto; padding: 16px 24px; display: flex; flex-direction: column; gap: 12px; }
+
+  .step-card {
+    background: var(--bg-card); border: 1px solid var(--border-soft); border-radius: 12px;
+    padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start;
+    transition: border-color .15s;
+    position: relative;
+  }
+  .step-card:hover { border-color: rgba(59,130,246,.3); }
+
+  .step-num {
+    width: 24px; height: 24px; border-radius: 6px; background: rgba(59,130,246,.15);
+    color: var(--accent); font-size: 11px; font-weight: 700; display: flex;
+    align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px;
+  }
+  .step-main { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .step-description { font-size: 13px; color: var(--text-primary); line-height: 1.5; }
+  .step-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .step-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 5px; letter-spacing: .04em;
+  }
+  .badge-click { background: rgba(59,130,246,.15); color: #60a5fa; }
+  .badge-type { background: rgba(34,197,94,.12); color: #4ade80; }
+  .badge-nav { background: rgba(245,158,11,.12); color: #fbbf24; }
+  .badge-submit { background: rgba(168,85,247,.12); color: #c084fc; }
+  .badge-screenshot { background: rgba(6,182,212,.12); color: #22d3ee; }
+
+  .step-url { font-family: 'Geist Mono', monospace; font-size: 10px; color: var(--text-muted); }
+
+  .step-screenshot {
+    width: 120px; flex-shrink: 0; border-radius: 8px; overflow: hidden;
+    background: var(--bg-surface); border: 1px solid var(--border);
+  }
+  .screenshot-placeholder {
+    width: 100%; aspect-ratio: 16/10;
+    background: linear-gradient(135deg, #1a2640 0%, #0d1827 100%);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 10px;
+  }
+
+  .step-actions { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+  .step-action-btn {
+    width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border);
+    background: none; color: var(--text-muted); cursor: pointer; display: flex;
+    align-items: center; justify-content: center; font-size: 12px; transition: all .15s;
+  }
+  .step-action-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .step-action-btn.delete:hover { background: rgba(239,68,68,.15); color: #f87171; border-color: rgba(239,68,68,.2); }
+
+  /* Inspector */
+  .selector-inspector { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 6px; }
+  .inspector-toggle { background: none; border: none; font-size: 11px; color: var(--text-muted); cursor: pointer; font-family: inherit; }
+  .inspector-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .inspector-label-sm { font-size: 10px; font-weight: 700; color: var(--text-muted); min-width: 40px; }
+  .inspector-code { font-family: 'Geist Mono', monospace; font-size: 10px; color: #94a3b8; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stability { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 9999px; color: #fff; white-space: nowrap; }
+
+  /* Table view */
+  .review-table-wrap { flex: 1; overflow: auto; padding: 16px 24px; }
+  .review-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .review-table th {
+    padding: 8px 12px; text-align: left; font-weight: 600; color: var(--text-muted);
+    background: #0f1827; border-bottom: 1.5px solid var(--border); font-size: 11px;
+    letter-spacing: .04em; text-transform: uppercase; position: sticky; top: 0; z-index: 1;
+  }
+  .review-table td {
+    padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text-primary);
+    vertical-align: middle;
+  }
+  .review-table tr:hover td { background: rgba(59,130,246,.04); }
+  .table-mono { font-family: 'Geist Mono', monospace; font-size: 10px; color: var(--text-muted); }
+  .table-editable { outline: none; border-radius: 4px; }
+  .table-editable:focus { background: rgba(59,130,246,.08); outline: 2px solid var(--accent); }
+
+  /* ══════ FLOATING PANEL ══════ */
+  .page-simulation {
+    width: 900px; height: 520px; border-radius: 16px; overflow: hidden;
+    background: linear-gradient(160deg, #f8fafc 0%, #f1f5f9 100%);
+    position: relative; border: 1px solid #e2e8f0;
+    box-shadow: 0 32px 80px rgba(0,0,0,.5);
+  }
+
+  /* Fake page content */
+  .fake-page { padding: 32px; display: flex; gap: 24px; }
+  .fake-sidebar { width: 200px; flex-shrink: 0; }
+  .fake-nav { height: 14px; background: #cbd5e1; border-radius: 3px; margin-bottom: 8px; }
+  .fake-nav-sm { height: 10px; background: #e2e8f0; border-radius: 3px; margin-bottom: 6px; }
+  .fake-main { flex: 1; }
+  .fake-form-card { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .fake-input {
+    height: 36px; background: #f8fafc; border: 1.5px solid #e2e8f0;
+    border-radius: 7px; margin-bottom: 12px; width: 100%;
+    display: flex; align-items: center; padding: 0 12px; color: #64748b; font-size: 12px;
+  }
+  .fake-input.focused { border-color: #3b82f6; background: #fff; }
+  .fake-submit {
+    height: 36px; background: #3b82f6; border-radius: 7px; width: 100%;
+    display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600;
+  }
+
+  /* Floating panel */
+  .floating-panel {
+    position: absolute; top: 20px; right: 20px;
+    width: 220px; background: rgba(10, 15, 28, 0.95);
+    border-radius: 14px; border: 1px solid rgba(59,130,246,.25);
+    box-shadow: 0 16px 48px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.04), 0 0 20px rgba(59,130,246,.12);
+    backdrop-filter: blur(12px);
+    overflow: hidden;
+  }
+
+  .fp-header {
+    padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,.06);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .fp-title { font-size: 11px; font-weight: 700; color: #e2e8f0; display: flex; align-items: center; gap: 7px; }
+  .fp-rec-dot { width: 7px; height: 7px; border-radius: 50%; background: #ef4444; animation: pulse 1.5s infinite; }
+  .fp-timer { font-family: 'Geist Mono', monospace; font-size: 11px; color: #ef4444; font-weight: 600; }
+
+  .fp-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+
+  .fp-step-preview {
+    background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.15);
+    border-radius: 7px; padding: 7px 10px;
+  }
+  .fp-step-label { font-size: 9px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: .06em; }
+  .fp-step-text { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+  .fp-step-text strong { color: #60a5fa; }
+
+  .fp-screenshot-mode {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 10px; color: #475569;
+  }
+  .fp-mode-badge {
+    font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+    background: rgba(34,197,94,.15); color: #4ade80;
+  }
+
+  .fp-controls { display: flex; gap: 6px; }
+  .fp-btn {
+    flex: 1; padding: 7px 6px; border-radius: 7px; border: none; cursor: pointer;
+    font-size: 10px; font-weight: 700; font-family: inherit; transition: all .15s;
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+  }
+  .fp-btn-pause { background: rgba(245,158,11,.15); color: #fbbf24; border: 1px solid rgba(245,158,11,.2); }
+  .fp-btn-stop { background: rgba(239,68,68,.15); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+  .fp-btn-shot { background: rgba(59,130,246,.15); color: #60a5fa; border: 1px solid rgba(59,130,246,.2); }
+
+  .fp-note-area {
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 7px; padding: 7px 10px; font-size: 11px; color: #475569;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .fp-step-count { font-size: 10px; color: #475569; text-align: right; }
+  .fp-step-count strong { color: #60a5fa; font-family: 'Geist Mono', monospace; }
+
+  /* ══════ Utility ══════ */
+  .screens-grid { display: grid; gap: 64px; }
+  .screen-section { display: flex; flex-direction: column; gap: 24px; }
+  .screens-row { display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap; }
+
+  .divider { height: 1px; background: linear-gradient(90deg, transparent, #1e293b, transparent); margin: 8px 0; }
+  svg { flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="screen-nav">
+  <button class="active" onclick="show('popup-recording')">Popup · Recording</button>
+  <button onclick="show('popup-settings')">Popup · Settings</button>
+  <button onclick="show('review-cards')">Review · Cards</button>
+  <button onclick="show('review-table')">Review · Table</button>
+  <button onclick="show('floating-panel')">Floating Panel</button>
+</nav>
+
+<!-- ══════════════════════════════════════════
+     SCREEN 1: Popup — Recording Tab
+══════════════════════════════════════════ -->
+<div id="popup-recording" class="screen active">
+  <p class="screen-title">Screen 1 — Extension Popup · Recording Tab (Active Session)</p>
+  <div style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap">
+
+    <!-- State: Recording -->
+    <div>
+      <p style="font-size:11px;color:#475569;margin-bottom:12px;font-weight:600">STATE: RECORDING</p>
+      <div class="popup-frame">
+        <div class="popup-header">
+          <div class="popup-logo">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+            TestSnapper
+          </div>
+          <span class="popup-badge">v1.2</span>
+        </div>
+        <div class="popup-tabs">
+          <div class="popup-tab active">⬤ Recording</div>
+          <div class="popup-tab">Export</div>
+          <div class="popup-tab">Settings</div>
+        </div>
+        <div class="popup-body">
+          <!-- State banner -->
+          <div class="state-banner" style="border-color:rgba(34,197,94,.25);background:rgba(34,197,94,.06)">
+            <div class="state-dot recording"></div>
+            <div class="state-info">
+              <div class="state-label">Recording Active</div>
+              <div class="state-sub">Checkout Flow — QA Sprint 12</div>
+            </div>
+            <div class="timer">02:47</div>
+          </div>
+
+          <!-- Step count -->
+          <div style="display:flex;gap:8px">
+            <div class="step-chip" style="flex:1">
+              <div class="step-chip-num">14</div>
+              <div class="step-chip-label">Steps<br>Recorded</div>
+            </div>
+            <div class="step-chip" style="flex:1;border-color:rgba(245,158,11,.2);background:rgba(245,158,11,.04)">
+              <div class="step-chip-num" style="color:#fbbf24">3</div>
+              <div class="step-chip-label" style="color:#92400e">Screenshots<br>Captured</div>
+            </div>
+          </div>
+
+          <!-- Last step preview -->
+          <div style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.15);border-radius:8px;padding:10px 12px">
+            <div style="font-size:10px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Last Step</div>
+            <div style="font-size:12px;color:#94a3b8">Click on <strong style="color:#60a5fa">Checkout Button</strong></div>
+          </div>
+
+          <!-- Controls -->
+          <div class="btn-row">
+            <button class="btn btn-secondary" style="font-size:11px">⏸ Pause</button>
+            <button class="btn btn-danger" style="font-size:11px">⏹ Stop</button>
+            <button class="btn btn-ghost" style="font-size:11px;flex:0.6">📷</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- State: Idle -->
+    <div>
+      <p style="font-size:11px;color:#475569;margin-bottom:12px;font-weight:600">STATE: IDLE</p>
+      <div class="popup-frame">
+        <div class="popup-header">
+          <div class="popup-logo">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+            TestSnapper
+          </div>
+          <span class="popup-badge">v1.2</span>
+        </div>
+        <div class="popup-tabs">
+          <div class="popup-tab active">Recording</div>
+          <div class="popup-tab">Export</div>
+          <div class="popup-tab">Settings</div>
+        </div>
+        <div class="popup-body">
+          <div class="state-banner">
+            <div class="state-dot idle"></div>
+            <div class="state-info">
+              <div class="state-label" style="color:var(--text-secondary)">Idle</div>
+              <div class="state-sub">No active session</div>
+            </div>
+          </div>
+
+          <!-- Session name -->
+          <div>
+            <div class="field-label">Session Name</div>
+            <input style="width:100%;background:var(--bg-card);border:1.5px solid var(--border);color:var(--text-primary);font-size:12px;padding:9px 12px;border-radius:8px;font-family:inherit;outline:none" placeholder="e.g. Login Flow — Sprint 12" value="">
+          </div>
+
+          <!-- Session selector -->
+          <div>
+            <div class="field-label">Active Session</div>
+            <div class="search-bar" style="margin-bottom:6px">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" color="#475569"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input placeholder="Search sessions...">
+            </div>
+            <div class="session-select-wrap">
+              <div class="session-item selected">
+                <div>
+                  <div class="session-name">Checkout Flow v2</div>
+                  <div class="session-meta">Yesterday, 3:12 PM · 14 steps</div>
+                </div>
+                <span class="session-size">128 KB</span>
+              </div>
+              <div class="session-item">
+                <div>
+                  <div class="session-name">Login & Auth Test</div>
+                  <div class="session-meta">Apr 8 · 8 steps</div>
+                </div>
+                <span class="session-size">64 KB</span>
+              </div>
+              <div class="session-item">
+                <div>
+                  <div class="session-name" style="color:var(--text-muted)">📁 2 archived</div>
+                  <div class="session-meta">Show archived sessions</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-primary">▶ Start New Recording</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     SCREEN 2: Popup — Settings Tab
+══════════════════════════════════════════ -->
+<div id="popup-settings" class="screen">
+  <p class="screen-title">Screen 2 — Extension Popup · Settings Tab</p>
+  <div class="popup-frame" style="width:380px">
+    <div class="popup-header">
+      <div class="popup-logo">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+        TestSnapper
+      </div>
+      <span class="popup-badge">v1.2</span>
+    </div>
+    <div class="popup-tabs">
+      <div class="popup-tab">Recording</div>
+      <div class="popup-tab">Export</div>
+      <div class="popup-tab active">Settings</div>
+    </div>
+    <div class="popup-body" style="max-height:520px;overflow-y:auto">
+
+      <!-- Profile row -->
+      <div class="settings-profile-row">
+        <span class="profile-label">Profile</span>
+        <select class="profile-select">
+          <option>Custom</option>
+          <option>Fast Mode</option>
+          <option selected>Documentation Mode</option>
+        </select>
+        <button class="btn-xs">↓ Export</button>
+        <button class="btn-xs">↑ Import</button>
+      </div>
+
+      <!-- Recording -->
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Recording Settings
+        </div>
+        <div class="settings-section-body">
+          <div class="setting-row">
+            <div>
+              <div class="setting-name">Auto-Capture Screenshots</div>
+              <div class="setting-desc">Capture at regular intervals</div>
+            </div>
+            <div class="toggle on"></div>
+          </div>
+          <div class="setting-row" style="padding-left:12px;border-left:2px solid rgba(59,130,246,.25)">
+            <div class="setting-name" style="color:var(--text-secondary)">Every</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <input class="num-input" value="3">
+              <span style="font-size:11px;color:var(--text-muted)">seconds</span>
+            </div>
+          </div>
+          <div class="setting-row" style="padding-left:12px;border-left:2px solid rgba(59,130,246,.25)">
+            <div class="setting-name" style="color:var(--text-secondary)">Capture mode</div>
+            <select class="profile-select" style="width:120px">
+              <option selected>Both</option>
+              <option>Interval</option>
+              <option>Events only</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-name">Smart Dedup</div>
+              <div class="setting-desc">Skip identical consecutive screenshots</div>
+            </div>
+            <div class="toggle on"></div>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-name">Screenshot on Nav</div>
+            </div>
+            <div class="toggle on"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Privacy -->
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Privacy Rules
+        </div>
+        <div class="settings-section-body">
+          <div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:5px">Custom redaction patterns (regex)</div>
+            <textarea class="privacy-textarea" placeholder="api[_-]?key&#10;session[_-]?id">api[_-]?key
+bearer[_-]?token</textarea>
+          </div>
+          <div class="setting-row">
+            <div class="setting-name">Redact URL params</div>
+            <div class="toggle on"></div>
+          </div>
+          <div style="padding-left:12px;border-left:2px solid rgba(59,130,246,.25)">
+            <input style="width:100%;background:var(--bg-surface);border:1.5px solid var(--border);color:var(--text-primary);font-size:11px;padding:6px 8px;border-radius:6px;font-family:inherit;outline:none" placeholder="token,session,auth" value="token, session">
+          </div>
+        </div>
+      </div>
+
+      <!-- Storage -->
+      <div class="settings-section">
+        <div class="settings-section-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          Storage Breakdown
+          <div style="margin-left:auto"><button class="btn-xs" style="font-size:10px">🧹 Smart Cleanup</button></div>
+        </div>
+        <div class="settings-section-body" style="gap:8px">
+          <div class="storage-bar-row">
+            <div class="storage-bar-meta"><span>Checkout Flow v2</span><span>128 KB</span></div>
+            <div class="storage-bar"><div class="storage-bar-fill" style="width:100%"></div></div>
+          </div>
+          <div class="storage-bar-row">
+            <div class="storage-bar-meta"><span>Login & Auth Test</span><span>64 KB</span></div>
+            <div class="storage-bar"><div class="storage-bar-fill" style="width:50%"></div></div>
+          </div>
+          <div class="storage-bar-row">
+            <div class="storage-bar-meta"><span>Onboarding Tour</span><span>41 KB</span></div>
+            <div class="storage-bar"><div class="storage-bar-fill" style="width:32%"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" style="width:100%;margin-top:4px">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     SCREEN 3: Review Page — Cards
+══════════════════════════════════════════ -->
+<div id="review-cards" class="screen">
+  <p class="screen-title">Screen 3 — Review Page · Card View</p>
+  <div class="review-frame">
+    <!-- Sidebar -->
+    <aside class="review-sidebar">
+      <div class="sidebar-logo">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+        TestSnapper
+      </div>
+
+      <div class="sidebar-field">
+        <div class="sidebar-label">Session Name</div>
+        <input class="sidebar-input" value="Checkout Flow v2" style="font-size:13px;font-weight:600">
+      </div>
+
+      <div class="meta-grid">
+        <div class="meta-chip">
+          <div class="meta-chip-label">Steps</div>
+          <div class="meta-chip-val">14</div>
+        </div>
+        <div class="meta-chip">
+          <div class="meta-chip-label">Created</div>
+          <div class="meta-chip-val" style="font-size:10px;margin-top:2px;color:var(--text-secondary)">Yesterday</div>
+        </div>
+      </div>
+
+      <div class="sidebar-field">
+        <div class="sidebar-label">Export Format</div>
+        <select class="sidebar-select">
+          <option>Microsoft Word (.docx)</option>
+          <option>JSON Format</option>
+          <option>Excel / CSV</option>
+          <option>PDF Document</option>
+        </select>
+      </div>
+
+      <!-- Export config -->
+      <div class="export-config">
+        <div class="export-config-summary">⚙ Configure Export <span style="color:var(--text-muted);font-size:10px;margin-left:auto">▾</span></div>
+        <div class="export-config-body">
+          <div class="config-check-row"><input type="checkbox" checked> Include screenshots</div>
+          <div class="config-check-row"><input type="checkbox" checked> Include selectors</div>
+          <div class="config-check-row"><input type="checkbox"> Only failed steps</div>
+          <div style="margin-top:4px">
+            <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">Screenshot size</div>
+            <select class="sidebar-select" style="font-size:11px;padding:5px 8px">
+              <option>Full</option>
+              <option selected>Medium (800px)</option>
+              <option>Small (400px)</option>
+            </select>
+          </div>
+          <button class="sidebar-btn sidebar-btn-secondary" style="font-size:11px;padding:7px">Preview (first 5)</button>
+        </div>
+      </div>
+
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
+        <button class="sidebar-btn sidebar-btn-primary">↓ Export Documentation</button>
+        <button class="sidebar-btn sidebar-btn-secondary">✕ Close</button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="review-main">
+      <div class="review-header">
+        <div>
+          <div class="review-title">Review & Refine</div>
+          <div class="review-sub">14 documented steps · Checkout Flow v2</div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" title="Toggle theme">🌙</button>
+          <button style="padding:7px 12px;border-radius:7px;border:1px solid rgba(239,68,68,.25);background:rgba(239,68,68,.08);color:#f87171;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">✕ Delete Selection</button>
+          <button class="icon-btn" title="Undo">↺</button>
+        </div>
+      </div>
+
+      <div class="review-toolbar">
+        <div class="toolbar-search">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input placeholder="Search steps, actions, values...">
+        </div>
+        <select class="toolbar-select">
+          <option>All Actions</option>
+          <option>Click</option>
+          <option>Type</option>
+          <option>Navigate</option>
+        </select>
+        <button style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-muted);font-size:11px;cursor:pointer;font-family:inherit">Clear</button>
+        <div class="view-toggle">
+          <button class="view-btn active">☰ Cards</button>
+          <button class="view-btn">⊞ Table</button>
+        </div>
+        <button style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);font-size:11px;cursor:pointer;font-family:inherit">Remember Fields</button>
+        <button style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);font-size:11px;cursor:pointer;font-family:inherit">🔒 Privacy Audit</button>
+      </div>
+
+      <div class="review-steps">
+        <!-- Step 1 -->
+        <div class="step-card">
+          <div class="step-num">1</div>
+          <div class="step-main">
+            <div class="step-description">Navigate to checkout page at /cart/checkout</div>
+            <div class="step-meta">
+              <span class="step-badge badge-nav">navigate</span>
+              <span class="step-url">/cart/checkout</span>
+            </div>
+          </div>
+          <div class="step-screenshot"><div class="screenshot-placeholder">📷 screenshot</div></div>
+          <div class="step-actions">
+            <button class="step-action-btn delete">✕</button>
+            <button class="step-action-btn">↺</button>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="step-card" style="border-color:rgba(59,130,246,.3)">
+          <input type="checkbox" style="margin-top:3px;accent-color:var(--accent);flex-shrink:0">
+          <div class="step-num">2</div>
+          <div class="step-main">
+            <div class="step-description">Type "John Doe" into the Full Name field</div>
+            <div class="step-meta">
+              <span class="step-badge badge-type">type</span>
+              <span style="font-size:10px;color:var(--text-muted)">Full Name · input#fullName</span>
+            </div>
+            <!-- Selector Inspector (expanded) -->
+            <div class="selector-inspector">
+              <button class="inspector-toggle">Selector Inspector ▾</button>
+              <div class="inspector-row">
+                <span class="inspector-label-sm">CSS</span>
+                <code class="inspector-code">input#fullName.form-control</code>
+                <span class="stability" style="background:#22c55e">Stable</span>
+                <button style="font-size:10px;padding:2px 7px;border:1px solid var(--border);border-radius:4px;background:none;color:var(--text-muted);cursor:pointer">Copy</button>
+              </div>
+              <div class="inspector-row">
+                <span class="inspector-label-sm">XPath</span>
+                <code class="inspector-code">//*[@id="fullName"]</code>
+                <span class="stability" style="background:#22c55e">Stable</span>
+                <button style="font-size:10px;padding:2px 7px;border:1px solid var(--border);border-radius:4px;background:none;color:var(--text-muted);cursor:pointer">Copy</button>
+              </div>
+              <div style="font-size:10px;color:var(--text-muted);padding-left:52px;margin-top:3px">ID selector</div>
+            </div>
+          </div>
+          <div class="step-actions">
+            <button class="step-action-btn delete">✕</button>
+            <button class="step-action-btn">↺</button>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="step-card">
+          <div class="step-num">3</div>
+          <div class="step-main">
+            <div class="step-description">Type shipping address into Address Line 1</div>
+            <div class="step-meta">
+              <span class="step-badge badge-type">type</span>
+              <span style="font-size:10px;color:var(--text-muted)">Address Line 1</span>
+            </div>
+          </div>
+          <div class="step-actions">
+            <button class="step-action-btn delete">✕</button>
+            <button class="step-action-btn">↺</button>
+          </div>
+        </div>
+
+        <!-- Step 4 -->
+        <div class="step-card">
+          <div class="step-num">4</div>
+          <div class="step-main">
+            <div class="step-description">Click the "Continue to Payment" button</div>
+            <div class="step-meta">
+              <span class="step-badge badge-click">click</span>
+              <span style="font-size:10px;color:var(--text-muted)">Continue to Payment · button.btn-primary</span>
+            </div>
+          </div>
+          <div class="step-screenshot"><div class="screenshot-placeholder">📷 screenshot</div></div>
+          <div class="step-actions">
+            <button class="step-action-btn delete">✕</button>
+            <button class="step-action-btn">↺</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     SCREEN 4: Review Page — Table View
+══════════════════════════════════════════ -->
+<div id="review-table" class="screen">
+  <p class="screen-title">Screen 4 — Review Page · Table View</p>
+  <div class="review-frame">
+    <aside class="review-sidebar">
+      <div class="sidebar-logo">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+        TestSnapper
+      </div>
+      <div class="sidebar-field">
+        <div class="sidebar-label">Session Name</div>
+        <input class="sidebar-input" value="Checkout Flow v2" style="font-size:13px;font-weight:600">
+      </div>
+      <div class="meta-grid">
+        <div class="meta-chip"><div class="meta-chip-label">Steps</div><div class="meta-chip-val">14</div></div>
+        <div class="meta-chip"><div class="meta-chip-label">Created</div><div class="meta-chip-val" style="font-size:10px;margin-top:2px;color:var(--text-secondary)">Yesterday</div></div>
+      </div>
+      <div class="sidebar-field">
+        <div class="sidebar-label">Export Format</div>
+        <select class="sidebar-select"><option>Microsoft Word (.docx)</option></select>
+      </div>
+      <div class="export-config">
+        <div class="export-config-summary">⚙ Configure Export <span style="color:var(--text-muted);font-size:10px;margin-left:auto">▸</span></div>
+      </div>
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
+        <button class="sidebar-btn sidebar-btn-primary">↓ Export Documentation</button>
+        <button class="sidebar-btn sidebar-btn-secondary">✕ Close</button>
+      </div>
+    </aside>
+
+    <div class="review-main">
+      <div class="review-header">
+        <div>
+          <div class="review-title">Review & Refine</div>
+          <div class="review-sub">14 documented steps · Checkout Flow v2</div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn">🌙</button>
+          <button style="padding:7px 12px;border-radius:7px;border:1px solid rgba(239,68,68,.25);background:rgba(239,68,68,.08);color:#f87171;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">✕ Delete Selection</button>
+          <button class="icon-btn">↺</button>
+        </div>
+      </div>
+
+      <div class="review-toolbar">
+        <div class="toolbar-search">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input placeholder="Search steps, actions, values...">
+        </div>
+        <select class="toolbar-select"><option>All Actions</option></select>
+        <div class="view-toggle">
+          <button class="view-btn">☰ Cards</button>
+          <button class="view-btn active">⊞ Table</button>
+        </div>
+        <button style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);font-size:11px;cursor:pointer;font-family:inherit">Remember Fields</button>
+        <button style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);font-size:11px;cursor:pointer;font-family:inherit">🔒 Privacy Audit</button>
+      </div>
+
+      <div class="review-table-wrap">
+        <table class="review-table">
+          <thead>
+            <tr>
+              <th style="width:36px">#</th>
+              <th>Action</th>
+              <th>Field Name</th>
+              <th>Value</th>
+              <th>Notes</th>
+              <th>Selector</th>
+              <th>URL</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="color:var(--text-muted);text-align:center;font-family:'Geist Mono',monospace;font-size:11px">1</td>
+              <td><span class="step-badge badge-nav">navigate</span></td>
+              <td class="table-editable" contenteditable>Page Navigation</td>
+              <td class="table-editable table-mono" contenteditable>/cart/checkout</td>
+              <td class="table-editable" contenteditable style="color:var(--text-muted)"></td>
+              <td class="table-mono">—</td>
+              <td class="table-mono">/cart/checkout</td>
+              <td class="table-mono" style="white-space:nowrap;font-size:10px;color:var(--text-muted)">3:12:01 PM</td>
+            </tr>
+            <tr style="background:rgba(59,130,246,.04)">
+              <td style="color:var(--text-muted);text-align:center;font-family:'Geist Mono',monospace;font-size:11px">2</td>
+              <td><span class="step-badge badge-type">type</span></td>
+              <td class="table-editable" contenteditable style="outline:2px solid var(--accent);outline-offset:-2px;background:rgba(59,130,246,.08);border-radius:4px">Full Name</td>
+              <td class="table-editable" contenteditable>John Doe</td>
+              <td class="table-editable" contenteditable style="color:var(--text-muted)"></td>
+              <td class="table-mono">input#fullName</td>
+              <td class="table-mono">/cart/checkout</td>
+              <td class="table-mono" style="white-space:nowrap;font-size:10px;color:var(--text-muted)">3:12:14 PM</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-muted);text-align:center;font-family:'Geist Mono',monospace;font-size:11px">3</td>
+              <td><span class="step-badge badge-type">type</span></td>
+              <td class="table-editable" contenteditable>Address Line 1</td>
+              <td class="table-editable" contenteditable>123 Main St</td>
+              <td class="table-editable" contenteditable style="color:var(--text-muted)"></td>
+              <td class="table-mono">input[name="addr1"]</td>
+              <td class="table-mono">/cart/checkout</td>
+              <td class="table-mono" style="white-space:nowrap;font-size:10px;color:var(--text-muted)">3:12:22 PM</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-muted);text-align:center;font-family:'Geist Mono',monospace;font-size:11px">4</td>
+              <td><span class="step-badge badge-click">click</span></td>
+              <td class="table-editable" contenteditable>Continue to Payment</td>
+              <td class="table-editable" contenteditable style="color:var(--text-muted)">—</td>
+              <td class="table-editable" contenteditable style="color:var(--text-muted)"></td>
+              <td class="table-mono">button.btn-primary</td>
+              <td class="table-mono">/cart/checkout</td>
+              <td class="table-mono" style="white-space:nowrap;font-size:10px;color:var(--text-muted)">3:12:35 PM</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-muted);text-align:center;font-family:'Geist Mono',monospace;font-size:11px">5</td>
+              <td><span class="step-badge badge-type">type</span></td>
+              <td class="table-editable" contenteditable>Card Number</td>
+              <td class="table-editable" contenteditable>**** **** **** ****</td>
+              <td class="table-editable" contenteditable>Sensitive — redacted</td>
+              <td class="table-mono">input[name="card"]</td>
+              <td class="table-mono">/cart/payment</td>
+              <td class="table-mono" style="white-space:nowrap;font-size:10px;color:var(--text-muted)">3:13:01 PM</td>
+            </tr>
+            <tr>
+              <td style="color:var(--text-muted);text-align:center;font-family:'Geist Mono',monospace;font-size:11px">6</td>
+              <td><span class="step-badge badge-submit">submit</span></td>
+              <td class="table-editable" contenteditable>Payment Form</td>
+              <td class="table-editable" contenteditable style="color:var(--text-muted)">—</td>
+              <td class="table-editable" contenteditable style="color:var(--text-muted)"></td>
+              <td class="table-mono">form#paymentForm</td>
+              <td class="table-mono">/cart/payment</td>
+              <td class="table-mono" style="white-space:nowrap;font-size:10px;color:var(--text-muted)">3:13:18 PM</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     SCREEN 5: Floating Panel (in-page)
+══════════════════════════════════════════ -->
+<div id="floating-panel" class="screen">
+  <p class="screen-title">Screen 5 — Content Script Floating Panel (in-page overlay)</p>
+  <div class="page-simulation">
+    <!-- Fake page -->
+    <div style="background:#1e3a5f;height:44px;display:flex;align-items:center;padding:0 24px;gap:20px">
+      <div style="width:100px;height:10px;background:rgba(255,255,255,.3);border-radius:3px"></div>
+      <div style="width:60px;height:8px;background:rgba(255,255,255,.15);border-radius:3px"></div>
+      <div style="width:60px;height:8px;background:rgba(255,255,255,.15);border-radius:3px"></div>
+      <div style="width:60px;height:8px;background:rgba(255,255,255,.15);border-radius:3px"></div>
+      <div style="margin-left:auto;width:80px;height:28px;background:#3b82f6;border-radius:5px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:600;font-family:inherit">Sign In</div>
+    </div>
+    <div class="fake-page">
+      <div class="fake-sidebar">
+        <div class="fake-nav"></div>
+        <div class="fake-nav-sm"></div>
+        <div class="fake-nav-sm"></div>
+        <div class="fake-nav-sm"></div>
+        <div style="height:1px;background:#e2e8f0;margin:12px 0"></div>
+        <div class="fake-nav-sm"></div>
+        <div class="fake-nav-sm"></div>
+      </div>
+      <div class="fake-main">
+        <div style="font-size:18px;font-weight:700;color:#1e293b;margin-bottom:4px;font-family:inherit">Shipping Information</div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:20px;font-family:inherit">Step 1 of 3 — Enter your delivery details</div>
+        <div class="fake-form-card">
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;margin-bottom:6px;font-family:inherit">FULL NAME</div>
+          <div class="fake-input focused">John Doe</div>
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;margin-bottom:6px;font-family:inherit">EMAIL ADDRESS</div>
+          <div class="fake-input">john@example.com</div>
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;margin-bottom:6px;font-family:inherit">PHONE</div>
+          <div class="fake-input"></div>
+          <div class="fake-submit">Continue to Address →</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floating panel -->
+    <div class="floating-panel">
+      <div class="fp-header">
+        <div class="fp-title">
+          <div class="fp-rec-dot"></div>
+          TestSnapper
+        </div>
+        <div class="fp-timer">01:23</div>
+      </div>
+      <div class="fp-body">
+        <!-- Last step -->
+        <div class="fp-step-preview">
+          <div class="fp-step-label">Last Step</div>
+          <div class="fp-step-text">Type into <strong>Full Name</strong></div>
+        </div>
+
+        <!-- Mode indicator -->
+        <div class="fp-screenshot-mode">
+          <span>Screenshot</span>
+          <span class="fp-mode-badge">Events + 3s</span>
+        </div>
+
+        <!-- Controls -->
+        <div class="fp-controls">
+          <button class="fp-btn fp-btn-pause">⏸ Pause</button>
+          <button class="fp-btn fp-btn-stop">⏹ Stop</button>
+          <button class="fp-btn fp-btn-shot" style="flex:0.6">📷</button>
+        </div>
+
+        <!-- Note -->
+        <div class="fp-note-area">
+          <span style="font-size:12px">✏</span>
+          <span style="flex:1;font-size:11px;color:#334155">Add note to last step…</span>
+        </div>
+
+        <!-- Step count -->
+        <div class="fp-step-count">
+          <strong>7</strong> steps recorded
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function show(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.screen-nav button').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    event.target.classList.add('active');
+  }
+</script>
+</body>
+</html>
