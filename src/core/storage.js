@@ -500,6 +500,10 @@ class StorageManager {
       throw new Error('Invalid backup data structure');
     }
 
+    // SEC-001: allowlists for imported content
+    const SAFE_ID_RE = /^[0-9a-f-]{8,64}$/i;
+    const SAFE_DATA_URL_RE = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
+
     for (const [i, s] of data.sessions.entries()) {
       if (!s || typeof s.sessionId !== 'string') {
         throw new Error(`Invalid session at index ${i}: missing or invalid sessionId`);
@@ -509,6 +513,23 @@ class StorageManager {
       }
       if (s.assets !== undefined && !Array.isArray(s.assets)) {
         throw new Error(`Invalid session ${s.sessionId}: assets must be an array`);
+      }
+      // Validate step IDs are safe identifiers
+      if (Array.isArray(s.steps)) {
+        for (const [j, step] of s.steps.entries()) {
+          if (step && typeof step.id === 'string' && !SAFE_ID_RE.test(step.id)) {
+            throw new Error(`Invalid step id at session ${s.sessionId} step ${j}`);
+          }
+        }
+      }
+      // Validate asset data URLs are well-formed image URLs
+      if (Array.isArray(s.assets)) {
+        for (const [j, asset] of s.assets.entries()) {
+          const url = asset && (asset.dataUrl || asset.data);
+          if (url && typeof url === 'string' && !SAFE_DATA_URL_RE.test(url)) {
+            throw new Error(`Invalid asset dataUrl at session ${s.sessionId} asset ${j}`);
+          }
+        }
       }
     }
 

@@ -12,7 +12,7 @@
  *     stay pinned to the top of the card regardless of screenshot height.
  */
 
-import { StorageManager } from '../../storage.js';
+import { StorageManager } from '../../core/storage.js';
 import { Utils } from '../../core/utils.js';
 
 // ==================== Initialize Services ====================
@@ -425,7 +425,8 @@ function filterSteps() {
 }
 
 function saveToHistory(actionLabel) {
-  const snapshot = JSON.parse(JSON.stringify(stepsData));
+  // PERF-018: structuredClone is faster and handles more types than JSON round-trip
+  const snapshot = structuredClone(stepsData);
 
   // Truncate future if we are in the middle
   if (historyIndex < history.length - 1) {
@@ -434,7 +435,9 @@ function saveToHistory(actionLabel) {
 
   history.push({ action: actionLabel, steps: snapshot });
 
-  if (history.length > MAX_HISTORY) {
+  // Adaptive cap: keep fewer snapshots for large sessions
+  const cap = stepsData.length > 200 ? 20 : MAX_HISTORY;
+  if (history.length > cap) {
     history.shift();
   }
 
@@ -451,8 +454,8 @@ async function restoreFromHistory(targetIndex) {
   if (targetIndex < 0 || targetIndex >= history.length) return;
 
   historyIndex = targetIndex;
-  const snapshot = history[historyIndex].steps;
-  stepsData = JSON.parse(JSON.stringify(snapshot));
+  // PERF-018: reuse the already-frozen snapshot; clone so live edits don't corrupt history
+  stepsData = structuredClone(history[historyIndex].steps);
 
   // Persist to DB
   await storage.updateAllSteps(sessionId, stepsData);
@@ -500,22 +503,28 @@ async function buildAssetCache() {
  * whether the asset was captured in the current session (blob still live)
  * or loaded from a previous one (only data survives).
  */
+const SAFE_DATA_URL_RE = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
+
 async function resolveScreenshotUrl(asset) {
   // 1. If .blob is a real Blob, convert it (live-session fast path)
   if (asset.blob && asset.blob instanceof Blob && asset.blob.size > 0) {
     try {
-      return await Utils.blobToDataURL(asset.blob);
+      const url = await Utils.blobToDataURL(asset.blob);
+      // SEC-001: reject non-image data URLs from untrusted blobs
+      if (!SAFE_DATA_URL_RE.test(url)) return null;
+      return url;
     } catch (err) {
       console.warn('blobToDataURL failed, falling back to asset.data:', err);
     }
   }
 
   // 2. Fall back to the persisted base64 data-URL string
-  if (typeof asset.data === 'string' && asset.data.length > 0) {
+  // SEC-001: only accept well-formed image data URLs to prevent HTML injection
+  if (typeof asset.data === 'string' && SAFE_DATA_URL_RE.test(asset.data)) {
     return asset.data;
   }
 
-  return null; // nothing usable
+  return null; // nothing usable or failed validation
 }
 
 async function renderSteps() {
@@ -561,14 +570,16 @@ async function renderSteps() {
     const description = step.description || generateStepDescription(step);
     const screenshotData = screenshotMap.get(step.id) || null;
     const safeDescription = Utils.escapeHtml(description);
+    // SEC-001: escape step.id before use in HTML attributes
+    const safeId = Utils.escapeHtml(step.id);
     // UX-016: Show step.sequence (stable position), not filtered list index
     const badgeNum = step.sequence || (index + 1);
 
     return `
       <div class="add-between">
-         <button class="btn-add" data-before-step-id="${step.id}" title="Add step here" aria-label="Add step before step ${badgeNum}">+</button>
+         <button class="btn-add" data-before-step-id="${safeId}" title="Add step here" aria-label="Add step before step ${badgeNum}">+</button>
       </div>
-      <div class="step-card" data-step-id="${step.id}">
+      <div class="step-card" data-step-id="${safeId}">
         <div class="step-number-badge">${badgeNum}</div>
 
         <!-- align-items: flex-start keeps checkbox / handle / delete
@@ -583,7 +594,7 @@ async function renderSteps() {
 
           <!-- checkbox – fixed width, top-aligned -->
           <div style="display: flex; align-items: flex-start; justify-content: center; width: 40px; flex-shrink: 0; padding-top: 8px;">
-            <input type="checkbox" class="step-checkbox" data-step-id="${step.id}"
+            <input type="checkbox" class="step-checkbox" data-step-id="${safeId}"
                    ${step.selected ? 'checked' : ''}
                    draggable="false"
                    style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--primary);">
@@ -593,13 +604,13 @@ async function renderSteps() {
           <div class="step-main">
             <textarea
               class="step-description-area"
-              data-step-id="${step.id}"
+              data-step-id="${safeId}"
               placeholder="Describe this step..."
               draggable="false"
               rows="1">${safeDescription}</textarea>
 
             ${screenshotData ? `
-              <div class="screenshot-container" id="img-${step.id}" data-step-id="${step.id}">
+              <div class="screenshot-container" id="img-${safeId}" data-step-id="${safeId}">
                 <img src="${screenshotData}" alt="Interaction Screenshot" loading="lazy">
               </div>
             ` : ''}
@@ -608,7 +619,7 @@ async function renderSteps() {
           <!-- delete button – top-aligned -->
           <div class="step-actions" style="flex-shrink: 0; padding-top: 4px;">
             <button class="icon-btn delete-btn" title="Delete Step" aria-label="Delete step ${badgeNum}"
-                    data-step-id="${step.id}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
+                    data-step-id="${safeId}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
               ✕
             </button>
           </div>

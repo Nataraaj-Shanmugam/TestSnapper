@@ -996,6 +996,11 @@ function captureNavigation() {
 
   lastNavigationUrl = currentUrl;
 
+  // SEC-002: If a sensitive field (password, CC, SSN, etc.) is active when the
+  // navigation fires, suppress the automatic screenshot so PII isn't captured.
+  const activeEl = document.activeElement;
+  const suppressScreenshot = activeEl && redactor && redactor.shouldIgnoreField(activeEl);
+
   const stepData = {
     action: 'navigate',
     selector: null,
@@ -1004,6 +1009,7 @@ function captureNavigation() {
     url: currentUrl,
     value: currentUrl,
     isSensitive: false,
+    hasScreenshot: !suppressScreenshot,
     // PERF-010+FUNC-012: Explicitly mark as non-manual so the background applies
     // rate limiting and does NOT call tabs.update({active:true}) (which yanked
     // focus back to the recorded tab on every SPA navigation).
@@ -1011,7 +1017,7 @@ function captureNavigation() {
   };
 
   sendStepToBackground(stepData);
-  console.log('Navigation captured:', currentUrl);
+  console.log('Navigation captured:', currentUrl, suppressScreenshot ? '(screenshot suppressed — sensitive field active)' : '');
 }
 
 /**
@@ -1545,6 +1551,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       stopRecording();
       sendResponse({ success: true });
       break;
+
+    // SEC-002: Background queries before auto-capturing to skip sensitive pages
+    case 'isSensitiveFieldActive': {
+      var activeEl = document.activeElement;
+      var isSensitive = !!(activeEl && redactor && redactor.shouldIgnoreField(activeEl));
+      sendResponse({ sensitive: isSensitive });
+      break;
+    }
 
     case 'beforeScreenshot':
       if (floatingPanelContainer) floatingPanelContainer.style.display = 'none';

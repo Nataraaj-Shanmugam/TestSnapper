@@ -579,6 +579,19 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
     return { success: false, error: 'Rate limited' };
   }
 
+  // SEC-002: Skip auto-screenshots when a sensitive field (password, CC, SSN…) is active
+  if (!isManual) {
+    try {
+      const sensitiveCheck = await chrome.tabs.sendMessage(tabId, { action: 'isSensitiveFieldActive' });
+      if (sensitiveCheck?.sensitive) {
+        console.log('🔒 Auto-screenshot suppressed — sensitive field is active');
+        return { success: false, error: 'Sensitive field active' };
+      }
+    } catch (_) {
+      // Content script not yet ready; allow capture to proceed
+    }
+  }
+
   try {
     const tab = await chrome.tabs.get(tabId);
 

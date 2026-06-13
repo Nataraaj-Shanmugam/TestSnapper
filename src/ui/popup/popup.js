@@ -566,29 +566,25 @@ async function handleBackupAll() {
   try {
     showMessage("Preparing backup...", "info");
 
-    const response = await chrome.runtime.sendMessage({ action: "exportAllData" });
+    // PERF-016: call exportAllData() directly in window context — no message bus, no 64MB limit.
+    // FSStorageManager reads from filesystem (or chrome.storage with a size guard) directly.
+    const backupData = await fsStorage.exportAllData();
 
-    if (response.success) {
-      const backupData = response.data;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-      const filename = `testsnapper-backup-${timestamp}.json`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+    const filename = `testsnapper-backup-${timestamp}.json`;
 
-      // Create download
-      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
 
-      showMessage(`Backup saved: ${filename}`, "success");
-    } else {
-      showMessage("Backup failed: " + (response.error || "Unknown error"), "error");
-    }
+    showMessage(`Backup saved: ${filename}`, "success");
   } catch (err) {
     console.error("Backup failed:", err);
-    showMessage("Error creating backup", "error");
+    showMessage("Error creating backup: " + err.message, "error");
   }
 }
 
@@ -617,18 +613,12 @@ async function handleRestoreAll(event) {
       throw new Error("Invalid backup file format");
     }
 
-    const response = await chrome.runtime.sendMessage({
-      action: "importAllData",
-      data: backupData
-    });
+    // PERF-016: call importData() directly in window context — no 64MB message limit.
+    await fsStorage.importData(backupData);
 
-    if (response.success) {
-      showMessage(`Restored ${backupData.sessions.length} sessions successfully`, "success");
-      await loadSessions();
-      await updateStorageUsage();
-    } else {
-      showMessage("Restore failed: " + (response.error || "Unknown error"), "error");
-    }
+    showMessage(`Restored ${backupData.sessions.length} sessions successfully`, "success");
+    await loadSessions();
+    await updateStorageUsage();
   } catch (err) {
     console.error("Restore failed:", err);
     showMessage("Error restoring backup: " + err.message, "error");
