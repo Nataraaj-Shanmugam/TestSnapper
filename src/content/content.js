@@ -29,6 +29,7 @@ var isModalOpen;
 var modalTimeout;
 var navigationCheckInterval;
 var sessionValidationInterval;
+var autoScreenshotInterval;
 // Track last interactions to prevent duplicates
 var lastInteraction;
 // Pending input timeouts per element
@@ -56,6 +57,7 @@ if (!window.__testSnapperInitialized) {
   modalTimeout = null;
   navigationCheckInterval = null;
   sessionValidationInterval = null;
+  autoScreenshotInterval = null;
   lastInteraction = { element: null, action: null, timestamp: 0, value: null };
   pendingInputs = new Map();
   modalQueue = [];
@@ -998,8 +1000,11 @@ function captureNavigation() {
 
   // SEC-002: If a sensitive field (password, CC, SSN, etc.) is active when the
   // navigation fires, suppress the automatic screenshot so PII isn't captured.
+  // Also honor the "Screenshot Before Navigation" setting (captureOnNavigation):
+  // the navigation step is still recorded, but no screenshot is attached when off.
   const activeEl = document.activeElement;
-  const suppressScreenshot = activeEl && redactor && redactor.shouldIgnoreField(activeEl);
+  const navScreenshotEnabled = !sessionSettings || sessionSettings.captureOnNavigation !== false;
+  const suppressScreenshot = !navScreenshotEnabled || (activeEl && redactor && redactor.shouldIgnoreField(activeEl));
 
   const stepData = {
     action: 'navigate',
@@ -1090,6 +1095,10 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
     clearInterval(sessionValidationInterval);
     sessionValidationInterval = null;
   }
+  if (autoScreenshotInterval) {
+    clearInterval(autoScreenshotInterval);
+    autoScreenshotInterval = null;
+  }
 
   // Use AbortController for automatic cleanup
   eventListenerController = new AbortController();
@@ -1124,6 +1133,19 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
       captureNavigation();
     }
   }, 1000);
+
+  // Auto-Capture Screenshots: when enabled, request a (non-manual) screenshot
+  // every N seconds while actively recording. Background applies rate limiting
+  // and sensitive-field suppression (SEC-002). Paused state no-ops via isRecording.
+  if (sessionSettings && sessionSettings.autoScreenshot) {
+    var autoSecs = Math.max(1, Math.min(60, parseInt(sessionSettings.screenshotSeconds) || 5));
+    autoScreenshotInterval = setInterval(function() {
+      if (isRecording && !isModalOpen) {
+        chrome.runtime.sendMessage({ action: 'captureScreenshot', isManual: false });
+      }
+    }, autoSecs * 1000);
+    console.log('Auto-screenshot enabled: every ' + autoSecs + 's');
+  }
 
   console.log('Content script: Recording started');
 }
@@ -1200,6 +1222,10 @@ function stopRecording() {
   if (sessionValidationInterval) {
     clearInterval(sessionValidationInterval);
     sessionValidationInterval = null;
+  }
+  if (autoScreenshotInterval) {
+    clearInterval(autoScreenshotInterval);
+    autoScreenshotInterval = null;
   }
 
   pendingInputs.forEach(timeoutId => clearTimeout(timeoutId));
@@ -1533,7 +1559,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
       }
       // FUNC-011: Pass settings so auto-screenshot survives navigation.
-      startRecording(message.sessionId, false, message.session?.createdAt, message.session?.settings);
+      // Background sends settings as a top-level field (message.settings), not nested.
+      startRecording(message.sessionId, false, message.session?.createdAt, message.settings);
       sendResponse({ success: true });
       break;
 

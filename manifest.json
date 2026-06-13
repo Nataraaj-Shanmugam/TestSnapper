@@ -14,7 +14,8 @@
     "storage",
     "downloads",
     "scripting",
-    "notifications"
+    "notifications",
+    "webRequest"
   ],
 
   "host_permissions": [

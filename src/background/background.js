@@ -678,6 +678,123 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
   }
 }
 
+// ==================== API Call Capture (webRequest) ====================
+
+/**
+ * Captures XHR/fetch requests on the recorded tab as 'apicall' steps while
+ * recording, gated by the captureApiCalls / captureFailedCalls / captureAllCalls
+ * settings. Observation-only — reads method/url/status/type, never request or
+ * response bodies, so payloads are not captured.
+ *
+ * Decision logic (master captureApiCalls must be on):
+ *   captureFailedCalls (and not captureAllCalls) → record only failures
+ *   captureAllCalls, or neither sub-flag          → record all requests
+ *
+ * Limitation: webRequest listeners are attached at runtime and are re-attached
+ * on resume, but not across a cold service-worker restart mid-recording.
+ */
+const ApiCapture = {
+  _attached: false,
+  _tabId: null,
+  _settings: null,
+  _onCompleted: null,
+  _onError: null,
+
+  start(tabId, settings) {
+    this.stop();
+    if (!settings || !settings.captureApiCalls) return;
+    if (typeof chrome === 'undefined' || !chrome.webRequest) return;
+
+    this._tabId = tabId;
+    this._settings = settings;
+
+    const filter = { urls: ['<all_urls>'], tabId, types: ['xmlhttprequest'] };
+
+    this._onCompleted = (details) => {
+      const ok = details.statusCode < 400;
+      this._maybeRecord(details, details.statusCode, ok);
+    };
+    this._onError = (details) => {
+      this._maybeRecord(details, 0, false);
+    };
+
+    try {
+      chrome.webRequest.onCompleted.addListener(this._onCompleted, filter);
+      chrome.webRequest.onErrorOccurred.addListener(this._onError, filter);
+      this._attached = true;
+      console.log('🌐 API capture attached for tab', tabId);
+    } catch (err) {
+      console.warn('API capture failed to attach:', err);
+    }
+  },
+
+  stop() {
+    if (this._attached) {
+      try {
+        if (this._onCompleted) chrome.webRequest.onCompleted.removeListener(this._onCompleted);
+        if (this._onError) chrome.webRequest.onErrorOccurred.removeListener(this._onError);
+      } catch (_) { /* listeners already gone */ }
+    }
+    this._attached = false;
+    this._tabId = null;
+    this._settings = null;
+    this._onCompleted = null;
+    this._onError = null;
+  },
+
+  _shouldRecord(ok) {
+    const s = this._settings;
+    if (!s || !s.captureApiCalls) return false;
+    const failedOnly = s.captureFailedCalls && !s.captureAllCalls;
+    if (failedOnly) return !ok;
+    return true; // captureAllCalls, or master-on default → all
+  },
+
+  async _maybeRecord(details, status, ok) {
+    if (!stateManager.isRecording()) return;
+    if (!this._shouldRecord(ok)) return;
+    try {
+      const method = (details.method || 'GET').toUpperCase();
+      const displayUrl = ApiCapture._stripQuery(details.url);
+      const sequence = await stateManager.incrementStepCount();
+      const step = {
+        id: Utils.generateUUID(),
+        sessionId: stateManager.session.sessionId,
+        sequence,
+        action: 'apicall',
+        fieldName: 'API Call',
+        targetLabel: method,
+        url: details.url,
+        value: method,
+        apiStatus: ok ? status : (status || 'failed'),
+        isSensitive: false,
+        isManual: false,
+        hasScreenshot: false,
+        description: `${method} ${displayUrl} → ${ok ? status : (status || 'failed')}`
+      };
+      if (this._settings && this._settings.includeTimestamp !== false) {
+        step.timestamp = new Date().toISOString();
+      }
+
+      await storage.addStep(step);
+      await storage.updateSession(stateManager.session);
+      await persistActiveRecording();
+      broadcastSessionChange(stateManager.session.sessionId, 'steps_changed');
+    } catch (err) {
+      console.warn('API capture step failed:', err);
+    }
+  },
+
+  _stripQuery(url) {
+    try {
+      const u = new URL(url);
+      return u.origin + u.pathname;
+    } catch (_) {
+      return (url || '').split('?')[0];
+    }
+  }
+};
+
 // ==================== Recording Actions ====================
 
 async function startRecording(tabId, tabInfo) {
@@ -731,6 +848,9 @@ async function startRecording(tabId, tabInfo) {
       settings: settings
     });
 
+    // API call capture (gated on captureApiCalls inside start())
+    ApiCapture.start(tabId, settings);
+
     console.log('✅ Recording started:', session.sessionId);
     return { success: true, sessionId: session.sessionId };
 
@@ -750,6 +870,7 @@ async function pauseRecording(tabId) {
   stateManager.pauseRecording();
   await persistActiveRecording();
   await BadgeManager.setPaused(tabId);
+  ApiCapture.stop();
 
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'pauseRecording' });
@@ -768,6 +889,7 @@ async function resumeRecording(tabId) {
   stateManager.resumeRecording();
   await persistActiveRecording();
   await BadgeManager.setRecording(tabId);
+  ApiCapture.start(tabId, await settingsManager.get());
 
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'resumeRecording' });
@@ -787,6 +909,7 @@ async function stopRecording(tabId) {
     const sessionId = stateManager.stopRecording();
     await persistActiveRecording();
     await BadgeManager.clear(tabId);
+    ApiCapture.stop();
 
     try {
       await chrome.tabs.sendMessage(tabId, { action: 'stopRecording' });

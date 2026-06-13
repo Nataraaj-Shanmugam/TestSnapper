@@ -32,7 +32,7 @@
     <div class="tabs">
       <button class="tab active" data-tab="recording">Recording</button>
       <button class="tab" data-tab="export">Export</button>
-      <!-- <button class="tab" data-tab="settings">Settings</button> -->
+      <button class="tab" data-tab="settings">Settings</button>
     </div>
 
     <div class="message" id="message"></div>
@@ -197,6 +197,46 @@
             <span>Smart Duplicate Detection</span>
           </label>
         </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="includeTimestamp" checked>
+            <span>Include Timestamps</span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>Screenshot Capture Format:</label>
+          <select id="screenshotFormat" class="select">
+            <option value="png" selected>PNG — lossless (best quality)</option>
+            <option value="jpeg-high">JPEG — high (smaller files)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="export-section">
+        <h3><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg> API Call Capture</h3>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="captureApiCalls">
+            <span>Record network/API calls (XHR &amp; fetch)</span>
+          </label>
+
+          <div class="sub-settings" id="apiCallsOptions" style="display: none; margin-left: 24px; margin-top: 8px;">
+            <label class="checkbox-label">
+              <input type="checkbox" id="captureAllCalls" checked>
+              <span>All requests</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="captureFailedCalls">
+              <span>Failed requests only (HTTP &ge; 400 / errors)</span>
+            </label>
+          </div>
+        </div>
+        <p style="font-size: 11px; color: #888; margin: 4px 0 0 24px;">
+          Captures method, URL, and status only — never request or response bodies.
+        </p>
       </div>
 
       <div class="storage-section">
@@ -220,11 +260,11 @@
         </div>
 
         <div class="form-group">
-          <label>Image Quality (DOCX/PDF):</label>
-          <select id="imageQuality" class="select">
-            <option value="0.85">Standard (85%)</option>
-            <option value="0.92" selected>High (92%)</option>
-            <option value="0.95">Very High (95%)</option>
+          <label>Export Image Quality (DOCX/PDF):</label>
+          <select id="exportImageQuality" class="select">
+            <option value="auto" selected>Auto — sharp text, balanced</option>
+            <option value="high">High — best fidelity (largest)</option>
+            <option value="standard">Standard — smaller files</option>
           </select>
         </div>
       </div>

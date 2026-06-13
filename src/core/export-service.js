@@ -98,6 +98,9 @@ export class ExportService {
     // Clear any previous cancellation
     this._clearCancellation(sessionId);
 
+    // Resolve the user's export image-quality preference once per export.
+    this._imgOpts = await this._resolveExportImageOpts();
+
     console.log('Starting export:', format, 'for session:', sessionId);
 
     // Check cancellation
@@ -146,6 +149,33 @@ export class ExportService {
   }
 
   // ==================== Private Helpers ====================
+
+  /**
+   * Resolve the export image format/quality from the user's
+   * `exportImageQuality` setting. Falls back to 'auto' (recommended) if the
+   * setting is missing or chrome.storage is unavailable (e.g. tests).
+   *   'auto'     → content-aware PNG/JPEG, quality 0.92 (sharp text, balanced)
+   *   'high'     → content-aware, quality 0.95 (largest, best fidelity)
+   *   'standard' → JPEG ~0.85 (smallest files)
+   * @private
+   * @returns {Promise<{format: string, quality: number}>}
+   */
+  async _resolveExportImageOpts() {
+    let pref = 'auto';
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        const r = await chrome.storage.local.get('settings');
+        pref = r?.settings?.exportImageQuality || 'auto';
+      }
+    } catch (_) { /* default */ }
+
+    switch (pref) {
+      case 'high': return { format: 'auto', quality: 0.95 };
+      case 'standard': return { format: 'jpeg-standard', quality: 0.85 };
+      case 'auto':
+      default: return { format: 'auto', quality: 0.92 };
+    }
+  }
 
   _formatSessionData(session, stepCount) {
     return {
@@ -553,7 +583,8 @@ export class ExportService {
     try {
       const { Paragraph, ImageRun } = window.docx;
       const imgObj = await ImageProcessor.processForExport(rawUrl, {
-        maxWidth: 1920, maxHeight: 1080, displayWidth: 600, displayHeight: 450, format: 'auto', quality: 0.92
+        maxWidth: 1920, maxHeight: 1080, displayWidth: 600, displayHeight: 450,
+        ...(this._imgOpts || { format: 'auto', quality: 0.92 })
       });
       const bytes = new Uint8Array(await (await fetch(imgObj.dataUrl)).arrayBuffer());
       const type = /^data:image\/png/i.test(imgObj.dataUrl) ? 'png' : 'jpg';
@@ -689,7 +720,8 @@ export class ExportService {
               // EXP-IMG-002/003: content-aware, lossless-for-text pipeline.
               // EXP-IMG-004: single unit — set display width only, omit height (aspect follows).
               const imgObj = await ImageProcessor.processForExport(rawUrl, {
-                maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525, format: 'auto', quality: 0.92
+                maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525,
+                ...(this._imgOpts || { format: 'auto', quality: 0.92 })
               });
               html += `<br><img src="${imgObj.dataUrl}" width="${imgObj.width}" class="screenshot-img" alt="Manual Screenshot"/>`;
               // Null out immediately after use
@@ -762,7 +794,8 @@ export class ExportService {
           if (rawUrl) {
             // EXP-IMG-002/003/004: lossless-for-text pipeline, display-width only.
             const imgObj = await ImageProcessor.processForExport(rawUrl, {
-              maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525, format: 'auto', quality: 0.92
+              maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525,
+              ...(this._imgOpts || { format: 'auto', quality: 0.92 })
             });
             html += `
     <div class='auto-screenshot'>
@@ -935,7 +968,8 @@ export class ExportService {
         if (rawUrl) {
           // Content-aware, lossless-for-text pipeline (PNG stays PNG)
           const result = await ImageProcessor.processForExport(rawUrl, {
-            maxWidth: 1920, maxHeight: 1080, format: 'auto', quality: 0.92
+            maxWidth: 1920, maxHeight: 1080,
+            ...(this._imgOpts || { format: 'auto', quality: 0.92 })
           });
           // jsPDF needs 'PNG' or 'JPEG'; derive from the actual mime type
           const fmt = /^data:image\/png/i.test(result.dataUrl) ? 'PNG' : 'JPEG';

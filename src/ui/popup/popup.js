@@ -664,7 +664,6 @@ async function handleSaveSettings() {
       maxSessions: maxSessionsValue,
       screenshotFormat: screenshotFormatValue,
       exportImageQuality: exportImageQualityValue,
-      imageQuality: screenshotFormatValue === 'jpeg-high' ? 0.92 : 0.92,
       captureApiCalls: captureApiCalls?.checked || false,
       captureFailedCalls: captureFailedCalls?.checked || false,
       captureAllCalls: captureAllCalls?.checked || false,
