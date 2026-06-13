@@ -25,7 +25,15 @@
  *
  * SEC-003: URL sanitization at export time — strips sensitive query params
  *   from step.url and navigate step.value in all export formats.
+ *
+ * EXP-IMG-001/002/003/004: image export quality — DOCX and PDF route every
+ *   screenshot through ImageProcessor.processForExport (content-aware PNG/JPEG,
+ *   lossless for text-heavy UI) instead of the old forced JPEG-0.85 downscale.
+ *   PDF now embeds screenshots via jsPDF addImage; DOCX sizes images with a
+ *   single unit and avoids page splits.
  */
+
+import { ImageProcessor } from './image-processor.js';
 
 export class ExportService {
   constructor(storage) {
@@ -364,97 +372,6 @@ export class ExportService {
   }
 
   /**
-   * Resize an image data URL for export. Caps at maxWidth=1280 to avoid
-   * retaining oversized images (PERF-003).
-   */
-  async _resizeImageForExport(dataUrl, maxWidth = 1280, maxHeight = 720) {
-    // Helper to check if we are in a Service Worker or similar context
-    const useOffscreen = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined';
-
-    if (useOffscreen) {
-      try {
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
-        const bitmap = await createImageBitmap(blob);
-
-        const { width: imgWidth, height: imgHeight } = bitmap;
-        const scale = Math.min(maxWidth / imgWidth, maxHeight / imgHeight, 1);
-
-        if (scale >= 1) {
-          bitmap.close();
-          return { dataUrl, width: imgWidth, height: imgHeight };
-        }
-
-        const canvasWidth = Math.floor(imgWidth * scale);
-        const canvasHeight = Math.floor(imgHeight * scale);
-
-        const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(bitmap, 0, 0, canvasWidth, canvasHeight);
-
-        const resizedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
-        const reader = new FileReader();
-        const resizedDataUrl = await new Promise((resolve) => {
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(resizedBlob);
-        });
-
-        bitmap.close();
-        return { dataUrl: resizedDataUrl, width: canvasWidth, height: canvasHeight };
-
-      } catch (error) {
-        console.error('Offscreen image resize failed:', error);
-        return { dataUrl, width: 1280, height: 720 };
-      }
-    } else {
-      return new Promise((resolve) => {
-        const img = new Image();
-
-        img.onload = () => {
-          try {
-            const scale = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
-
-            if (scale >= 1) {
-              resolve({ dataUrl: dataUrl, width: img.width, height: img.height });
-              return;
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.floor(img.width * scale);
-            canvas.height = Math.floor(img.height * scale);
-
-            const ctx = canvas.getContext('2d');
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-            const resized = canvas.toDataURL('image/jpeg', 0.85);
-            // Free canvas memory immediately
-            canvas.width = 0;
-            canvas.height = 0;
-            img.src = '';
-
-            resolve({ dataUrl: resized, width: Math.floor(img.width * scale), height: Math.floor(img.height * scale) });
-          } catch (error) {
-            console.error('Image resize failed:', error);
-            img.src = '';
-            resolve({ dataUrl: dataUrl, width: 1280, height: 720 });
-          }
-        };
-
-        img.onerror = () => {
-          img.src = '';
-          resolve({ dataUrl: dataUrl, width: 1280, height: 720 });
-        };
-
-        img.src = dataUrl;
-      });
-    }
-  }
-
-  /**
    * Load the local jsPDF library via chrome.runtime.getURL (FUNC-005).
    * CDN loading is intentionally removed — extension CSP blocks it.
    * @private
@@ -519,21 +436,21 @@ export class ExportService {
     li { margin: 15px 0; color: #333; font-size: 14px; }
     .screenshot-img {
       max-width: 7.29in !important;
-      max-height: 4.11in !important;
       height: auto !important;
       margin-top: 15px;
       border: 1px solid #ccc;
       display: block;
+      page-break-inside: avoid;
     }
     .automated-screenshots { margin-top: 40px; padding-top: 20px; border-top: 2px solid #3498db; }
-    .auto-screenshot { margin: 30px 0; text-align: center; }
+    .auto-screenshot { margin: 30px 0; text-align: center; page-break-inside: avoid; }
     .auto-screenshot img {
       max-width: 7.29in !important;
-      max-height: 4.11in !important;
       height: auto !important;
       margin: 15px auto;
       border: 1px solid #ccc;
       display: block;
+      page-break-inside: avoid;
     }
   </style>
 </head>
@@ -607,8 +524,12 @@ export class ExportService {
           if (asset) {
             const rawUrl = await this._resolveAssetUrl(asset);
             if (rawUrl) {
-              const imgObj = await this._resizeImageForExport(rawUrl, 1280, 720);
-              html += `<br><img src="${imgObj.dataUrl}" width="${imgObj.width}" height="${imgObj.height}" class="screenshot-img" alt="Manual Screenshot"/>`;
+              // EXP-IMG-002/003: content-aware, lossless-for-text pipeline.
+              // EXP-IMG-004: single unit — set display width only, omit height (aspect follows).
+              const imgObj = await ImageProcessor.processForExport(rawUrl, {
+                maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525, format: 'auto', quality: 0.92
+              });
+              html += `<br><img src="${imgObj.dataUrl}" width="${imgObj.width}" class="screenshot-img" alt="Manual Screenshot"/>`;
               // Null out immediately after use
               imgObj.dataUrl = null;
             }
@@ -677,11 +598,14 @@ export class ExportService {
         if (asset) {
           const rawUrl = await this._resolveAssetUrl(asset);
           if (rawUrl) {
-            const imgObj = await this._resizeImageForExport(rawUrl, 1280, 720);
+            // EXP-IMG-002/003/004: lossless-for-text pipeline, display-width only.
+            const imgObj = await ImageProcessor.processForExport(rawUrl, {
+              maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525, format: 'auto', quality: 0.92
+            });
             html += `
     <div class='auto-screenshot'>
       <p><b>Auto Screenshot ${i + 1}</b> - ${new Date(screenshot.timestamp).toLocaleTimeString()}</p>
-      <img src="${imgObj.dataUrl}" width="${imgObj.width}" height="${imgObj.height}" alt="Automated Screenshot ${i + 1}"/>
+      <img src="${imgObj.dataUrl}" width="${imgObj.width}" alt="Automated Screenshot ${i + 1}"/>
     </div>`;
             imgObj.dataUrl = null;
           }
@@ -786,28 +710,43 @@ export class ExportService {
     doc.text('Test Steps', margin, yPosition);
     yPosition += 10;
 
+    // EXP-IMG-001: build a stepId → asset index so every screenshot step can
+    // embed its image. PERF-003: keep only one asset's bytes live at a time —
+    // load + embed + null out + delete from the index as we go.
+    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const assetIndex = new Map();
+    for (const asset of screenshotAssets) {
+      if (asset.stepId) assetIndex.set(asset.stepId, asset);
+    }
+    screenshotAssets.length = 0;
+
     let stepNumber = 0;
     for (const step of steps) {
-      if (step.action !== 'screenshot' || step.isManual) {
-        stepNumber++;
+      const isScreenshot = step.action === 'screenshot';
+      stepNumber++;
 
-        if (yPosition > pageHeight - 30) {
-          doc.addPage();
-          yPosition = margin;
-        }
+      if (yPosition > pageHeight - 30) {
+        doc.addPage();
+        yPosition = margin;
+      }
 
-        doc.setFontSize(11);
-        doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(0, 0, 0);
 
-        const description = step.description ||
-          `${step.action.toUpperCase()} ${step.fieldName || ''}`;
+      const description = step.description ||
+        (isScreenshot
+          ? (step.isManual ? 'Manual screenshot' : 'Automated screenshot')
+          : `${step.action.toUpperCase()} ${step.fieldName || ''}`);
 
-        const lines = doc.splitTextToSize(`${stepNumber}. ${description}`, contentWidth);
-        lines.forEach(line => {
-          doc.text(line, margin, yPosition);
-          yPosition += 5;
-        });
+      const lines = doc.splitTextToSize(`${stepNumber}. ${description}`, contentWidth);
+      lines.forEach(line => {
+        doc.text(line, margin, yPosition);
+        yPosition += 5;
+      });
 
+      // Metadata (selector / URL) for action steps only
+      if (!isScreenshot) {
         doc.setFontSize(8);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(100, 100, 100);
@@ -830,7 +769,41 @@ export class ExportService {
         doc.setTextColor(0, 0, 0);
         yPosition += 4;
       }
+
+      // EXP-IMG-001: embed this step's screenshot, if any
+      const asset = assetIndex.get(step.id);
+      if (asset) {
+        const rawUrl = await this._resolveAssetUrl(asset);
+        if (rawUrl) {
+          // Content-aware, lossless-for-text pipeline (PNG stays PNG)
+          const result = await ImageProcessor.processForExport(rawUrl, {
+            maxWidth: 1920, maxHeight: 1080, format: 'auto', quality: 0.92
+          });
+          // jsPDF needs 'PNG' or 'JPEG'; derive from the actual mime type
+          const fmt = /^data:image\/png/i.test(result.dataUrl) ? 'PNG' : 'JPEG';
+          const ratio = result.actualHeight / result.actualWidth;
+          let imgW = contentWidth;
+          let imgH = imgW * ratio;
+          const maxImgH = pageHeight - (2 * margin);
+          if (imgH > maxImgH) { imgH = maxImgH; imgW = imgH / ratio; }
+          // Page-fit: don't split the image across a page boundary
+          if (yPosition + imgH > pageHeight - margin) {
+            doc.addPage();
+            yPosition = margin;
+          }
+          try {
+            doc.addImage(result.dataUrl, fmt, margin, yPosition, imgW, imgH, undefined, 'SLOW');
+            yPosition += imgH + 6;
+          } catch (err) {
+            console.warn('PDF addImage failed for step', step.id, err);
+          }
+          result.dataUrl = null;
+        }
+        assetIndex.delete(step.id);
+      }
     }
+
+    assetIndex.clear();
 
     const sessionName = (session.name || 'Session').replace(/[^a-z0-9]/gi, '_');
     const filename = `${sessionName}_${Date.now()}.pdf`;

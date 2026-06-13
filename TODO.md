@@ -1,65 +1,96 @@
-﻿# TestSnapper â€” Remaining Fix TODO
+# TestSnapper — Export Image Quality & Positioning
 
-8 items remaining after the V1.1.6 fix pass. All Critical and High severity issues resolved.
-For the full original 58-item list see git history. For reasoning/snippets behind any item, open `Observations/<ID>-*.md`.
+All 58 items from the prior full-repo review are resolved (see git history:
+`8501579` V1.1.6, `9ea9518` V1.1.7). This TODO covers the next focused work:
+**making screenshots in exports as high-quality and correctly-positioned as the
+product needs.**
+
+## Why this matters (product nature)
+TestSnapper produces **QA/audit evidence documents**. The screenshots are
+text- and UI-heavy (forms, tables, error toasts) and are the actual proof a
+step happened. So the bar is:
+- **Readability over file size** — a blurry/artifacted screenshot of an error
+  message is worthless evidence. Text edges must stay crisp.
+- **Reliable embedding** — images must *actually appear* in Word/PDF across
+  versions, every time, offline.
+- **CSP-safe & offline** — extension CSP is `script-src 'self'`; only bundled
+  local libs (`libs/docx.min.js`, `libs/jspdf.umd.min.js`), no CDN.
+- **Memory-disciplined** — exports already stream one asset at a time
+  (PERF-003); any change must preserve that.
+
+## Status
+**Phase 1 complete** (EXP-IMG-001/002/003/004) — implemented directly in
+`export-service.js`, 207 tests passing, build clean. Phase 2 (EXP-IMG-005,
+`.docx` library migration) and EXP-IMG-006 (full-page/HiDPI capture) remain.
 
 ## Severity rollup
 | Severity | Remaining |
 |----------|-----------|
-| Medium   | 6         |
 | Low      | 2         |
 
 ---
 
-## src/background/background.js
+## Recommended approach (best fit for the product)
 
-- [x] **[MED][SEC-002]** Screenshots capture on-screen secrets/PII despite text redaction â€” `background.js` 509-615; also `redactor.js` 79-145, `content.js` 957-960, 1005-1014.
-  - Problem: `redactor.maskValue` masks only the recorded text `value` of sensitive fields; `captureVisibleTab` records whatever is rendered (tokens/SSNs/cards in `type=text`, OTP, "show password" reveals, PII already on the page), stored verbatim and embedded into `session.json` and DOCX/PDF.
-  - Impact: recordings/backups/exports can leak plaintext images of credentials and PII even when the field value was redacted.
-  - Fix: document clearly (UI + PRIVACY_POLICY) that screenshots are not redacted. Suppress auto-screenshot while `document.activeElement` matches `redactor.shouldIgnoreField`. Add a setting to disable screenshots on sensitive pages/fields and/or region-mask matching elements before capture.
+**Goal: lossless, correctly-sized screenshots in both DOCX and PDF, using the
+libraries already bundled, with no quality-destroying re-encode.**
 
----
+Implement in two phases. Phase 1 is the high-impact, low-risk core; Phase 2 is
+the reliability upgrade.
 
-## src/content/content.js
+### Phase 1 — Stop destroying quality + embed in PDF  *(do first)*
+1. **Wire the existing `ImageProcessor.processForExport`** (`image-processor.js`)
+   into `export-service.js`, replacing the crude `_resizeImageForExport`. Use
+   `format:'auto'` (keeps PNG for text-heavy screenshots), `quality:0.92`, and a
+   higher pixel cap (~1920 wide). This reuses code already in the repo and
+   already memory-safe (OffscreenCanvas in the SW).
+2. **Embed screenshots in PDF** via jsPDF `addImage` — currently PDF has *no*
+   images at all. Embed PNG losslessly, fit-to-`contentWidth` preserving aspect
+   ratio, `doc.addPage()` when an image won't fit.
 
-- [x] **[MED][UX-011]** Field-name modal discards typed input after 30s and has no dialog semantics/focus trap â€” `content.js` 336-350, 363-412, 441-445, 482-487.
-  - Problem: a 30s `setTimeout` calls `closeModalById(modalId, null)` and is never reset on typing; the overlay has no `role="dialog"`/`aria-modal`/`aria-labelledby`; focus is set on a timer but never restored.
-  - Impact: users lose typed field names with no warning; screen-reader users aren't told a modal opened; keyboard focus escapes behind the overlay into a page the extension thinks is paused.
-  - Fix: reset the timeout on `input` (or show a visible countdown) and on timeout submit the typed value instead of `null`; add `role="dialog"`, `aria-modal="true"`, `aria-labelledby`; trap Tab within inputâ†’Skipâ†’Confirm and restore focus to the element captured before opening.
+### Phase 2 — Reliable DOCX via the bundled `docx` library  *(do second)*
+3. **Replace the hand-rolled HTML `.doc`** with a true `.docx` built from the
+   bundled `docx` library using `ImageRun`. Sizing is in **EMUs (914400/inch)**
+   — pixel-perfect and deterministic — and images embed as binary parts, so the
+   data-URL/mixed-unit/page-break problems below all disappear at once.
 
----
-
-## src/ui/review/review-standalone.js
-
-- [x] **[MED][SEC-001]** Review page renders screenshot `src` and `step.id` into HTML unescaped (reachable via malicious imported backup) â€” `review-standalone.js` 431-538; also `storage.js` 332-370.
-  - Problem: the description is escaped, but `screenshotData` (from `resolveScreenshotUrl`, no `data:image` validation) and `step.id` are interpolated raw into `img src` and `data-*` attributes. `importData` only checks shapes, not `asset.dataUrl`/`step.id` content. (Script is blocked by CSP â€” this is HTML injection in an extension-origin page, defense-in-depth.)
-  - Impact: a crafted "Restore" backup can inject non-script HTML (spoofed UI, hidden iframes, off-origin image beacons) into the privileged review page; any future CSP relaxation makes it stored XSS.
-  - Fix: escape every interpolated attribute (`Utils.escapeHtml(step.id)` in `data-before-step-id`/`data-step-id`/checkbox). In `resolveScreenshotUrl`, only return strings matching `^data:image\/(png|jpeg|jpg|webp);base64,` else null. In `storage.importData` (+ `importAllData` handler), validate `asset.dataUrl`/`data` as `data:image/...` and constrain `step.id` to a UUID/charset allowlist before persisting.
-
-- [x] **[LOW][PERF-018]** Undo history keeps up to 50 full deep copies of the step array, persisting every restore â€” `review-standalone.js` 36-38, 372-412.
-  - Problem: every mutation snapshots `stepsData` via `JSON.parse(JSON.stringify(...))` and retains up to MAX_HISTORY=50; `restoreFromHistory` deep-copies again and triggers a full persist + re-render.
-  - Impact: tens of MB retained on a 500-step session (estimate); double-serialization per edit; undo latency dominated by the full persist/re-render it triggers.
-  - Fix: use `structuredClone(stepsData)` and/or store diffs (action + affected ids) instead of full snapshots; reuse the snapshot reference in `restoreFromHistory` instead of re-copying; optionally lower MAX_HISTORY adaptively above ~200 steps.
+If Phase 2 is deferred, apply the EXP-IMG-004 sizing fixes to the HTML path so
+the current `.doc` at least positions images correctly in the meantime.
 
 ---
 
-## src/ui/popup/popup.js (+ popup.html)
+## src/core/export-service.js
 
-- [x] **[MED][PERF-016]** Backup/restore round-trips the entire store (all screenshots) through one runtime message (~64MB limit) â€” `background.js` 1132-1144; also `storage.js` 301-322, `fs-storage.js` 794-816, `file-sync.js` 495-509.
-  - Problem: `exportAllData` builds one object with every session/step/screenshot and returns it via `sendResponse`; beyond ~64MB the message throws and backup fails. `importAllData` is the same in reverse. The payload exists as ~4-5Ã— copies across SW + popup.
-  - Impact: backup/restore fails for exactly the large data sets users most want to back up; multi-hundred-MB transient heap (estimate).
-  - Fix: when filesystem storage is ready, do backup entirely in the window context (`fsStorage.exportAllData()`) â€” never message the payload. For the buffer path, chunk by session (one message per session). Stream sessions one at a time into the output file via `FileSystemWritableFileStream`.
+- [x] **[HIGH][EXP-IMG-001]** PDF export embeds no screenshots at all — `export-service.js` 742-859.
+  - Problem: `_exportPDF` writes only text/selector/URL; `addImage` is never called, so manual + automated screenshots are silently dropped from every PDF.
+  - Impact: PDF — a primary evidence format — contains no visual proof of any step. Users exporting to PDF get a text outline only.
+  - Fix: after each step's text, load its asset, fit the image to `contentWidth` (preserve aspect ratio), `doc.addPage()` if it won't fit on the remaining page height, then `doc.addImage(pngDataUrl, 'PNG', x, y, w, h, undefined, 'SLOW')`. Embed PNG losslessly; keep the one-asset-at-a-time streaming (PERF-003).
+
+- [x] **[HIGH][EXP-IMG-002]** DOCX downscales to 1280×720 and re-encodes lossless PNG → JPEG 0.85 — `export-service.js` 370-455 (`_resizeImageForExport`), called at 610, 680.
+  - Problem: every screenshot is forced through JPEG quality 0.85 at ≤1280px, the worst-case transform for text/edge-heavy UI captures.
+  - Impact: error messages, form labels, and table text become blurry/artifacted in the exported document — the evidence is degraded.
+  - Fix: route through `ImageProcessor.processForExport` with `format:'auto'`, `quality:0.92`, cap ~1920 wide so PNG screenshots stay lossless and high-res. Only downscale when larger than the target; never JPEG-ify text content.
+
+- [x] **[MED][EXP-IMG-003]** `ImageProcessor.processForExport` is dead code — `image-processor.js` 78-127; not referenced anywhere.
+  - Problem: the content-aware (PNG-vs-JPEG), step-down-scaled, quality-0.92 export pipeline exists but is wired to nothing; exports use the cruder `_resizeImageForExport` instead.
+  - Impact: maintained, tested code that would fix EXP-IMG-002 sits unused; two divergent image paths to maintain.
+  - Fix: make `processForExport` the single export image path (resolves with EXP-IMG-002); delete or collapse `_resizeImageForExport` once callers migrate.
+
+- [x] **[MED][EXP-IMG-004]** DOCX `<img>` mixes px width attrs with inch CSS and allows page splits — `export-service.js` 520-537, 611, 684.
+  - Problem: `<img width="1280" height="...">` (px) plus CSS `max-width:7.29in; max-height:4.11in` is interpreted inconsistently by Word (it favors the px attribute), so images can overflow margins or render at the wrong scale; no `page-break-inside:avoid`, so an image can split across two pages.
+  - Impact: inconsistent image sizing and images cut in half at page boundaries — poor-looking evidence docs.
+  - Fix (if staying on HTML `.doc`): emit **one unit only** — set `width` to the intended *display* px (not the 1280 source px) and **omit `height`** so aspect ratio follows; add `page-break-inside:avoid` to `.screenshot-img` and `.auto-screenshot`. (Superseded entirely by EXP-IMG-005 / Phase 2.)
+
+- [ ] **[LOW][EXP-IMG-005]** HTML-as-`.doc` with base64 data-URLs is version-fragile — `export-service.js` 497-728.
+  - Problem: Word's support for `<img src="data:...">` varies by version/config (strict setups historically need MHTML/Content-Location embedding); the `.doc` is HTML, not real OOXML.
+  - Impact: on some Word installs images may not render or the file warns about format mismatch.
+  - Fix (Phase 2, recommended): build a true `.docx` with the bundled `docx` library + `ImageRun` (EMU sizing, binary-embedded images) — eliminates EXP-IMG-004 and this item together, within the export context already in use.
 
 ---
 
-## src/ui/popup/popup.css (+ review-standalone.css)
+## src/background/background.js  (optional, future)
 
-- [x] **[MED][UX-005]** Onboarding + re-auth banners use undefined `--surface` â€” backgrounds never render â€” `popup.css` 1450, 1472.
-  - Problem: `color-mix(in srgb, var(--accent) 10%, var(--surface))` references `--surface`, which is defined nowhere and has no fallback â€” the whole `background` is invalid, so the first-run onboarding CTA and re-auth warning render with transparent backgrounds.
-  - Impact: the single most important first-run prompt blends into the page instead of standing out.
-  - Fix: replace `var(--surface)` with the existing `var(--bg-card)` (or `var(--surface, var(--bg-card))`) at both lines; verify the 10% tint shows in light and dark.
-
-- [x] **[LOW][UX-014]** 9px text in format cards and session metadata is below readable size â€” `popup.css` 982-987, 1073-1079, 1153-1159.
-  - Problem: `.format-desc`, `.session-meta`, `.item-meta` hardcode 9px (below the 10px `--text-overline` token) in low-emphasis `--text-muted`, carrying real info (format descriptions, step-count + date).
-  - Impact: step counts/dates that differentiate sessions are effectively illegible in the picker.
-  - Fix: raise `.format-desc` to >=10px (preferably 11px `--text-caption`); raise `.session-meta`/`.item-meta` to 11px; if space-constrained, trim the date detail rather than the font.
+- [ ] **[LOW][EXP-IMG-006]** Capture is viewport-only at the current DPR — `background.js` 610-621.
+  - Problem: `chrome.tabs.captureVisibleTab` has no scale parameter and grabs only the visible viewport; long pages and HiDPI detail are not captured at higher fidelity.
+  - Impact: on standard-DPI displays, screenshots are only viewport-resolution; content below the fold is missing.
+  - Fix (only if users report it): use the Debugger protocol `Page.captureScreenshot` with `captureBeyondViewport:true` and a device scale factor for full-page HiDPI capture. Adds the `debugger` permission and attach/detach handling — larger change, weigh against demand.
