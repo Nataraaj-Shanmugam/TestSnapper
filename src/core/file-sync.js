@@ -10,12 +10,22 @@
  * page reloads (though a browser restart may require re-authorization via
  * a user gesture).
  *
- * Folder structure on disk:
+ * Folder structure on disk (PERF-007 split format):
  *   <chosen-folder>/
  *     .TestSnapper/
- *       sessions.json                    — lightweight index of all sessions
+ *       sessions.json                         — lightweight index of all sessions
  *       {SessionName}_{shortId}/
- *         session.json                   — metadata + steps + embedded screenshots (base64)
+ *         session.json                        — metadata + steps (NO image data)
+ *         screenshots/
+ *           {stepId}.jpg (or .png)            — binary screenshot files
+ *
+ * Screenshots are stored as separate binary files so that session.json stays
+ * small and step edits / drag-and-drop reordering only read/write the compact
+ * metadata file rather than a potentially 100MB+ combined file.
+ *
+ * FUNC-015 fix: step fields (targetLabel, isManual, hasScreenshot, sessionId,
+ * etc.) are preserved using a spread when serializing to disk, rather than an
+ * explicit allowlist that previously dropped these fields.
  */
 
 const DB_NAME = 'testsnapper_filesync';
@@ -163,7 +173,7 @@ export class FileSync {
   // ─────────────────────────────────────────────
 
   /**
-   * Open a directory picker, then auto-create .TestSnapper inside it
+   * Open a directory picker, then auto-create .TestSnapper inside it.
    * The user picks any parent folder (e.g. their home directory), and
    * we create/reuse a .TestSnapper subfolder automatically.
    * Must be called from a user gesture (click handler).
@@ -187,8 +197,8 @@ export class FileSync {
   }
 
   /**
-   * Retrieve the stored directory handle and verify permission
-   * Returns null if not configured or permission revoked
+   * Retrieve the stored directory handle and verify permission.
+   * Returns null if not configured or permission revoked.
    * @async
    * @returns {Promise<FileSystemDirectoryHandle|null>} Directory handle or null
    */
@@ -238,8 +248,8 @@ export class FileSync {
   }
 
   /**
-   * Re-request permission on a stored handle
-   * Must be called from a user gesture
+   * Re-request permission on a stored handle.
+   * Must be called from a user gesture.
    * @async
    * @returns {Promise<boolean>} true if permission granted
    */
@@ -307,6 +317,19 @@ export class FileSync {
   }
 
   /**
+   * Determine the file extension for a screenshot data URL.
+   * @private
+   * @param {string} dataURL - Screenshot data URL
+   * @returns {string} 'jpg' or 'png'
+   */
+  _screenshotExtension(dataURL) {
+    if (typeof dataURL === 'string' && dataURL.startsWith('data:image/png')) {
+      return 'png';
+    }
+    return 'jpg';
+  }
+
+  /**
    * Convert a data URL to a Blob
    * @private
    * @param {string} dataURL - Data URL string
@@ -329,12 +352,51 @@ export class FileSync {
   }
 
   /**
+   * Convert a data URL to a Uint8Array (raw bytes, no overhead).
+   * @private
+   * @param {string} dataURL - Data URL string
+   * @returns {Uint8Array|null} Raw bytes or null on error
+   */
+  _dataURLtoBytes(dataURL) {
+    try {
+      const parts = dataURL.split(',');
+      const bstr = atob(parts[1]);
+      const u8arr = new Uint8Array(bstr.length);
+      for (let i = 0; i < bstr.length; i++) {
+        u8arr[i] = bstr.charCodeAt(i);
+      }
+      return u8arr;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read the raw bytes of a file from a directory handle.
+   * Returns an ArrayBuffer or null on failure.
+   * @private
+   * @async
+   * @param {FileSystemDirectoryHandle} dirHandle
+   * @param {string} fileName
+   * @returns {Promise<ArrayBuffer|null>}
+   */
+  async _readFileBytes(dirHandle, fileName) {
+    try {
+      const fileHandle = await dirHandle.getFileHandle(fileName);
+      const file = await fileHandle.getFile();
+      return await file.arrayBuffer();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Write a file into a directory handle
    * @private
    * @async
    * @param {FileSystemDirectoryHandle} dirHandle - Directory handle
    * @param {string} fileName - File name
-   * @param {string|Uint8Array} content - File content
+   * @param {string|Uint8Array|ArrayBuffer} content - File content
    * @returns {Promise<void>}
    */
   async _writeFile(dirHandle, fileName, content) {
@@ -345,7 +407,7 @@ export class FileSync {
   }
 
   /**
-   * Read a file from a directory handle. Returns parsed JSON or null on failure
+   * Read a file from a directory handle. Returns parsed JSON or null on failure.
    * @private
    * @async
    * @param {FileSystemDirectoryHandle} dirHandle - Directory handle
@@ -364,8 +426,37 @@ export class FileSync {
   }
 
   /**
-   * Find a session folder by scanning for the sessionId suffix
-   * Returns the directory handle or null
+   * Delete a file from a directory handle (ignores NotFoundError).
+   * @private
+   * @async
+   * @param {FileSystemDirectoryHandle} dirHandle
+   * @param {string} fileName
+   * @returns {Promise<void>}
+   */
+  async _deleteFile(dirHandle, fileName) {
+    try {
+      await dirHandle.removeEntry(fileName);
+    } catch (err) {
+      if (err.name !== 'NotFoundError') {
+        console.warn(`[FileSync] _deleteFile failed for ${fileName}:`, err);
+      }
+    }
+  }
+
+  /**
+   * Get or create the screenshots/ subdirectory for a session folder.
+   * @private
+   * @async
+   * @param {FileSystemDirectoryHandle} sessionDir - Session folder handle
+   * @returns {Promise<FileSystemDirectoryHandle>} screenshots subdirectory handle
+   */
+  async _getScreenshotsDir(sessionDir, { create = true } = {}) {
+    return await sessionDir.getDirectoryHandle('screenshots', { create });
+  }
+
+  /**
+   * Find a session folder by scanning for the sessionId suffix.
+   * Returns the directory handle or null.
    * @private
    * @async
    * @param {FileSystemDirectoryHandle} handle - Root directory handle
@@ -382,6 +473,81 @@ export class FileSync {
       }
     }
     return null;
+  }
+
+  // ─────────────────────────────────────────────
+  // Screenshot file helpers (PERF-007)
+  // ─────────────────────────────────────────────
+
+  /**
+   * Write a screenshot data URL as a binary file in the screenshots/ subfolder.
+   * Returns the relative file path stored on the step: 'screenshots/{stepId}.ext'
+   * @private
+   * @async
+   * @param {FileSystemDirectoryHandle} sessionDir - Session folder handle
+   * @param {string} stepId - Step identifier
+   * @param {string} dataUrl - Screenshot data URL
+   * @returns {Promise<string>} Relative path e.g. 'screenshots/abc123.jpg'
+   */
+  async _writeScreenshot(sessionDir, stepId, dataUrl) {
+    const ext = this._screenshotExtension(dataUrl);
+    const fileName = `${stepId}.${ext}`;
+    const screenshotsDir = await this._getScreenshotsDir(sessionDir, { create: true });
+    const bytes = this._dataURLtoBytes(dataUrl);
+    if (bytes) {
+      await this._writeFile(screenshotsDir, fileName, bytes);
+    }
+    return `screenshots/${fileName}`;
+  }
+
+  /**
+   * Read a screenshot from disk and return it as a data URL.
+   * @private
+   * @async
+   * @param {FileSystemDirectoryHandle} sessionDir - Session folder handle
+   * @param {string} screenshotFile - Relative path e.g. 'screenshots/abc123.jpg'
+   * @returns {Promise<string|null>} data URL or null
+   */
+  async _readScreenshot(sessionDir, screenshotFile) {
+    try {
+      const parts = screenshotFile.split('/');
+      if (parts.length !== 2) return null;
+      const [dirName, fileName] = parts;
+      const screenshotsDir = await sessionDir.getDirectoryHandle(dirName);
+      const buf = await this._readFileBytes(screenshotsDir, fileName);
+      if (!buf) return null;
+      const ext = fileName.split('.').pop().toLowerCase();
+      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+      // Convert ArrayBuffer to base64 data URL
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return `data:${mime};base64,${btoa(binary)}`;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Delete a screenshot binary file from disk.
+   * @private
+   * @async
+   * @param {FileSystemDirectoryHandle} sessionDir
+   * @param {string} screenshotFile - e.g. 'screenshots/abc123.jpg'
+   * @returns {Promise<void>}
+   */
+  async _deleteScreenshot(sessionDir, screenshotFile) {
+    try {
+      const parts = screenshotFile.split('/');
+      if (parts.length !== 2) return;
+      const [dirName, fileName] = parts;
+      const screenshotsDir = await sessionDir.getDirectoryHandle(dirName);
+      await this._deleteFile(screenshotsDir, fileName);
+    } catch {
+      // ignore — screenshot may not exist
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -402,10 +568,11 @@ export class FileSync {
   }
 
   /**
-   * Read a full session from disk (metadata + steps + embedded screenshots)
+   * Read session metadata + steps from session.json (no screenshot data).
+   * Returns the raw session.json content or null on failure.
    * @async
    * @param {string} sessionId - Session identifier
-   * @returns {Promise<Object|null>} Full session data or null
+   * @returns {Promise<Object|null>} { version, session, steps } or null
    */
   async readSession(sessionId) {
     const handle = await this.getHandle();
@@ -418,7 +585,7 @@ export class FileSync {
   }
 
   /**
-   * Read steps for a session from disk
+   * Read steps for a session from disk (metadata only, no screenshot data).
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<Array>} Steps array or empty array
@@ -430,19 +597,38 @@ export class FileSync {
   }
 
   /**
-   * Extract screenshot assets from a session's steps
-   * Returns them in the same format the rest of the codebase expects
+   * Read screenshot assets for a session.
+   * Steps with a screenshotFile field have their screenshots loaded from
+   * the binary files in screenshots/ and returned in asset format.
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<Array>} Asset-format array [{id, sessionId, stepId, type, dataUrl}]
    */
   async readAssets(sessionId) {
-    const data = await this.readSession(sessionId);
+    const handle = await this.getHandle();
+    if (!handle) return [];
+
+    const sessionDir = await this._findSessionFolder(handle, sessionId);
+    if (!sessionDir) return [];
+
+    const data = await this._readFile(sessionDir, 'session.json');
     if (!data || !Array.isArray(data.steps)) return [];
 
     const assets = [];
     for (const step of data.steps) {
-      if (step.screenshot) {
+      if (step.screenshotFile) {
+        const dataUrl = await this._readScreenshot(sessionDir, step.screenshotFile);
+        if (dataUrl) {
+          assets.push({
+            id: `asset_${step.id}`,
+            sessionId,
+            stepId: step.id,
+            type: 'screenshot',
+            dataUrl
+          });
+        }
+      } else if (step.screenshot) {
+        // Legacy format: screenshot embedded inline — expose as asset
         assets.push({
           id: `asset_${step.id}`,
           sessionId,
@@ -488,9 +674,10 @@ export class FileSync {
   }
 
   /**
-   * Read all sessions fully (for export/import)
+   * Read all sessions fully (for export/import).
+   * Does NOT inline screenshot data — steps will have screenshotFile references.
    * @async
-   * @returns {Promise<Array<Object>>} Array of full session data objects
+   * @returns {Promise<Array<Object>>} Array of session.json content objects
    */
   async readAllSessionsFull() {
     const handle = await this.getHandle();
@@ -509,12 +696,21 @@ export class FileSync {
   }
 
   // ─────────────────────────────────────────────
-  // Write operations
+  // Write operations (PERF-007)
   // ─────────────────────────────────────────────
 
   /**
-   * Write a session to disk. Embeds screenshots as base64 in step data
-   * Also updates the sessions.json index
+   * Write a session to disk.
+   *
+   * PERF-007: Screenshots are stored as separate binary files in a
+   * screenshots/ subdirectory instead of being embedded as base64 in
+   * session.json. This keeps session.json compact so step edits and
+   * drag-and-drop reordering only read/write the small metadata file.
+   *
+   * FUNC-015: All step fields are preserved via spread (not an allowlist).
+   * The raw dataUrl is stripped from the on-disk step representation;
+   * screenshotFile replaces it.
+   *
    * @async
    * @param {Object} session - Session metadata
    * @param {Array} steps - Step objects
@@ -547,7 +743,31 @@ export class FileSync {
 
     const sessionDir = await handle.getDirectoryHandle(newFolderName, { create: true });
 
-    // Build session.json with embedded screenshots
+    // Write screenshots as separate binary files (PERF-007)
+    const serializedSteps = [];
+    for (const step of steps) {
+      const asset = assetMap.get(step.id);
+      const dataUrl = asset ? (asset.dataUrl || asset.data || null) : null;
+
+      // FUNC-015: preserve all step fields via spread.
+      // Strip the raw dataUrl / screenshot fields from on-disk representation.
+      // Add screenshotFile reference if we have screenshot data.
+      const { dataUrl: _du, screenshot: _sc, ...stepFields } = step;
+      const serializedStep = { ...stepFields };
+
+      if (dataUrl) {
+        // Write binary screenshot file; store relative path on step
+        const screenshotFile = await this._writeScreenshot(sessionDir, step.id, dataUrl);
+        serializedStep.screenshotFile = screenshotFile;
+      } else if (step.screenshotFile) {
+        // Already has a file reference from a previous write — preserve it
+        serializedStep.screenshotFile = step.screenshotFile;
+      }
+
+      serializedSteps.push(serializedStep);
+    }
+
+    // PERF-007: compact JSON (no pretty-printing) to reduce file size and write time
     const sessionData = {
       version: 2,
       savedAt: new Date().toISOString(),
@@ -559,26 +779,10 @@ export class FileSync {
         env: session.env,
         stepCount: steps.length
       },
-      steps: steps.map(step => {
-        const asset = assetMap.get(step.id);
-        const screenshot = asset ? (asset.dataUrl || asset.data || null) : null;
-        return {
-          id: step.id,
-          sequence: step.sequence,
-          action: step.action,
-          fieldName: step.fieldName,
-          value: step.value,
-          selector: step.selector,
-          url: step.url,
-          timestamp: step.timestamp,
-          description: step.description,
-          isSensitive: step.isSensitive,
-          screenshot
-        };
-      })
+      steps: serializedSteps
     };
 
-    await this._writeFile(sessionDir, 'session.json', JSON.stringify(sessionData, null, 2));
+    await this._writeFile(sessionDir, 'session.json', JSON.stringify(sessionData));
 
     // Update the sessions.json index
     await this._updateIndexForSession(handle, sessionData.session);
@@ -587,7 +791,75 @@ export class FileSync {
   }
 
   /**
-   * Update a single session's entry in sessions.json index
+   * Update a single step in session.json without touching screenshot files.
+   * PERF-007: reads only the compact session.json, patches the step, rewrites it.
+   * @async
+   * @param {string} sessionId - Session identifier (direct lookup — no scan)
+   * @param {string} stepId - Step identifier
+   * @param {Object} changes - Fields to merge into the step
+   * @returns {Promise<Object|null>} Updated step or null if not found
+   */
+  async updateStep(sessionId, stepId, changes) {
+    const handle = await this.getHandle();
+    if (!handle) return null;
+
+    const sessionDir = await this._findSessionFolder(handle, sessionId);
+    if (!sessionDir) return null;
+
+    const data = await this._readFile(sessionDir, 'session.json');
+    if (!data || !Array.isArray(data.steps)) return null;
+
+    const idx = data.steps.findIndex(s => s.id === stepId);
+    if (idx === -1) return null;
+
+    // FUNC-015: spread preserves all existing step fields
+    const { dataUrl: _du, screenshot: _sc, ...safeChanges } = changes;
+    data.steps[idx] = { ...data.steps[idx], ...safeChanges };
+
+    await this._writeFile(sessionDir, 'session.json', JSON.stringify(data));
+    return data.steps[idx];
+  }
+
+  /**
+   * Delete a single step from session.json and its screenshot file.
+   * PERF-007: direct session lookup — no cross-session scan.
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @param {string} stepId - Step identifier
+   * @returns {Promise<boolean>} true if deleted, false if not found
+   */
+  async deleteStep(sessionId, stepId) {
+    const handle = await this.getHandle();
+    if (!handle) return false;
+
+    const sessionDir = await this._findSessionFolder(handle, sessionId);
+    if (!sessionDir) return false;
+
+    const data = await this._readFile(sessionDir, 'session.json');
+    if (!data || !Array.isArray(data.steps)) return false;
+
+    const idx = data.steps.findIndex(s => s.id === stepId);
+    if (idx === -1) return false;
+
+    const step = data.steps[idx];
+
+    // Delete the binary screenshot file if present
+    if (step.screenshotFile) {
+      await this._deleteScreenshot(sessionDir, step.screenshotFile);
+    }
+
+    data.steps.splice(idx, 1);
+    data.session = { ...data.session, stepCount: data.steps.length };
+
+    await this._writeFile(sessionDir, 'session.json', JSON.stringify(data));
+
+    // Update index stepCount
+    await this._updateIndexForSession(handle, data.session);
+    return true;
+  }
+
+  /**
+   * Update a session's entry in sessions.json index
    * @private
    * @async
    * @param {FileSystemDirectoryHandle} handle - Root directory handle
@@ -602,7 +874,7 @@ export class FileSync {
     } else {
       index.push(sessionMeta);
     }
-    await this._writeFile(handle, 'sessions.json', JSON.stringify(index, null, 2));
+    await this._writeFile(handle, 'sessions.json', JSON.stringify(index));
   }
 
   /**
@@ -614,12 +886,11 @@ export class FileSync {
   async updateSessionIndex(sessions) {
     const handle = await this.getHandle();
     if (!handle) return;
-    await this._writeFile(handle, 'sessions.json', JSON.stringify(sessions, null, 2));
+    await this._writeFile(handle, 'sessions.json', JSON.stringify(sessions));
   }
 
   /**
-   * Delete a session from disk and update the index
-   * Scans folders by sessionId suffix so it works even if session was renamed
+   * Delete a session from disk (folder + all screenshots) and update the index.
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<void>}
@@ -638,17 +909,17 @@ export class FileSync {
       // Update index
       const index = await this._readFile(handle, 'sessions.json') || [];
       const updated = index.filter(s => s.sessionId !== sessionId);
-      await this._writeFile(handle, 'sessions.json', JSON.stringify(updated, null, 2));
+      await this._writeFile(handle, 'sessions.json', JSON.stringify(updated));
     } catch (error) {
       if (error.name !== 'NotFoundError') {
-        console.warn(`[FileSync] Failed to delete session:`, error);
+        console.warn('[FileSync] Failed to delete session:', error);
       }
     }
   }
 
   /**
-   * Delete a session folder from disk (legacy method — kept for backward compat)
-   * Prefer deleteSession() which also updates the index
+   * Delete a session folder from disk (legacy method — kept for backward compat).
+   * Prefer deleteSession() which also updates the index.
    * @async
    * @param {string} sessionId - Session identifier
    * @param {string} [sessionName] - Optional session name
@@ -667,14 +938,14 @@ export class FileSync {
       console.log(`[FileSync] Deleted session folder: ${folderName}`);
     } catch (error) {
       if (error.name !== 'NotFoundError') {
-        console.warn(`[FileSync] Failed to delete session folder:`, error);
+        console.warn('[FileSync] Failed to delete session folder:', error);
       }
     }
   }
 
   /**
-   * Sync a single session from StorageManager to disk (legacy method)
-   * Used during migration from chrome.storage
+   * Sync a single session from StorageManager to disk (legacy method).
+   * Used during migration from chrome.storage.
    * @async
    * @param {string} sessionId - Session identifier
    * @param {StorageManager} storage - Storage manager instance
@@ -691,7 +962,7 @@ export class FileSync {
   }
 
   /**
-   * Sync ALL sessions from StorageManager to disk (legacy/migration)
+   * Sync ALL sessions from StorageManager to disk (legacy/migration).
    * @async
    * @param {StorageManager} storage - Storage manager instance
    * @returns {Promise<void>}
@@ -712,8 +983,8 @@ export class FileSync {
   // ─────────────────────────────────────────────
 
   /**
-   * Migrate all data from chrome.storage.local to the filesystem
-   * Called once on first launch after the storage migration update
+   * Migrate all data from chrome.storage.local to the filesystem.
+   * Called once on first launch after the storage migration update.
    * @async
    * @param {StorageManager} legacyStorage - Initialized StorageManager instance
    * @returns {Promise<Object>} { migrated: number } count of migrated sessions

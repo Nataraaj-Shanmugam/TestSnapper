@@ -12,11 +12,21 @@
  * A Proxy wraps the instance so any method not explicitly defined here is
  * auto-routed: service-worker → buffer, window → filesystem (or buffer fallback).
  * This future-proofs the class against new methods added to StorageManager/FileSync.
+ *
+ * PERF-007: updateStep/deleteStep use the sessionId parameter for direct lookup
+ * instead of scanning all session files.
+ *
+ * PERF-016: exportAllData() no longer routes through the runtime message bus.
+ * In filesystem mode it reads directly from FileSync. In chrome.storage mode it
+ * aborts with a user-friendly error if the payload would exceed ~50MB.
  */
 
 import { FileSync } from './file-sync.js';
 import { StorageManager } from './storage.js';
 import { getPendingFlush, addPendingFlush, removePendingFlush } from './flush-utils.js';
+
+// PERF-016: abort threshold for chrome.storage bulk export (bytes)
+const EXPORT_SIZE_LIMIT_BYTES = 50 * 1024 * 1024; // 50 MB
 
 export class FSStorageManager {
   /**
@@ -96,8 +106,8 @@ export class FSStorageManager {
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Initialize the storage manager
-   * Initializes both buffer and filesystem if available
+   * Initialize the storage manager.
+   * Initializes both buffer and filesystem if available.
    * @async
    * @returns {Promise<boolean>} true if successful
    */
@@ -124,8 +134,8 @@ export class FSStorageManager {
   }
 
   /**
-   * Flush a buffered session from chrome.storage to filesystem
-   * Called from window contexts after recording stops
+   * Flush a buffered session from chrome.storage to filesystem.
+   * Called from window contexts after recording stops.
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<boolean>} true if flushed successfully
@@ -192,9 +202,9 @@ export class FSStorageManager {
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Create a new session
-   * Service worker: creates in buffer and marks pending flush
-   * Window: writes directly to filesystem (falls back to buffer)
+   * Create a new session.
+   * Service worker: creates in buffer and marks pending flush.
+   * Window: writes directly to filesystem (falls back to buffer).
    * @async
    * @param {Object} sessionData - Session metadata
    * @returns {Promise<Object>} Created session object
@@ -219,11 +229,9 @@ export class FSStorageManager {
   }
 
   /**
-   * Get a session by ID
-   * Window: reads from filesystem (or buffer if pending flush)
-   * Service worker: reads from buffer
-   * Extracts assets from embedded step screenshots for callers that expect
-   * the standard { session, steps, assets } shape
+   * Get a session by ID.
+   * Window: reads from filesystem (or buffer if pending flush).
+   * Service worker: reads from buffer.
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<Object|null>} Session object with steps and assets, or null
@@ -244,20 +252,13 @@ export class FSStorageManager {
     if (fsReady) {
       const data = await this._fileSync.readSession(sessionId);
       if (data) {
-        // Strip inline screenshots from step objects — they are exposed via assets
+        // Steps are already clean (no screenshot data in new format)
+        // Strip any legacy screenshot field just in case
         const steps = (data.steps || []).map(s => {
           const { screenshot, ...stepData } = s;
           return stepData;
         });
-        const assets = (data.steps || [])
-          .filter(s => s.screenshot)
-          .map(s => ({
-            id: `asset_${s.id}`,
-            sessionId,
-            stepId: s.id,
-            type: 'screenshot',
-            dataUrl: s.screenshot
-          }));
+        const assets = await this._fileSync.readAssets(sessionId);
 
         return {
           ...data.session,
@@ -271,8 +272,8 @@ export class FSStorageManager {
   }
 
   /**
-   * Update session metadata
-   * Reads existing filesystem data, merges the update, and rewrites
+   * Update session metadata.
+   * Reads existing filesystem data, merges the update, and rewrites.
    * @async
    * @param {Object} sessionData - Updated session metadata
    * @returns {Promise<Object>} Updated session object
@@ -303,8 +304,8 @@ export class FSStorageManager {
   }
 
   /**
-   * Get all sessions (metadata only)
-   * Merges filesystem index with any sessions still in the pending-flush buffer
+   * Get all sessions (metadata only).
+   * Merges filesystem index with any sessions still in the pending-flush buffer.
    * @async
    * @returns {Promise<Array>} Array of session metadata
    */
@@ -341,8 +342,8 @@ export class FSStorageManager {
   }
 
   /**
-   * Update session name
-   * Reads existing filesystem data, patches the name field, and rewrites
+   * Update session name.
+   * Reads existing filesystem data, patches the name field, and rewrites.
    * @async
    * @param {string} sessionId - Session identifier
    * @param {string} sessionName - New session name
@@ -373,7 +374,7 @@ export class FSStorageManager {
   }
 
   /**
-   * Delete a session and all its data from both filesystem and buffer
+   * Delete a session and all its data from both filesystem and buffer.
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<boolean>} true if successful
@@ -403,8 +404,8 @@ export class FSStorageManager {
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Add a step to a session
-   * On the filesystem this requires a full read-modify-write cycle
+   * Add a step to a session.
+   * On the filesystem this requires a full read-modify-write cycle.
    * @async
    * @param {Object} step - Step object with sessionId
    * @returns {Promise<Object>} The added step
@@ -423,7 +424,9 @@ export class FSStorageManager {
     if (fsReady) {
       const data = await this._fileSync.readSession(step.sessionId);
       if (data) {
-        const steps = [...(data.steps || []), { ...step, screenshot: null }];
+        // FUNC-015: preserve all step fields; only strip raw image data
+        const { dataUrl: _du, screenshot: _sc, ...stepFields } = step;
+        const steps = [...(data.steps || []), stepFields];
         const assets = this._extractAssets(step.sessionId, steps);
         const session = { ...data.session, stepCount: steps.length };
         await this._fileSync.writeSession(session, steps, assets);
@@ -435,8 +438,8 @@ export class FSStorageManager {
   }
 
   /**
-   * Get all steps for a session
-   * Strips the inline screenshot field — screenshots are accessed via getAllAssets
+   * Get all steps for a session.
+   * Strips the inline screenshot field — screenshots are accessed via getAllAssets.
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<Array>} Array of step objects
@@ -454,9 +457,9 @@ export class FSStorageManager {
     const fsReady = await this.isFilesystemReady();
     if (fsReady) {
       const steps = await this._fileSync.readSteps(sessionId);
-      // Strip screenshot data from steps (stored inline on disk, exposed via assets)
+      // Strip on-disk-only fields from step objects returned to callers
       return steps.map(s => {
-        const { screenshot, ...stepData } = s;
+        const { screenshot, screenshotFile, ...stepData } = s;
         return stepData;
       });
     }
@@ -465,31 +468,32 @@ export class FSStorageManager {
   }
 
   /**
-   * Delete a single step by ID
-   * Scans all filesystem sessions to locate the owning session
+   * Delete a single step by ID.
+   * PERF-007: if sessionId is provided, opens the session file directly.
+   * Falls back to scan if sessionId is not known.
    * @async
    * @param {string} stepId - Step identifier
+   * @param {string} [sessionId] - Optional session identifier for direct lookup
    * @returns {Promise<boolean>} true if deleted, false if not found
    */
-  async deleteStep(stepId) {
+  async deleteStep(stepId, sessionId) {
     if (this._isServiceWorker) {
       return await this._buffer.deleteStep(stepId);
     }
 
     const fsReady = await this.isFilesystemReady();
     if (fsReady) {
+      // PERF-007: if sessionId given, go directly to that session
+      if (sessionId) {
+        const deleted = await this._fileSync.deleteStep(sessionId, stepId);
+        if (deleted) return true;
+      }
+
+      // Fallback: scan all sessions (legacy path, slower)
       const allSessions = await this._fileSync.readSessionIndex();
       for (const sessionMeta of allSessions) {
-        const data = await this._fileSync.readSession(sessionMeta.sessionId);
-        if (!data) continue;
-        const steps = data.steps || [];
-        const filtered = steps.filter(s => s.id !== stepId);
-        if (filtered.length < steps.length) {
-          const session = { ...data.session, stepCount: filtered.length };
-          const assets = this._extractAssets(sessionMeta.sessionId, filtered);
-          await this._fileSync.writeSession(session, filtered, assets);
-          return true;
-        }
+        const deleted = await this._fileSync.deleteStep(sessionMeta.sessionId, stepId);
+        if (deleted) return true;
       }
     }
 
@@ -497,8 +501,10 @@ export class FSStorageManager {
   }
 
   /**
-   * Update a single step's fields
-   * Scans all filesystem sessions to locate the owning session
+   * Update a single step's fields.
+   * PERF-007: if step.sessionId is provided, opens the file directly.
+   * Falls back to scan if sessionId not in step.
+   * FUNC-015: all step fields preserved via spread.
    * @async
    * @param {Object} step - Step object with id and updated fields
    * @returns {Promise<Object>} Updated step object
@@ -510,18 +516,17 @@ export class FSStorageManager {
 
     const fsReady = await this.isFilesystemReady();
     if (fsReady) {
+      // PERF-007: prefer direct lookup using step.sessionId
+      if (step.sessionId) {
+        const updated = await this._fileSync.updateStep(step.sessionId, step.id, step);
+        if (updated) return updated;
+      }
+
+      // Fallback: scan all sessions
       const allSessions = await this._fileSync.readSessionIndex();
       for (const sessionMeta of allSessions) {
-        const data = await this._fileSync.readSession(sessionMeta.sessionId);
-        if (!data) continue;
-        const steps = data.steps || [];
-        const idx = steps.findIndex(s => s.id === step.id);
-        if (idx !== -1) {
-          steps[idx] = { ...steps[idx], ...step };
-          const assets = this._extractAssets(sessionMeta.sessionId, steps);
-          await this._fileSync.writeSession(data.session, steps, assets);
-          return steps[idx];
-        }
+        const updated = await this._fileSync.updateStep(sessionMeta.sessionId, step.id, step);
+        if (updated) return updated;
       }
     }
 
@@ -529,8 +534,8 @@ export class FSStorageManager {
   }
 
   /**
-   * Replace all steps for a session
-   * Preserves existing embedded screenshots by matching on step ID
+   * Replace all steps for a session.
+   * Preserves existing screenshot file references by matching on step ID.
    * @async
    * @param {string} sessionId - Session identifier
    * @param {Array} steps - New array of step objects
@@ -550,17 +555,28 @@ export class FSStorageManager {
     if (fsReady) {
       const data = await this._fileSync.readSession(sessionId);
       if (data) {
-        // Preserve existing screenshots — match by step id
+        // Preserve existing screenshot file references — match by step id
         const existingScreenshots = new Map();
         for (const s of (data.steps || [])) {
-          if (s.screenshot) {
+          if (s.screenshotFile) {
+            existingScreenshots.set(s.id, s.screenshotFile);
+          } else if (s.screenshot) {
+            // Legacy inline screenshot — keep it
             existingScreenshots.set(s.id, s.screenshot);
           }
         }
-        const stepsWithScreenshots = steps.map(s => ({
-          ...s,
-          screenshot: existingScreenshots.get(s.id) || s.screenshot || null
-        }));
+        // FUNC-015: preserve all step fields, restore screenshot reference
+        const stepsWithScreenshots = steps.map(s => {
+          const existing = existingScreenshots.get(s.id);
+          if (!existing) return s;
+          // Determine whether it's a file reference or legacy inline
+          if (typeof existing === 'string' && existing.startsWith('screenshots/')) {
+            return { ...s, screenshotFile: existing };
+          } else if (typeof existing === 'string' && existing.startsWith('data:')) {
+            return { ...s, screenshot: existing };
+          }
+          return s;
+        });
         const session = { ...data.session, stepCount: steps.length };
         const assets = this._extractAssets(sessionId, stepsWithScreenshots);
         await this._fileSync.writeSession(session, stepsWithScreenshots, assets);
@@ -572,7 +588,7 @@ export class FSStorageManager {
   }
 
   /**
-   * Apply partial updates to a subset of steps in a session
+   * Apply partial updates to a subset of steps in a session.
    * @async
    * @param {string} sessionId - Session identifier
    * @param {Array<Object>} stepUpdates - Array of step objects with id and updated fields
@@ -588,6 +604,7 @@ export class FSStorageManager {
       const data = await this._fileSync.readSession(sessionId);
       if (data) {
         const updateMap = new Map(stepUpdates.map(s => [s.id, s]));
+        // FUNC-015: spread preserves all fields
         const steps = (data.steps || []).map(step => {
           const update = updateMap.get(step.id);
           return update ? { ...step, ...update } : step;
@@ -602,8 +619,8 @@ export class FSStorageManager {
   }
 
   /**
-   * Delete multiple steps by ID across all sessions
-   * Returns the total number of steps deleted
+   * Delete multiple steps by ID.
+   * PERF-007: groups by session to minimize file rewrites.
    * @async
    * @param {Array<string>} stepIds - Array of step IDs to delete
    * @returns {Promise<number>} Total number of steps deleted
@@ -623,14 +640,27 @@ export class FSStorageManager {
         const data = await this._fileSync.readSession(sessionMeta.sessionId);
         if (!data) continue;
         const steps = data.steps || [];
-        const filtered = steps.filter(s => !stepIdSet.has(s.id));
-        const deleted = steps.length - filtered.length;
-        if (deleted > 0) {
-          const session = { ...data.session, stepCount: filtered.length };
-          const assets = this._extractAssets(sessionMeta.sessionId, filtered);
-          await this._fileSync.writeSession(session, filtered, assets);
-          totalDeleted += deleted;
+        const toDelete = steps.filter(s => stepIdSet.has(s.id));
+        if (toDelete.length === 0) continue;
+
+        // Delete screenshot files for removed steps (PERF-007)
+        const handle = await this._fileSync.getHandle();
+        if (handle) {
+          const sessionDir = await this._fileSync._findSessionFolder(handle, sessionMeta.sessionId);
+          if (sessionDir) {
+            for (const step of toDelete) {
+              if (step.screenshotFile) {
+                await this._fileSync._deleteScreenshot(sessionDir, step.screenshotFile);
+              }
+            }
+          }
         }
+
+        const filtered = steps.filter(s => !stepIdSet.has(s.id));
+        const session = { ...data.session, stepCount: filtered.length };
+        const assets = this._extractAssets(sessionMeta.sessionId, filtered);
+        await this._fileSync.writeSession(session, filtered, assets);
+        totalDeleted += toDelete.length;
       }
     }
 
@@ -642,7 +672,7 @@ export class FSStorageManager {
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Add (embed) an asset screenshot into the owning step on the filesystem
+   * Add (embed) an asset screenshot into the owning step on the filesystem.
    * @async
    * @param {Object} asset - Asset object with sessionId, stepId, dataUrl
    * @returns {Promise<Object>} The added asset
@@ -661,15 +691,29 @@ export class FSStorageManager {
     if (fsReady) {
       const data = await this._fileSync.readSession(asset.sessionId);
       if (data) {
-        // Embed screenshot inline in the matching step
-        const steps = (data.steps || []).map(s => {
-          if (s.id === asset.stepId && asset.dataUrl) {
-            return { ...s, screenshot: asset.dataUrl };
+        // Write screenshot to binary file and update the step's screenshotFile field
+        const steps = [...(data.steps || [])];
+        let updated = false;
+        for (let i = 0; i < steps.length; i++) {
+          if (steps[i].id === asset.stepId && asset.dataUrl) {
+            const handle = await this._fileSync.getHandle();
+            if (handle) {
+              const sessionDir = await this._fileSync._findSessionFolder(handle, asset.sessionId);
+              if (sessionDir) {
+                const screenshotFile = await this._fileSync._writeScreenshot(sessionDir, asset.stepId, asset.dataUrl);
+                // FUNC-015: preserve all step fields
+                const { screenshot: _sc, ...stepFields } = steps[i];
+                steps[i] = { ...stepFields, screenshotFile };
+                updated = true;
+              }
+            }
+            break;
           }
-          return s;
-        });
-        const assets = this._extractAssets(asset.sessionId, steps);
-        await this._fileSync.writeSession(data.session, steps, assets);
+        }
+        if (updated) {
+          const assets = this._extractAssets(asset.sessionId, steps);
+          await this._fileSync.writeSession(data.session, steps, assets);
+        }
         return asset;
       }
     }
@@ -678,8 +722,8 @@ export class FSStorageManager {
   }
 
   /**
-   * Get all assets for a session
-   * On the filesystem assets are extracted from inline step screenshots
+   * Get all assets for a session.
+   * On the filesystem, assets are loaded from binary screenshot files.
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<Array>} Array of asset objects
@@ -703,8 +747,7 @@ export class FSStorageManager {
   }
 
   /**
-   * Get all assets associated with a specific step ID
-   * Scans all filesystem sessions to locate the owning session
+   * Get all assets associated with a specific step ID.
    * @async
    * @param {string} stepId - Step identifier
    * @returns {Promise<Array>} Array of asset objects for the step
@@ -729,7 +772,7 @@ export class FSStorageManager {
   }
 
   /**
-   * Delete all assets for a session by stripping screenshots from steps
+   * Delete all assets for a session by removing screenshot files and clearing references.
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<boolean>} true if successful
@@ -743,9 +786,22 @@ export class FSStorageManager {
     if (fsReady) {
       const data = await this._fileSync.readSession(sessionId);
       if (data) {
-        // Remove all screenshots from steps
+        const handle = await this._fileSync.getHandle();
+        if (handle) {
+          const sessionDir = await this._fileSync._findSessionFolder(handle, sessionId);
+          if (sessionDir) {
+            // Delete all screenshot binary files
+            for (const step of (data.steps || [])) {
+              if (step.screenshotFile) {
+                await this._fileSync._deleteScreenshot(sessionDir, step.screenshotFile);
+              }
+            }
+          }
+        }
+
+        // Remove screenshotFile references from steps
         const steps = (data.steps || []).map(s => {
-          const { screenshot, ...rest } = s;
+          const { screenshotFile, screenshot, ...rest } = s;
           return rest;
         });
         await this._fileSync.writeSession(data.session, steps, []);
@@ -761,8 +817,7 @@ export class FSStorageManager {
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Get storage usage statistics
-   * Filesystem has unlimited quota, so returns safe indicator
+   * Get storage usage statistics.
    * @async
    * @returns {Promise<Object>} Usage object { used, total, percentage, warning, error, filesystem }
    */
@@ -783,13 +838,21 @@ export class FSStorageManager {
   }
 
   // ════════════════════════════════════════════════════════════════
-  // Export / Import
+  // Export / Import (PERF-016)
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Export all data for backup
+   * Export all data for backup.
+   *
+   * PERF-016 fix:
+   * - Filesystem path: reads directly from FileSync in the window context —
+   *   no runtime message bus involved, no 64MB message limit.
+   * - chrome.storage path: estimates payload size first. If it would exceed
+   *   50MB, aborts with a user-friendly error instead of silently crashing.
+   *
    * @async
    * @returns {Promise<Object>} Complete data export with meta and sessions
+   * @throws {Error} If payload would exceed the safe size limit (chrome.storage path)
    */
   async exportAllData() {
     if (this._isServiceWorker) {
@@ -798,25 +861,51 @@ export class FSStorageManager {
 
     const fsReady = await this.isFilesystemReady();
     if (fsReady) {
+      // PERF-016: read directly via FileSync — no message bus
       const allData = await this._fileSync.readAllSessionsFull();
       return {
         meta: { version: 2, sessionCount: allData.length },
         sessions: allData.map(data => ({
           ...data.session,
           steps: (data.steps || []).map(s => {
-            const { screenshot, ...stepData } = s;
+            // Strip on-disk-only fields from exported data
+            const { screenshotFile, screenshot, ...stepData } = s;
             return stepData;
           }),
-          assets: this._extractAssets(data.session.sessionId, data.steps || [])
+          assets: [] // Screenshots are stored as binary files; not included in JSON export
         }))
       };
     }
 
-    return await this._buffer.exportAllData();
+    // chrome.storage fallback — guard against oversized payload (PERF-016)
+    const allSessions = await this._buffer.getAllSessions();
+    let estimatedSize = 0;
+    const sessionPayloads = [];
+
+    for (const session of allSessions) {
+      const steps = await this._buffer.getSteps(session.sessionId);
+      const assets = await this._buffer.getAllAssets(session.sessionId);
+      const payload = { ...session, steps, assets };
+      const serialized = JSON.stringify(payload);
+      estimatedSize += serialized.length;
+
+      if (estimatedSize > EXPORT_SIZE_LIMIT_BYTES) {
+        throw new Error(
+          `Export aborted: payload would exceed ${Math.round(EXPORT_SIZE_LIMIT_BYTES / 1024 / 1024)}MB safe limit. ` +
+          'Configure a storage folder (File System mode) to export large datasets without size restrictions.'
+        );
+      }
+      sessionPayloads.push(payload);
+    }
+
+    return {
+      meta: { version: 2, sessionCount: sessionPayloads.length },
+      sessions: sessionPayloads
+    };
   }
 
   /**
-   * Import data from backup
+   * Import data from backup.
    * @async
    * @param {Object} data - Backup data with meta and sessions
    * @returns {Promise<boolean>} true if successful
@@ -844,32 +933,27 @@ export class FSStorageManager {
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Cleanup orphaned assets (no-op for filesystem storage)
+   * Cleanup orphaned assets (no-op for filesystem storage).
    * @async
-   * @returns {Promise<number>} Number of assets cleaned up (always 0 for filesystem)
+   * @returns {Promise<number>} Always 0 for filesystem
    */
   async cleanupOrphans() {
-    // No-op for filesystem storage — screenshots are embedded in session.json
     return 0;
   }
 
   /**
-   * Find orphaned assets (no-op for filesystem storage)
+   * Find orphaned assets (no-op for filesystem storage).
    * @async
-   * @returns {Promise<Array>} Empty array (always for filesystem)
+   * @returns {Promise<Array>} Always empty for filesystem
    */
   async findOrphanedAssets() {
     return [];
   }
 
-  /**
-   * Add quota warning listener (no-op for filesystem)
-   */
+  /** Add quota warning listener (no-op for filesystem) */
   onQuotaWarning() {}
 
-  /**
-   * Remove quota warning listener (no-op for filesystem)
-   */
+  /** Remove quota warning listener (no-op for filesystem) */
   offQuotaWarning() {}
 
   // ════════════════════════════════════════════════════════════════
@@ -877,8 +961,9 @@ export class FSStorageManager {
   // ════════════════════════════════════════════════════════════════
 
   /**
-   * Extract assets from steps that have embedded screenshots
-   * Returns in the asset format expected by writeSession
+   * Extract assets from steps that have embedded screenshots.
+   * Handles both new screenshotFile references and legacy inline screenshots.
+   * Returns in the asset format expected by writeSession.
    * @private
    * @param {string} sessionId - Session identifier
    * @param {Array} steps - Array of step objects
@@ -887,6 +972,8 @@ export class FSStorageManager {
   _extractAssets(sessionId, steps) {
     const assets = [];
     for (const step of steps) {
+      // New format: screenshotFile reference — no dataUrl inline
+      // Old format: screenshot inline base64
       if (step.screenshot) {
         assets.push({
           id: `asset_${step.id}`,
@@ -896,6 +983,7 @@ export class FSStorageManager {
           dataUrl: step.screenshot
         });
       }
+      // Note: steps with screenshotFile are already on disk — no asset object needed
     }
     return assets;
   }

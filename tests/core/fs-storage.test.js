@@ -21,6 +21,11 @@ vi.stubGlobal('chrome', {
   storage: {
     local: {
       get: vi.fn(async (keys) => {
+        if (keys === null || keys === undefined) {
+          const result = {};
+          for (const [k, v] of chromeStore.entries()) result[k] = v;
+          return result;
+        }
         if (typeof keys === 'string') return { [keys]: chromeStore.get(keys) };
         const result = {};
         for (const k of (Array.isArray(keys) ? keys : Object.keys(keys))) {
@@ -30,6 +35,10 @@ vi.stubGlobal('chrome', {
       }),
       set: vi.fn(async (obj) => {
         for (const [k, v] of Object.entries(obj)) chromeStore.set(k, v);
+      }),
+      remove: vi.fn(async (keys) => {
+        const ks = Array.isArray(keys) ? keys : [keys];
+        for (const k of ks) chromeStore.delete(k);
       }),
     },
   },
@@ -47,6 +56,8 @@ const mockFileSync = {
   sessionExists: vi.fn(),
   updateSessionIndex: vi.fn(),
   readAllSessionsFull: vi.fn(),
+  _findSessionFolder: vi.fn(),
+  _writeScreenshot: vi.fn(),
 };
 
 // Mock StorageManager
@@ -108,6 +119,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockBuffer.init.mockResolvedValue(true);
   mockFileSync.getHandle.mockResolvedValue({ kind: 'directory', name: '.TestSnapper' });
+  mockFileSync._findSessionFolder.mockResolvedValue({ kind: 'directory' });
+  mockFileSync._writeScreenshot.mockResolvedValue('screenshots/step-001.png');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -443,7 +456,7 @@ describe('FSStorageManager.getAllAssets', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('FSStorageManager.addAsset', () => {
-  it('embeds screenshot into the matching step on disk', async () => {
+  it('stores screenshot as a separate binary file and references it via screenshotFile', async () => {
     const fs = makeWindowStorage();
     const asset = {
       sessionId: sampleSession.sessionId,
@@ -458,9 +471,11 @@ describe('FSStorageManager.addAsset', () => {
     mockFileSync.writeSession.mockResolvedValue();
 
     await fs.addAsset(asset);
+    expect(mockFileSync._writeScreenshot).toHaveBeenCalled();
     expect(mockFileSync.writeSession).toHaveBeenCalled();
     const [, writtenSteps] = mockFileSync.writeSession.mock.calls[0];
-    expect(writtenSteps[0].screenshot).toBe(tinyPngDataURL);
+    expect(writtenSteps[0].screenshotFile).toMatch(/^screenshots\//);
+    expect(writtenSteps[0].screenshot).toBeUndefined();
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * Popup Script (CSP-safe, full functionality version)
  * Handles UI state, recording control, export, and settings
- * 
+ *
  * CRITICAL FIXES APPLIED:
  * - BUG-001: Removed duplicate handleSaveSettings function (was at lines 350-363)
  * - BUG-002: Fixed theme state inconsistency - standardized on light-mode class
@@ -9,6 +9,11 @@
  * - POP-003: Added storage usage indicator
  * - POP-004: Added permission error handling
  * - POP-006: Added keyboard shortcuts documentation
+ * - FUNC-006: Fixed broken dynamic import path (../../core/storage.js)
+ * - UX-004: Custom session combobox keyboard navigation (ArrowDown/Up, Home/End, Enter/Space, Escape)
+ * - UX-010: Export shows persistent progress (not auto-dismissed) until promise settles
+ * - UX-013: Help button renders shortcuts as structured content
+ * - UX-020: Popup tabs arrow-key navigation with roving tabindex
  */
 
 import { FSStorageManager } from '../../core/fs-storage.js';
@@ -104,19 +109,24 @@ async function init() {
 // setupTheme / applyTheme imported from ../theme.js
 
 /**
- * BUG FIX: POP-006 - Keyboard shortcuts documentation
+ * UX-013 / POP-006 - Keyboard shortcuts documentation
+ * Wired to #keyboardShortcutsHelp button in popup.html.
+ * Renders structured shortcut list, not a plain toast string.
  */
 function setupKeyboardShortcuts() {
   const helpBtn = document.getElementById('keyboardShortcutsHelp');
   if (!helpBtn) return;
 
   helpBtn.addEventListener('click', () => {
-    showMessage(`
-Keyboard Shortcuts:
-• Ctrl+Shift+S (⌘⇧S): Capture Screenshot
-• Ctrl+Shift+U (⌘⇧U): Pause/Resume Recording
-• Ctrl+Shift+E (⌘⇧E): Stop Recording
-    `.trim(), 'info', 8000);
+    const shortcuts = [
+      { keys: 'Ctrl+Shift+S / ⌘⇧S', desc: 'Capture Screenshot' },
+      { keys: 'Ctrl+Shift+U / ⌘⇧U', desc: 'Pause/Resume Recording' },
+      { keys: 'Ctrl+Shift+E / ⌘⇧E', desc: 'Stop Recording' },
+      { keys: 'Ctrl+Enter / ⌘↵',    desc: 'Export Session' },
+      { keys: '← → Arrow Keys',      desc: 'Navigate Tabs' },
+    ];
+    const lines = shortcuts.map(s => `• ${s.keys}: ${s.desc}`).join('\n');
+    showMessage(lines, 'info', 8000);
   });
 }
 
@@ -139,23 +149,69 @@ chrome.runtime.onMessage.addListener((message) => {
 // UI Setup
 // =====================
 function setupTabs() {
-  document.querySelectorAll(".tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      const targetTab = tab.dataset.tab;
+  const tabs = Array.from(document.querySelectorAll(".tab"));
+  const tablist = document.querySelector(".tabs");
 
-      document.querySelectorAll(".tab").forEach((t) => {
-        t.classList.remove("active");
-        t.setAttribute("aria-selected", "false");
-      });
-      tab.classList.add("active");
-      tab.setAttribute("aria-selected", "true");
+  // Ensure tablist has proper ARIA role
+  if (tablist) {
+    tablist.setAttribute('role', 'tablist');
+  }
 
-      document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
-      document.getElementById(targetTab + "-tab").classList.add("active");
+  function activateTab(tab) {
+    const targetTab = tab.dataset.tab;
 
-      if (targetTab === "export") loadSessions();
+    // Update tabs: roving tabindex
+    tabs.forEach((t) => {
+      t.classList.remove("active");
+      t.setAttribute('tabindex', '-1');
+      t.setAttribute('aria-selected', 'false');
     });
+    tab.classList.add("active");
+    tab.setAttribute('tabindex', '0');
+    tab.setAttribute('aria-selected', 'true');
+
+    document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
+    document.getElementById(targetTab + "-tab").classList.add("active");
+
+    if (targetTab === "export") loadSessions();
+  }
+
+  tabs.forEach((tab) => {
+    // Set initial roving tabindex
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('tabindex', tab.classList.contains('active') ? '0' : '-1');
+    tab.setAttribute('aria-selected', tab.classList.contains('active') ? 'true' : 'false');
+
+    tab.addEventListener("click", () => activateTab(tab));
   });
+
+  // UX-020: Arrow key navigation on tablist
+  if (tablist) {
+    tablist.addEventListener('keydown', (e) => {
+      const currentIndex = tabs.findIndex(t => t === document.activeElement);
+      if (currentIndex === -1) return;
+
+      let nextIndex = currentIndex;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        nextIndex = (currentIndex + 1) % tabs.length;
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        nextIndex = 0;
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        nextIndex = tabs.length - 1;
+      } else {
+        return;
+      }
+
+      tabs[nextIndex].focus();
+      activateTab(tabs[nextIndex]);
+    });
+  }
 }
 
 function setupEventListeners() {
@@ -388,13 +444,19 @@ async function handleExport() {
   const sessionId = sessionDropdown.value;
   if (!sessionId) return showMessage("Select a session first", "error");
 
-  if (exportBtn) exportBtn.disabled = true;
-
   const format = document.querySelector('input[name="format"]:checked')?.value || 'json';
-  showMessage("Exporting...", "info");
+
+  // UX-010: Show persistent progress — do NOT auto-dismiss while export is running.
+  // Keep the status visible until the promise settles (success or error).
+  showExportProgress("Exporting...");
 
   try {
-    const result = await exportService.exportSession(sessionId, format);
+    const result = await exportService.exportSession(sessionId, format, (pct) => {
+      // Progress callback: update the status message with percentage if provided
+      if (typeof pct === 'number') {
+        showExportProgress(`Exporting... ${Math.round(pct * 100)}%`);
+      }
+    });
 
     let downloadUrl;
     let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
@@ -413,13 +475,38 @@ async function handleExport() {
 
     await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
     if (result.blob) URL.revokeObjectURL(downloadUrl);
+    hideExportProgress();
     showMessage(`Exported as ${filename}`, "success");
   } catch (err) {
     console.error("Export failed:", err);
+    hideExportProgress();
     showMessage("Export failed: " + err.message, "error");
-  } finally {
-    if (exportBtn) exportBtn.disabled = false;
   }
+}
+
+/**
+ * UX-010: Show a persistent (non-auto-dismissing) export progress status.
+ * Disables the export button and suppresses the normal toast auto-dismiss timer.
+ * @param {string} msg - Status message to display
+ */
+function showExportProgress(msg) {
+  // Cancel any pending toast auto-dismiss timer so the message stays visible
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+  const icon = _toastIcons.info;
+  messageDiv.innerHTML = `<span class="toast-icon">${icon}</span><span class="toast-text">${Utils.escapeHtml(msg)}</span>`;
+  messageDiv.className = "message info exporting";
+  messageDiv.style.display = "flex";
+  messageDiv.classList.remove("toast-exit");
+
+  if (exportBtn) exportBtn.disabled = true;
+}
+
+/**
+ * UX-010: Clear the export progress status and re-enable the export button.
+ */
+function hideExportProgress() {
+  if (exportBtn) exportBtn.disabled = false;
 }
 
 async function handleViewSteps() {
@@ -680,8 +767,10 @@ function renderCustomDropdown(sessions, needsReauth = false) {
     const name = Utils.escapeHtml(s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`);
     const date = new Date(s.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     const steps = s.stepCount || 0;
+    // UX-004: Give each option a stable id for aria-activedescendant tracking
+    const optionId = `session-opt-${s.sessionId}`;
     return `
-      <div class="session-dropdown-item" data-value="${s.sessionId}" role="option">
+      <div class="session-dropdown-item" id="${optionId}" data-value="${s.sessionId}" role="option" aria-selected="false" tabindex="-1">
         <span class="item-name">${name}</span>
         <span class="item-meta">
           <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> ${steps} steps</span>
@@ -700,6 +789,8 @@ function selectCustomDropdownItem(value) {
   items.forEach((item) => {
     const isMatch = item.dataset.value === value;
     item.classList.toggle("selected", isMatch);
+    // UX-004: aria-selected tracks the currently selected option
+    item.setAttribute('aria-selected', isMatch ? 'true' : 'false');
     if (isMatch) {
       found = true;
       const name = item.querySelector(".item-name")?.textContent || "";
@@ -724,39 +815,122 @@ function setupCustomDropdown() {
   const trigger = document.getElementById("sessionSelectTrigger");
   const list = document.getElementById("sessionDropdownList");
 
+  // UX-004: Set up ARIA combobox role attributes
+  trigger.setAttribute('role', 'combobox');
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  list.setAttribute('role', 'listbox');
+
+  function openDropdown() {
+    wrapper.classList.add("open");
+    trigger.setAttribute("aria-expanded", "true");
+    // Focus the currently selected item, or the first item
+    const selected = list.querySelector('.session-dropdown-item[aria-selected="true"]') ||
+                     list.querySelector('.session-dropdown-item');
+    if (selected) {
+      trigger.setAttribute('aria-activedescendant', selected.id || '');
+      selected.classList.add('keyboard-focus');
+    }
+  }
+
+  function closeDropdown() {
+    wrapper.classList.remove("open");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.removeAttribute('aria-activedescendant');
+    list.querySelectorAll('.session-dropdown-item').forEach(i => i.classList.remove('keyboard-focus'));
+  }
+
+  function selectItem(item) {
+    if (!item) return;
+    const value = item.dataset.value;
+    sessionDropdown.value = value;
+    selectCustomDropdownItem(value);
+    closeDropdown();
+    handleSessionSelect();
+  }
+
   trigger.addEventListener("click", () => {
-    const isOpen = wrapper.classList.toggle("open");
-    trigger.setAttribute("aria-expanded", isOpen);
+    if (wrapper.classList.contains("open")) {
+      closeDropdown();
+    } else {
+      openDropdown();
+    }
   });
 
   list.addEventListener("click", (e) => {
     const item = e.target.closest(".session-dropdown-item");
     if (!item) return;
-    const value = item.dataset.value;
-    sessionDropdown.value = value;
-    selectCustomDropdownItem(value);
-    wrapper.classList.remove("open");
-    trigger.setAttribute("aria-expanded", "false");
-    handleSessionSelect();
+    selectItem(item);
   });
 
   // Close on outside click
   document.addEventListener("click", (e) => {
     if (!wrapper.contains(e.target)) {
-      wrapper.classList.remove("open");
-      trigger.setAttribute("aria-expanded", "false");
+      closeDropdown();
     }
   });
 
-  // Keyboard support
+  // UX-004: Full keyboard navigation on trigger
   trigger.addEventListener("keydown", (e) => {
+    const isOpen = wrapper.classList.contains("open");
+    const items = Array.from(list.querySelectorAll(".session-dropdown-item"));
+    if (!items.length) return;
+
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      trigger.click();
-    } else if (e.key === "Escape") {
-      wrapper.classList.remove("open");
-      trigger.setAttribute("aria-expanded", "false");
+      if (!isOpen) {
+        openDropdown();
+      } else {
+        // Select the keyboard-focused item
+        const focused = list.querySelector('.session-dropdown-item.keyboard-focus');
+        if (focused) selectItem(focused);
+      }
+      return;
     }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeDropdown();
+      trigger.focus();
+      return;
+    }
+
+    if (!isOpen) {
+      // ArrowDown/Up opens the list when closed
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        openDropdown();
+      }
+      return;
+    }
+
+    // Navigate within open list
+    const focused = list.querySelector('.session-dropdown-item.keyboard-focus');
+    const currentIndex = focused ? items.indexOf(focused) : -1;
+    let nextIndex = currentIndex;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      nextIndex = currentIndex < items.length - 1 ? currentIndex + 1 : 0;
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      nextIndex = currentIndex > 0 ? currentIndex - 1 : items.length - 1;
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      nextIndex = 0;
+    } else if (e.key === "End") {
+      e.preventDefault();
+      nextIndex = items.length - 1;
+    } else {
+      return;
+    }
+
+    // Move keyboard focus highlight
+    items.forEach(i => i.classList.remove('keyboard-focus'));
+    const nextItem = items[nextIndex];
+    nextItem.classList.add('keyboard-focus');
+    nextItem.scrollIntoView({ block: 'nearest' });
+    trigger.setAttribute('aria-activedescendant', nextItem.id || '');
   });
 }
 
@@ -1057,7 +1231,7 @@ async function handleSetStorageFolder() {
     // Run migration if chrome.storage has existing sessions and not yet migrated
     const migrated = await fileSync.isMigrated();
     if (!migrated) {
-      const { StorageManager } = await import('../../storage.js');
+      const { StorageManager } = await import('../../core/storage.js');
       const legacyStorage = new StorageManager();
       await legacyStorage.init();
       showMessage('Migrating existing sessions to filesystem...', 'info', 5000);

@@ -2,25 +2,46 @@
  * Shared flush coordination helpers.
  * Used by both background.js (service worker) and FSStorageManager (window context)
  * to track which sessions need to be flushed from chrome.storage to the filesystem.
+ *
+ * PERF-004 FIX: Each pending sessionId is stored as its own chrome.storage key
+ * (`testsnapper_pending_{sessionId}`) instead of a shared array to eliminate
+ * read-modify-write races when multiple operations complete concurrently.
  */
 
-export const PENDING_FLUSH_KEY = 'testsnapper_pendingFlush';
+/** @param {string} sessionId */
+function _pendingKey(sessionId) {
+  return `testsnapper_pending_${sessionId}`;
+}
 
+/**
+ * Return all session IDs that are currently pending a filesystem flush.
+ * @returns {Promise<string[]>}
+ */
 export async function getPendingFlush() {
-  const result = await chrome.storage.local.get(PENDING_FLUSH_KEY);
-  return result[PENDING_FLUSH_KEY] || [];
+  // Enumerate all testsnapper_pending_* keys to collect pending sessions
+  const allData = await chrome.storage.local.get(null);
+  const prefix = 'testsnapper_pending_';
+  return Object.keys(allData)
+    .filter(k => k.startsWith(prefix) && allData[k] === true)
+    .map(k => k.slice(prefix.length));
 }
 
+/**
+ * Mark a sessionId as needing a filesystem flush.
+ * Race-safe: each sessionId writes its own independent key.
+ * @param {string} sessionId
+ */
 export async function addPendingFlush(sessionId) {
-  const pending = await getPendingFlush();
-  if (!pending.includes(sessionId)) {
-    pending.push(sessionId);
-    await chrome.storage.local.set({ [PENDING_FLUSH_KEY]: pending });
-  }
+  if (!sessionId) return;
+  await chrome.storage.local.set({ [_pendingKey(sessionId)]: true });
 }
 
+/**
+ * Remove a sessionId from the pending-flush set after a successful flush.
+ * Race-safe: operates only on the single key for this session.
+ * @param {string} sessionId
+ */
 export async function removePendingFlush(sessionId) {
-  const pending = await getPendingFlush();
-  const updated = pending.filter(id => id !== sessionId);
-  await chrome.storage.local.set({ [PENDING_FLUSH_KEY]: updated });
+  if (!sessionId) return;
+  await chrome.storage.local.remove(_pendingKey(sessionId));
 }

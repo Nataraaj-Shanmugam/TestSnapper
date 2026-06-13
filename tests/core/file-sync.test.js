@@ -289,7 +289,7 @@ describe('FileSync.writeSession + readSession', () => {
     expect(data.steps).toHaveLength(steps.length);
   });
 
-  it('embeds screenshot in the step matching the asset stepId', async () => {
+  it('stores screenshot as a separate file and references it via screenshotFile', async () => {
     const session = { ...sampleSession };
     const steps = [{ ...sampleSteps[0], id: sampleSteps[0].stepId }];
     const assets = [{ stepId: sampleSteps[0].stepId, dataUrl: tinyPngDataURL }];
@@ -300,7 +300,10 @@ describe('FileSync.writeSession + readSession', () => {
     const folderName = fileSync._sessionFolderName(session);
     const data = await fileSync._readFile(handle._dirs.get(folderName), 'session.json');
 
-    expect(data.steps[0].screenshot).toBe(tinyPngDataURL);
+    // PERF-007: screenshots are stored as separate binary files; session.json has a path reference
+    expect(data.steps[0].screenshotFile).toMatch(/^screenshots\//);
+    // The raw dataUrl should NOT be embedded in session.json any more
+    expect(data.steps[0].screenshot).toBeUndefined();
   });
 
   it('updates sessions.json index after write', async () => {

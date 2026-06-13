@@ -14,29 +14,28 @@
  * - STR-005: Export/import for backup
  * - STR-006: Batch operations for better performance
  * - STR-MED-001: GZIP compression for step data
+ * - [CRIT] PERF-002: Per-asset O(1) storage with index key
+ * - [HIGH] FUNC-007: _readSteps handles PLAIN:: prefix from compression fallback
+ * - [HIGH] FUNC-008: Write-queue mutex serialises all RMW operations; idempotency guards
+ * - [HIGH] PERF-005: In-memory steps cache; updateSession accepts optional { stepCount } hint
+ * - [MED]  PERF-012: _retryOperation skips retries for deterministic quota errors
+ * - [MED]  PERF-013+FUNC-019: clearSession deletes data keys BEFORE session index entry
+ * - [MED]  FUNC-010: _readMeta returns { version: 1 } when key absent for migration trigger
  *
  * Data layout (split across keys for scalability):
- *   testsnapper_meta → {
- *     version: 2,
- *     sessionCount: N,
- *     lastCleanup: timestamp
- *   }
- *   testsnapper_sessions → [
- *     { sessionId, sessionName, createdAt, env, stepCount, ... }
- *   ]
- *   testsnapper_steps_{sessionId} → [
- *     { id, sessionId, action, fieldName, selector, value, ... }
- *   ]
- *   testsnapper_assets_{sessionId} → [
- *     { id, sessionId, stepId, type, dataUrl, ... }
- *   ]
+ *   testsnapper_meta              → { version, sessionCount, lastCleanup }
+ *   testsnapper_sessions          → [ { sessionId, sessionName, … } ]
+ *   testsnapper_steps_{id}        → GZIP/PLAIN compressed JSON array of steps
+ *   testsnapper_assetIndex_{id}   → [ assetId, … ]          (PERF-002)
+ *   testsnapper_asset_{id}_{aid}  → { id, sessionId, stepId, type, dataUrl, … }
+ *   testsnapper_assets_{id}       → legacy single-array (migrated on first read)
  *
  * Add "storage" and "unlimitedStorage" permissions to manifest.json.
  */
 
-import { compress, decompress, isCompressed } from './compression.js';
+import { compress, decompress, isCompressed, isPlainFallback } from './compression.js';
 import { QuotaMonitor } from './quota-monitor.js';
-import { migrateIfNeeded, STORAGE_VERSION } from './schema-migrator.js';
+import { SchemaMigrator } from './schema-migrator.js';
 import { OrphanCleaner } from './orphan-cleaner.js';
 
 const META_KEY = 'testsnapper_meta';
@@ -45,12 +44,24 @@ const MAX_IMAGE_WIDTH = 1920;
 const MAX_IMAGE_HEIGHT = 1080;
 const IMAGE_QUALITY = 0.95;
 
+// Error types that must NOT be retried (deterministic failures)
+const NON_RETRYABLE = ['QuotaExceededError', 'StorageQuotaExceeded'];
+
+// STORAGE_VERSION from schema-migrator (kept for backward compat references)
+const STORAGE_VERSION = 2;
+
 class StorageManager {
   constructor() {
     this.maxRetries = 3;
     this.retryDelay = 100; // ms base; multiplied by attempt number
     this.quotaMonitor = new QuotaMonitor();
     this.orphanCleaner = new OrphanCleaner(this);
+
+    // FIX: FUNC-008 — Async write-queue mutex serialises all read-modify-write operations.
+    this._writeQueue = Promise.resolve();
+
+    // FIX: PERF-005 — In-memory steps cache: Map<sessionId, steps[]>
+    this._stepsCache = new Map();
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -59,6 +70,8 @@ class StorageManager {
 
   /**
    * Read metadata (version, counts, etc.)
+   * FIX: FUNC-010 — Return { version: 1 } when key absent so SchemaMigrator's
+   * v1-detection fires correctly on first run.
    * @private
    * @async
    * @returns {Promise<Object>} Metadata object with version, sessionCount, lastCleanup
@@ -66,7 +79,7 @@ class StorageManager {
   async _readMeta() {
     const result = await chrome.storage.local.get(META_KEY);
     return result[META_KEY] || {
-      version: STORAGE_VERSION,
+      version: 1,      // FIX: was STORAGE_VERSION (=2), which masked the v1→v2 migration
       sessionCount: 0,
       lastCleanup: Date.now()
     };
@@ -106,32 +119,49 @@ class StorageManager {
   }
 
   /**
-   * Read steps for a specific session
-   * Decompresses step data if stored compressed (STR-MED-001 fix)
+   * Read steps for a specific session — with in-memory cache (PERF-005).
+   * FIX: FUNC-007 — Handles COMPRESSED::GZIP::, PLAIN::, raw Array, and bare JSON string.
    * @private
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<Array>} Array of step objects
    */
   async _readSteps(sessionId) {
+    // FIX: PERF-005 — serve from cache when available
+    if (this._stepsCache.has(sessionId)) {
+      return this._stepsCache.get(sessionId);
+    }
+
     const key = `testsnapper_steps_${sessionId}`;
     const result = await chrome.storage.local.get(key);
     const data = result[key];
 
-    if (!data) return [];
-
-    // Handle compressed data (string with prefix)
-    if (isCompressed(data)) {
-      return await decompress(data);
+    let steps;
+    if (!data) {
+      steps = [];
+    } else if (Array.isArray(data)) {
+      steps = data;
+    } else if (isCompressed(data)) {
+      steps = await decompress(data);
+    } else if (isPlainFallback(data)) {
+      // FIX: FUNC-007 — PLAIN:: prefix written by compression fallback
+      steps = JSON.parse(data.slice('PLAIN::'.length));
+    } else if (typeof data === 'string') {
+      // Legacy bare JSON string (shouldn't occur but tolerate it)
+      try { steps = JSON.parse(data); } catch (e) { steps = []; }
+    } else {
+      steps = [];
     }
 
-    // Handle legacy uncompressed data (array)
-    return Array.isArray(data) ? data : [];
+    // FIX: PERF-005 — populate cache
+    this._stepsCache.set(sessionId, steps);
+    return steps;
   }
 
   /**
    * Write steps for a specific session
    * Compresses step data before storage (STR-MED-001 fix)
+   * FIX: PERF-005 — keep cache in sync after write
    * @private
    * @async
    * @param {string} sessionId - Session identifier
@@ -142,36 +172,146 @@ class StorageManager {
     const key = `testsnapper_steps_${sessionId}`;
     const compressed = await compress(steps);
     await chrome.storage.local.set({ [key]: compressed });
+    // FIX: PERF-005 — keep cache in sync
+    this._stepsCache.set(sessionId, steps);
+  }
+
+  // ──── Asset helpers (PERF-002 per-asset-key architecture) ──────────────
+
+  _assetIndexKey(sessionId) { return `testsnapper_assetIndex_${sessionId}`; }
+  _assetKey(sessionId, assetId) { return `testsnapper_asset_${sessionId}_${assetId}`; }
+  _legacyAssetKey(sessionId) { return `testsnapper_assets_${sessionId}`; }
+
+  /**
+   * Read asset index (array of assetId strings) for a session.
+   * Migrates from the legacy single-array format on first access.
+   * FIX: PERF-002 — migrate from legacy testsnapper_assets_{id} key on first read
+   * @private
+   * @async
+   * @param {string} sessionId
+   * @returns {Promise<string[]>} Array of asset IDs
+   */
+  async _readAssetIndex(sessionId) {
+    const indexKey = this._assetIndexKey(sessionId);
+    const result = await chrome.storage.local.get(indexKey);
+    if (result[indexKey]) {
+      return result[indexKey]; // already migrated
+    }
+
+    // FIX: PERF-002 — migrate from legacy testsnapper_assets_{id} key on first read
+    const legacyKey = this._legacyAssetKey(sessionId);
+    const legacyResult = await chrome.storage.local.get(legacyKey);
+    const legacyAssets = legacyResult[legacyKey];
+
+    if (!legacyAssets || !Array.isArray(legacyAssets) || legacyAssets.length === 0) {
+      return []; // No assets at all
+    }
+
+    // Write each asset to its own key and build an index
+    const assetIds = legacyAssets.map(a => a.id);
+    const batch = { [indexKey]: assetIds };
+    for (const asset of legacyAssets) {
+      batch[this._assetKey(sessionId, asset.id)] = asset;
+    }
+    await chrome.storage.local.set(batch);
+    await chrome.storage.local.remove(legacyKey);
+
+    return assetIds;
   }
 
   /**
-   * Read assets for a specific session
+   * Read all assets for a session as an array (backward-compatible API).
+   * FIX: PERF-002 — reads via per-asset keys; backward-compatible (returns .dataUrl).
    * @private
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<Array>} Array of asset objects
    */
   async _readAssets(sessionId) {
-    const key = `testsnapper_assets_${sessionId}`;
-    const result = await chrome.storage.local.get(key);
-    return result[key] || [];
+    const assetIds = await this._readAssetIndex(sessionId);
+    if (assetIds.length === 0) return [];
+
+    const keys = assetIds.map(id => this._assetKey(sessionId, id));
+    const result = await chrome.storage.local.get(keys);
+    return assetIds
+      .map(id => result[this._assetKey(sessionId, id)])
+      .filter(Boolean);
   }
 
   /**
-   * Write assets for a specific session
+   * Write a single asset to its own key and update the index atomically.
+   * FIX: PERF-002 — O(1) write instead of O(n) read+push+write.
    * @private
    * @async
-   * @param {string} sessionId - Session identifier
-   * @param {Array} assets - Array of asset objects
-   * @returns {Promise<void>}
+   * @param {string} sessionId
+   * @param {Object} asset
    */
-  async _writeAssets(sessionId, assets) {
-    const key = `testsnapper_assets_${sessionId}`;
-    await chrome.storage.local.set({ [key]: assets });
+  async _writeAsset(sessionId, asset) {
+    const indexKey = this._assetIndexKey(sessionId);
+    const assetKey = this._assetKey(sessionId, asset.id);
+
+    // Read current index (may trigger legacy migration)
+    const assetIds = await this._readAssetIndex(sessionId);
+
+    // Write asset + updated index in one chrome.storage.local.set call
+    const batch = {
+      [assetKey]: asset,
+      [indexKey]: [...assetIds, asset.id]
+    };
+    await chrome.storage.local.set(batch);
   }
 
   /**
-   * Generic retry wrapper with exponential backoff
+   * Write assets from an array — used by migration paths and orphan cleaner.
+   * Replaces the entire asset collection for a session.
+   * @private
+   * @async
+   * @param {string} sessionId
+   * @param {Array} assets
+   */
+  async _writeAssetsFromArray(sessionId, assets) {
+    const indexKey = this._assetIndexKey(sessionId);
+
+    if (!assets || assets.length === 0) {
+      // Clear all existing asset keys for this session
+      const existingIds = await this._readAssetIndex(sessionId);
+      const keysToRemove = existingIds.map(id => this._assetKey(sessionId, id));
+      keysToRemove.push(indexKey);
+      if (keysToRemove.length > 0) {
+        await chrome.storage.local.remove(keysToRemove);
+      }
+      return;
+    }
+
+    const batch = { [indexKey]: assets.map(a => a.id) };
+    for (const asset of assets) {
+      batch[this._assetKey(sessionId, asset.id)] = asset;
+    }
+    await chrome.storage.local.set(batch);
+  }
+
+  /**
+   * Legacy write path used by SchemaMigrator (v1→v2).
+   * Writes assets using new per-key format.
+   * @private
+   */
+  async _writeAssetsLegacy(sessionId, assets) {
+    await this._writeAssetsFromArray(sessionId, assets);
+  }
+
+  /**
+   * Write assets (kept for internal migration only).
+   * @deprecated Use _writeAssetsFromArray instead.
+   * @private
+   */
+  async _writeAssets(sessionId, assets) {
+    await this._writeAssetsFromArray(sessionId, assets);
+  }
+
+  /**
+   * Generic retry wrapper with exponential backoff.
+   * FIX: PERF-012 — QuotaExceededError / StorageQuotaExceeded errors are deterministic;
+   * retrying them wastes backoff budget. They are re-thrown immediately.
    * @private
    * @async
    * @param {Function} operation - Async operation to retry
@@ -185,6 +325,15 @@ class StorageManager {
       try {
         return await operation();
       } catch (error) {
+        // FIX: PERF-012 — do not retry deterministic quota failures
+        const isQuotaError =
+          NON_RETRYABLE.includes(error.name) ||
+          (error.message && error.message.includes('quota'));
+        if (isQuotaError) {
+          console.error(`${operationName} quota error (non-retryable):`, error.message);
+          throw error;
+        }
+
         if (attempt === retries) {
           console.error(`${operationName} failed after ${retries} attempts:`, error);
           throw error;
@@ -193,6 +342,22 @@ class StorageManager {
         await new Promise(resolve => setTimeout(resolve, this.retryDelay * attempt));
       }
     }
+  }
+
+  /**
+   * Enqueue an operation on the write queue.
+   * FIX: FUNC-008 — serialises all read-modify-write mutations.
+   * @private
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
+  _enqueue(fn) {
+    const next = this._writeQueue
+      .then(() => fn())
+      .catch(err => { throw err; });
+    // Keep the chain alive even if this slot throws
+    this._writeQueue = next.catch(() => {});
+    return next;
   }
 
   /**
@@ -362,12 +527,15 @@ class StorageManager {
     // Write steps and assets for each session
     for (const session of data.sessions) {
       await this._writeSteps(session.sessionId, session.steps || []);
-      await this._writeAssets(session.sessionId, session.assets || []);
+      await this._writeAssetsFromArray(session.sessionId, session.assets || []);
     }
 
     console.log('Data imported successfully');
     return true;
   }
+
+  // Alias used by background.js
+  async importAllData(data) { return this.importData(data); }
 
   // ════════════════════════════════════════════════════════════════
   // STR-006: Batch Operations
@@ -381,7 +549,7 @@ class StorageManager {
    * @returns {Promise<Array>} Updated steps array
    */
   async batchUpdateSteps(sessionId, stepUpdates) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       const steps = await this._readSteps(sessionId);
       const updateMap = new Map(stepUpdates.map(s => [s.id, s]));
 
@@ -392,7 +560,7 @@ class StorageManager {
 
       await this._writeSteps(sessionId, updated);
       return updated;
-    }, 'batchUpdateSteps');
+    }, 'batchUpdateSteps'));
   }
 
   /**
@@ -402,12 +570,10 @@ class StorageManager {
    * @returns {Promise<number>} Total number of steps deleted
    */
   async batchDeleteSteps(stepIds) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       const sessions = await this._readSessions();
       const stepIdSet = new Set(stepIds);
       let totalDeleted = 0;
-
-      const stepCountUpdates = {};
 
       for (const session of sessions) {
         const steps = await this._readSteps(session.sessionId);
@@ -417,23 +583,21 @@ class StorageManager {
 
         if (deleted > 0) {
           await this._writeSteps(session.sessionId, filtered);
-          stepCountUpdates[session.sessionId] = filtered.length;
+
+          // Re-read sessions inside the lock to avoid stale index
+          const freshSessions = await this._readSessions();
+          const idx = this._findSessionIndex(freshSessions, session.sessionId);
+          if (idx !== -1) {
+            freshSessions[idx].stepCount = filtered.length;
+            await this._writeSessions(freshSessions);
+          }
+
           totalDeleted += deleted;
         }
       }
 
-      // Single read-modify-write for all stepCount updates
-      if (Object.keys(stepCountUpdates).length > 0) {
-        const allSessions = await this._readSessions();
-        for (const [sessionId, newCount] of Object.entries(stepCountUpdates)) {
-          const idx = this._findSessionIndex(allSessions, sessionId);
-          if (idx !== -1) allSessions[idx].stepCount = newCount;
-        }
-        await this._writeSessions(allSessions);
-      }
-
       return totalDeleted;
-    }, 'batchDeleteSteps');
+    }, 'batchDeleteSteps'));
   }
 
   /**
@@ -462,14 +626,9 @@ class StorageManager {
       throw new Error('chrome.storage.local is not available. Are you running inside a Chrome extension?');
     }
 
-    // Run migrations if needed
-    await migrateIfNeeded({
-      readMeta: () => this._readMeta(),
-      writeMeta: (m) => this._writeMeta(m),
-      writeSessions: (s) => this._writeSessions(s),
-      writeSteps: (id, steps) => this._writeSteps(id, steps),
-      writeAssets: (id, assets) => this._writeAssets(id, assets)
-    });
+    // Run migrations using SchemaMigrator (delegates modularly)
+    const migrator = new SchemaMigrator(this);
+    await migrator.migrateIfNeeded();
 
     // Run auto-cleanup check
     await this._autoCleanupCheck();
@@ -481,23 +640,25 @@ class StorageManager {
 
   /**
    * Create a new session
+   * FIX: FUNC-008 — queued + idempotent (collision returns existing session)
    * @async
    * @param {Object} sessionData - Session metadata object
    * @param {string} sessionData.sessionId - Unique session identifier
    * @param {string} sessionData.sessionName - Human-readable session name
    * @param {number} sessionData.createdAt - Creation timestamp
    * @returns {Promise<Object>} Created session object
-   * @throws {Error} If session already exists or quota exceeded
+   * @throws {Error} If quota exceeded
    */
   async createSession(sessionData) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       await this._checkQuota();
 
       const sessions = await this._readSessions();
+      const existing = this._findSessionIndex(sessions, sessionData.sessionId);
 
-      // Duplicate guard
-      if (this._findSessionIndex(sessions, sessionData.sessionId) !== -1) {
-        throw new Error(`Session ${sessionData.sessionId} already exists`);
+      // FIX: FUNC-008 — treat collision as success (idempotent)
+      if (existing !== -1) {
+        return sessions[existing];
       }
 
       // Create session metadata
@@ -505,17 +666,19 @@ class StorageManager {
       sessions.push(session);
       await this._writeSessions(sessions);
 
-      // Initialize empty steps and assets
+      // Initialize empty steps and asset index
       await this._writeSteps(sessionData.sessionId, []);
-      await this._writeAssets(sessionData.sessionId, []);
+      await chrome.storage.local.set({
+        [this._assetIndexKey(sessionData.sessionId)]: []
+      });
 
       // Update meta
       const meta = await this._readMeta();
-      meta.sessionCount++;
+      meta.sessionCount = (meta.sessionCount || 0) + 1;
       await this._writeMeta(meta);
 
       return session;
-    }, 'createSession');
+    }, 'createSession'));
   }
 
   /**
@@ -545,14 +708,17 @@ class StorageManager {
 
   /**
    * Update session metadata
+   * FIX: FUNC-008 — queued; FIX: PERF-005 — accepts optional { stepCount } hint
    * @async
    * @param {Object} sessionData - Updated session metadata
    * @param {string} sessionData.sessionId - Session identifier
+   * @param {Object} [opts] - Optional hints
+   * @param {number} [opts.stepCount] - Skip _readSteps if stepCount is provided
    * @returns {Promise<Object>} Updated session object
    * @throws {Error} If session not found
    */
-  async updateSession(sessionData) {
-    return this._retryOperation(async () => {
+  async updateSession(sessionData, { stepCount } = {}) {
+    return this._enqueue(() => this._retryOperation(async () => {
       const sessions = await this._readSessions();
       const idx = this._findSessionIndex(sessions, sessionData.sessionId);
 
@@ -560,16 +726,21 @@ class StorageManager {
         throw new Error(`Session ${sessionData.sessionId} not found`);
       }
 
-      // Update session metadata (preserve stepCount from actual steps)
-      const steps = await this._readSteps(sessionData.sessionId);
-      sessions[idx] = {
-        ...sessionData,
-        stepCount: steps.length
-      };
+      let count = stepCount;
+      if (count === undefined) {
+        // FIX: PERF-005 — use cache when available to avoid full decompress
+        if (this._stepsCache.has(sessionData.sessionId)) {
+          count = this._stepsCache.get(sessionData.sessionId).length;
+        } else {
+          const steps = await this._readSteps(sessionData.sessionId);
+          count = steps.length;
+        }
+      }
 
+      sessions[idx] = { ...sessionData, stepCount: count };
       await this._writeSessions(sessions);
       return sessions[idx];
-    }, 'updateSession');
+    }, 'updateSession'));
   }
 
   /**
@@ -586,6 +757,7 @@ class StorageManager {
 
   /**
    * Update a session's name
+   * FIX: FUNC-008 — queued
    * @async
    * @param {string} sessionId - Session identifier
    * @param {string} sessionName - New session name
@@ -593,7 +765,7 @@ class StorageManager {
    * @throws {Error} If session not found
    */
   async updateSessionName(sessionId, sessionName) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       const sessions = await this._readSessions();
       const idx = this._findSessionIndex(sessions, sessionId);
 
@@ -602,20 +774,22 @@ class StorageManager {
       sessions[idx].sessionName = sessionName;
       await this._writeSessions(sessions);
       return sessions[idx];
-    }, 'updateSessionName');
+    }, 'updateSessionName'));
   }
 
   // ──── Steps ────────────────────────────────────────────────────────
 
   /**
    * Add a step to a session
+   * FIX: FUNC-008 — queued + idempotency guard on duplicate step IDs
+   * FIX: PERF-005 — uses cache
    * @async
    * @param {Object} step - Step object with sessionId
    * @returns {Promise<Object>} The added step
    * @throws {Error} If session not found or quota exceeded
    */
   async addStep(step) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       await this._checkQuota();
 
       const sessions = await this._readSessions();
@@ -624,7 +798,12 @@ class StorageManager {
       if (idx === -1) throw new Error(`Session ${step.sessionId} not found`);
 
       const steps = await this._readSteps(step.sessionId);
-      steps.push(step);
+
+      // FIX: FUNC-008 — Idempotency guard: don't push duplicate step ids
+      if (!steps.some(s => s.id === step.id)) {
+        steps.push(step);
+      }
+
       await this._writeSteps(step.sessionId, steps);
 
       // Update session step count
@@ -632,7 +811,7 @@ class StorageManager {
       await this._writeSessions(sessions);
 
       return step;
-    }, 'addStep');
+    }, 'addStep'));
   }
 
   /**
@@ -650,13 +829,14 @@ class StorageManager {
 
   /**
    * Delete a single step by ID
+   * FIX: FUNC-008 — queued
    * @async
    * @param {string} stepId - Step identifier
    * @returns {Promise<boolean>} true if deleted, false if not found
    * @throws {Error} If stepId is not provided
    */
   async deleteStep(stepId) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       if (!stepId) throw new Error('Step ID is required');
 
       const sessions = await this._readSessions();
@@ -680,18 +860,19 @@ class StorageManager {
 
       // Step not found in any session – not an error, just a no-op
       return false;
-    }, 'deleteStep');
+    }, 'deleteStep'));
   }
 
   /**
    * Update a single step
+   * FIX: FUNC-008 — queued
    * @async
    * @param {Object} step - Step object with id and updated fields
    * @returns {Promise<Object>} Updated step object
    * @throws {Error} If step not found or invalid
    */
   async updateStep(step) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       if (!step || !step.id) throw new Error('Valid step with ID is required');
 
       const sessions = await this._readSessions();
@@ -708,12 +889,13 @@ class StorageManager {
       }
 
       throw new Error(`Step ${step.id} not found`);
-    }, 'updateStep');
+    }, 'updateStep'));
   }
 
   /**
    * Replace ALL steps for a session in one atomic write
    * Also updates the session's stepCount
+   * FIX: FUNC-008 — queued; FIX: PERF-005 — invalidate cache on bulk replace
    * @async
    * @param {string} sessionId - Session identifier
    * @param {Array} steps - New array of step objects
@@ -721,13 +903,15 @@ class StorageManager {
    * @throws {Error} If session not found
    */
   async updateAllSteps(sessionId, steps) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       const sessions = await this._readSessions();
       const idx = this._findSessionIndex(sessions, sessionId);
 
       if (idx === -1) throw new Error(`Session ${sessionId} not found`);
 
       await this._writeSteps(sessionId, steps);
+      // FIX: PERF-005 — invalidate cache on bulk replace
+      this._stepsCache.delete(sessionId);
 
       // Update session step count
       sessions[idx].stepCount = steps.length;
@@ -735,13 +919,15 @@ class StorageManager {
 
       console.log('All steps updated successfully');
       return true;
-    }, 'updateAllSteps');
+    }, 'updateAllSteps'));
   }
 
   // ──── Assets ───────────────────────────────────────────────────────
 
   /**
    * Add an asset (screenshot) to a session
+   * FIX: PERF-002 — O(1) write using per-asset key
+   * FIX: FUNC-008 — queued + idempotency guard
    * @async
    * @param {Object} asset - Asset object
    * @param {string} asset.sessionId - Session identifier
@@ -751,7 +937,7 @@ class StorageManager {
    * @throws {Error} If session not found or quota exceeded
    */
   async addAsset(asset) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       await this._checkQuota();
 
       const sessions = await this._readSessions();
@@ -762,13 +948,17 @@ class StorageManager {
       // Store screenshot as-is (PNG lossless from capture, or JPEG-high)
       // Compression only happens at export time for maximum quality preservation
       if (asset.type === 'screenshot' && asset.dataUrl) {
-        asset.format = this._detectImageFormat(asset.dataUrl);
-        asset.originalSize = asset.dataUrl.length;
+        asset = { ...asset, format: this._detectImageFormat(asset.dataUrl), originalSize: asset.dataUrl.length };
       }
 
-      const assets = await this._readAssets(asset.sessionId);
-      assets.push(asset);
-      await this._writeAssets(asset.sessionId, assets);
+      // FIX: FUNC-008 — Idempotency guard: check if asset id already in index
+      const existingIds = await this._readAssetIndex(asset.sessionId);
+      if (existingIds.includes(asset.id)) {
+        return asset; // Already stored — no-op
+      }
+
+      // FIX: PERF-002 — Write single asset key + update index (O(1))
+      await this._writeAsset(asset.sessionId, asset);
 
       // Warn if PNG storage is consuming significant space
       if (asset.type === 'screenshot' && asset.format === 'png') {
@@ -782,7 +972,7 @@ class StorageManager {
       }
 
       return asset;
-    }, 'addAsset');
+    }, 'addAsset'));
   }
 
   /**
@@ -800,6 +990,7 @@ class StorageManager {
 
   /**
    * Get all assets for a session
+   * FIX: PERF-002 — reads via per-asset keys
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<Array>} Array of asset objects
@@ -812,9 +1003,21 @@ class StorageManager {
   }
 
   /**
+   * Alias used by export-service.js — backward-compatible with PERF-002.
+   * @async
+   * @param {string} sessionId - Session identifier
+   * @returns {Promise<Array>} Array of asset objects
+   */
+  async getAssets(sessionId) {
+    return this.getAllAssets(sessionId);
+  }
+
+  /**
    * Get all assets associated with a specific step
+   * FIX: PERF-002 — sessionId strongly preferred to avoid O(n*k) scan
    * @async
    * @param {string} stepId - Step identifier
+   * @param {string|null} sessionId - Session identifier (strongly recommended)
    * @returns {Promise<Array>} Array of asset objects for the step
    */
   async getAssetsByStepId(stepId, sessionId = null) {
@@ -836,39 +1039,54 @@ class StorageManager {
 
   /**
    * Delete all assets for a session
+   * FIX: FUNC-008 — queued; FIX: PERF-002 — clears per-asset keys
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<boolean>} true if successful
    */
   async deleteAssets(sessionId) {
-    return this._retryOperation(async () => {
-      await this._writeAssets(sessionId, []);
+    return this._enqueue(() => this._retryOperation(async () => {
+      await this._writeAssetsFromArray(sessionId, []);
       return true;
-    }, 'deleteAssets');
+    }, 'deleteAssets'));
   }
 
   // ──── Session lifecycle ────────────────────────────────────────────
 
   /**
    * Delete a session and all its steps + assets in one atomic operation
+   * FIX: PERF-013 — Delete data keys FIRST, then remove the session index entry.
+   * FIX: FUNC-008 — queued; FIX: PERF-005 — invalidates cache
    * @async
    * @param {string} sessionId - Session identifier
    * @returns {Promise<boolean>} true if successful
    */
   async clearSession(sessionId) {
-    return this._retryOperation(async () => {
+    return this._enqueue(() => this._retryOperation(async () => {
       const sessions = await this._readSessions();
       const idx = this._findSessionIndex(sessions, sessionId);
 
       if (idx === -1) return true; // already gone
 
-      // Remove session metadata
+      // FIX: PERF-013 — Remove DATA keys BEFORE updating the session index
+      const stepKey = `testsnapper_steps_${sessionId}`;
+      const legacyAssetKey = this._legacyAssetKey(sessionId);
+      const indexKey = this._assetIndexKey(sessionId);
+
+      // Gather per-asset keys
+      const assetIds = await this._readAssetIndex(sessionId);
+      const perAssetKeys = assetIds.map(id => this._assetKey(sessionId, id));
+
+      // Remove all data keys first
+      const dataKeys = [stepKey, legacyAssetKey, indexKey, ...perAssetKeys];
+      await chrome.storage.local.remove(dataKeys);
+
+      // FIX: PERF-005 — invalidate cache
+      this._stepsCache.delete(sessionId);
+
+      // Now remove the session index entry
       sessions.splice(idx, 1);
       await this._writeSessions(sessions);
-
-      // Remove steps and assets
-      await chrome.storage.local.remove(`testsnapper_steps_${sessionId}`);
-      await chrome.storage.local.remove(`testsnapper_assets_${sessionId}`);
 
       // Update meta
       const meta = await this._readMeta();
@@ -877,7 +1095,7 @@ class StorageManager {
 
       console.log(`Session ${sessionId} cleared`);
       return true;
-    }, 'clearSession');
+    }, 'clearSession'));
   }
 }
 

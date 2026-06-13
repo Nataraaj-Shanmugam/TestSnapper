@@ -12,17 +12,12 @@
  *     stay pinned to the top of the card regardless of screenshot height.
  */
 
-import { FSStorageManager } from '../../core/fs-storage.js';
-import { ExportService } from '../../core/export-service.js';
+import { StorageManager } from '../../storage.js';
 import { Utils } from '../../core/utils.js';
-import { DomUtils } from '../../core/dom-utils.js';
-import { deduplicateConsecutiveSteps } from '../../core/step-utils.js';
-import { setupTheme } from '../theme.js';
 
 // ==================== Initialize Services ====================
 
-const fsStorage = new FSStorageManager();
-const exportService = new ExportService(fsStorage);
+const storage = new StorageManager();
 
 let sessionId = null;
 let sessionData = null;
@@ -40,8 +35,8 @@ const MAX_HISTORY = 50;
 // Drag state
 let draggedStepId = null;
 
-// ==================== Consecutive Duplicate Removal ====================
-// deduplicateConsecutiveSteps is imported from ../../core/step-utils.js
+// PERF-008: Screenshot asset cache — loaded once per session, invalidated on add/delete
+let _assetCache = null;
 
 // ==================== UI Elements ====================
 
@@ -83,6 +78,8 @@ const cancelExportBtn = document.getElementById('cancelExportBtn');
 
 let newStepScreenshotBlob = null;
 let insertAfterStepId = null;
+// UX-012: Track the trigger element so focus can be restored on modal close
+let _modalTriggerElement = null;
 
 // ==================== Utils ====================
 
@@ -97,10 +94,12 @@ function debounce(fn, delay = 300) {
 // ==================== Initialization ====================
 
 async function init() {
+  // UX-006: Apply theme BEFORE loading session to prevent flash of wrong theme
+  setupTheme();
   showMessage('Initializing...', 'info');
 
   try {
-    await fsStorage.init();
+    await storage.init();
 
     const urlParams = new URLSearchParams(window.location.search);
     sessionId = urlParams.get('sessionId');
@@ -110,47 +109,77 @@ async function init() {
       return;
     }
 
-    // Flush buffered session to disk if needed (review opens right after recording stops)
-    await flushIfPending(sessionId);
-
     await loadSession();
     setupEventListeners();
-    setupTheme();
   } catch (error) {
     console.error('Initialization failed:', error);
     showMessage('Failed to initialize: ' + error.message, 'error');
   }
 }
 
-/**
- * Flush a buffered session to disk if it hasn't been flushed yet.
- */
-async function flushIfPending(sid) {
-  const fsReady = await fsStorage.isFilesystemReady();
-  if (!fsReady) return;
+function setupTheme() {
+  // UX-006: Apply theme immediately to prevent flash; localStorage is the fast mirror
+  const savedTheme = localStorage.getItem('theme');
+  const initialTheme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  applyTheme(initialTheme);
 
-  const inBuffer = await fsStorage.isInBuffer(sid);
-  if (!inBuffer) return;
+  const themeToggle = document.getElementById('themeToggle');
+  if (!themeToggle) return;
 
-  showMessage('Saving session to disk...', 'info');
-  const success = await fsStorage.flushSession(sid);
-  if (success) {
-    chrome.runtime.sendMessage({ action: 'clearBuffer', sessionId: sid }).catch(() => {});
-  }
+  themeToggle.addEventListener('click', () => {
+    const currentTheme = document.body.dataset.theme || 'light';
+    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    applyTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+    // Also persist to chrome.storage as secondary mirror
+    try {
+      chrome.storage.local.set({ theme: newTheme });
+    } catch (e) { /* non-critical */ }
+  });
 }
 
-// setupTheme / applyTheme imported from ../theme.js
+function applyTheme(theme) {
+  const iconEl = document.querySelector('#themeToggle .icon');
+  document.body.dataset.theme = theme;
+
+  if (iconEl) {
+    if (theme === 'light') {
+      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+    } else {
+      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+    }
+  }
+}
 
 function setupEventListeners() {
   bulkDeleteBtn.addEventListener('click', handleBulkDelete);
   saveExportBtn.addEventListener('click', handleSaveAndExport);
   cancelBtn.addEventListener('click', () => window.close());
 
+  // UX-008: Persistent keyboard-accessible "Add Step" button
+  const addStepAtEndBtn = document.getElementById('addStepAtEndBtn');
+  if (addStepAtEndBtn) {
+    addStepAtEndBtn.addEventListener('click', () => {
+      openAddStepModal(stepsData[stepsData.length - 1]?.id, addStepAtEndBtn);
+    });
+  }
+
   // Session name auto-save
   sessionNameInput.addEventListener('blur', saveSessionName);
 
   // Add Step Modal
   screenshotUpload.addEventListener('click', () => screenshotInput.click());
+  // UX-012: Make screenshot dropzone keyboard accessible
+  screenshotUpload.setAttribute('tabindex', '0');
+  screenshotUpload.setAttribute('role', 'button');
+  screenshotUpload.setAttribute('aria-label', 'Upload screenshot (Enter or Space to open file dialog)');
+  screenshotUpload.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      screenshotInput.click();
+    }
+  });
+
   screenshotInput.addEventListener('change', handleScreenshotUpload);
   cancelAddStep.addEventListener('click', closeAddStepModal);
   confirmAddStep.addEventListener('click', handleConfirmAddStep);
@@ -213,7 +242,7 @@ function setupEventListeners() {
   // Undo button
   if (undoBtn) undoBtn.addEventListener('click', undo);
 
-  // Keyboard shortcuts: Ctrl/Cmd+Z
+  // Keyboard shortcuts: Ctrl/Cmd+Z and UX-012: Escape to close modal
   document.addEventListener('keydown', (e) => {
     const meta = e.metaKey;
     const ctrl = e.ctrlKey;
@@ -224,30 +253,55 @@ function setupEventListeners() {
         undo();
       }
     }
+
+    // UX-012: Escape closes the Add Step modal
+    if (e.key === 'Escape' && addStepModal.classList.contains('active')) {
+      e.preventDefault();
+      closeAddStepModal();
+    }
   });
 
-  // Cancel export
-  if (cancelExportBtn) {
-    cancelExportBtn.addEventListener('click', async () => {
-      try {
-        await chrome.runtime.sendMessage({
-          action: 'cancelExport',
-          sessionId
-        });
-      } catch (err) {
-        console.error('Failed to send cancelExport:', err);
+  // UX-012: Focus trap inside modal
+  addStepModal.addEventListener('keydown', (e) => {
+    if (!addStepModal.classList.contains('active')) return;
+    if (e.key !== 'Tab') return;
+
+    const focusable = Array.from(addStepModal.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(el => el.offsetParent !== null);
+
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
       }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  });
+
+  // FUNC-009: Cancel export - do NOT send cancelExport to background as that
+  // incorrectly resets recording state to 'idle'. Simply dismiss the UI.
+  // The background export will complete/fail naturally (file download is suppressed
+  // since the user won't be waiting for it).
+  if (cancelExportBtn) {
+    cancelExportBtn.addEventListener('click', () => {
       hideProgressModal();
       showMessage('Export cancelled.', 'info');
     });
   }
 
-  // Listen for export progress and storage flush events from background
+  // Listen for export progress events from background
   chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'exportProgress') {
       handleExportProgress(message);
-    } else if (message.action === 'flushRecordingBuffer' && message.sessionId === sessionId) {
-      flushIfPending(message.sessionId);
     }
   });
 
@@ -274,30 +328,24 @@ async function loadSession() {
   try {
     showMessage('Loading session...', 'info');
 
-    sessionData = await fsStorage.getSession(sessionId);
+    sessionData = await storage.getSession(sessionId);
 
     if (!sessionData) {
       throw new Error('Session not found');
     }
 
-    stepsData = await fsStorage.getSteps(sessionId);
+    stepsData = await storage.getSteps(sessionId);
     stepsData.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
-
-    // Auto-remove consecutive duplicate steps (same action + fieldName + selector + url)
-    const originalCount = stepsData.length;
-    stepsData = deduplicateConsecutiveSteps(stepsData);
-    if (stepsData.length < originalCount) {
-      console.log(`🧹 Removed ${originalCount - stepsData.length} consecutive duplicate step(s)`);
-      // Resequence and persist the cleaned data
-      stepsData.forEach((step, index) => { step.sequence = index + 1; });
-      await fsStorage.updateAllSteps(sessionId, stepsData);
-    }
 
     // Update UI
     sessionNameInput.value = sessionData.sessionName ||
       `Session ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionDate.textContent = `Created: ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionStepCount.textContent = `Steps: ${stepsData.length}`;
+
+    // PERF-008: Build asset cache once on session load
+    _assetCache = null; // invalidate first
+    await buildAssetCache();
 
     // Initialize history with initial state
     history = [];
@@ -329,8 +377,15 @@ async function saveSessionName() {
 
     if (newName && sessionData) {
       sessionData.sessionName = newName;
-      sessionNameInput.value = newName;
-      await fsStorage.updateSessionName(sessionData.sessionId, newName);
+      sessionNameInput.value = newName; // Update input with sanitized value
+      await storage.updateSession(sessionData);
+
+      await chrome.runtime.sendMessage({
+        action: 'updateSessionName',
+        sessionId: sessionData.sessionId,
+        sessionName: newName
+      });
+
       console.log('✅ Session name saved:', newName, sessionData.sessionId);
     }
   } catch (error) {
@@ -400,10 +455,10 @@ async function restoreFromHistory(targetIndex) {
   stepsData = JSON.parse(JSON.stringify(snapshot));
 
   // Persist to DB
-  await fsStorage.updateAllSteps(sessionId, stepsData);
+  await storage.updateAllSteps(sessionId, stepsData);
   if (sessionData) {
     sessionData.stepCount = stepsData.length;
-    await fsStorage.updateSession(sessionData);
+    await storage.updateSession(sessionData);
     sessionStepCount.textContent = `Steps: ${stepsData.length}`;
   }
 
@@ -414,6 +469,23 @@ async function restoreFromHistory(targetIndex) {
 function undo() {
   if (historyIndex <= 0) return;
   restoreFromHistory(historyIndex - 1);
+}
+
+// ==================== Asset Cache ====================
+
+/**
+ * PERF-008: Build screenshot asset cache once per session load.
+ * Only re-runs when assets are explicitly added or deleted.
+ */
+async function buildAssetCache() {
+  const screenshotAssets = await storage.getAllAssets(sessionId);
+  _assetCache = new Map();
+  for (const asset of screenshotAssets) {
+    const url = await resolveScreenshotUrl(asset);
+    if (url) {
+      _assetCache.set(asset.stepId, url);
+    }
+  }
 }
 
 // ==================== Step Rendering ====================
@@ -428,12 +500,22 @@ function undo() {
  * whether the asset was captured in the current session (blob still live)
  * or loaded from a previous one (only data survives).
  */
-function resolveScreenshotUrl(asset) {
-  // Screenshots are stored as base64 data URLs in the filesystem format
-  if (typeof asset.dataUrl === 'string' && asset.dataUrl.length > 0) return asset.dataUrl;
-  // Legacy fallback for chrome.storage assets
-  if (typeof asset.data === 'string' && asset.data.length > 0) return asset.data;
-  return null;
+async function resolveScreenshotUrl(asset) {
+  // 1. If .blob is a real Blob, convert it (live-session fast path)
+  if (asset.blob && asset.blob instanceof Blob && asset.blob.size > 0) {
+    try {
+      return await Utils.blobToDataURL(asset.blob);
+    } catch (err) {
+      console.warn('blobToDataURL failed, falling back to asset.data:', err);
+    }
+  }
+
+  // 2. Fall back to the persisted base64 data-URL string
+  if (typeof asset.data === 'string' && asset.data.length > 0) {
+    return asset.data;
+  }
+
+  return null; // nothing usable
 }
 
 async function renderSteps() {
@@ -446,15 +528,11 @@ async function renderSteps() {
     return;
   }
 
-  // ---------- Load screenshots ----------
-  const screenshotAssets = await fsStorage.getAllAssets(sessionId);
-  const screenshotMap = new Map();
-
-  for (const asset of screenshotAssets) {
-    const url = resolveScreenshotUrl(asset);
-    if (url) screenshotMap.set(asset.stepId, url);
+  // PERF-008: Use cached screenshot map; only rebuild if cache is missing
+  if (!_assetCache) {
+    await buildAssetCache();
   }
-  // ---------- End screenshot loading ----------
+  const screenshotMap = _assetCache;
 
   const visibleSteps = filterSteps();
 
@@ -480,30 +558,35 @@ async function renderSteps() {
   }
 
   container.innerHTML = visibleSteps.map((step, index) => {
-    const description = step.description || Utils.generateStepDescription(step);
+    const description = step.description || generateStepDescription(step);
     const screenshotData = screenshotMap.get(step.id) || null;
     const safeDescription = Utils.escapeHtml(description);
+    // UX-016: Show step.sequence (stable position), not filtered list index
+    const badgeNum = step.sequence || (index + 1);
 
     return `
       <div class="add-between">
-         <button class="btn-add" data-before-step-id="${step.id}" title="Add step here">+</button>
+         <button class="btn-add" data-before-step-id="${step.id}" title="Add step here" aria-label="Add step before step ${badgeNum}">+</button>
       </div>
-      <div class="step-card" data-step-id="${step.id}" draggable="true">
-        <div class="step-number-badge">${index + 1}</div>
+      <div class="step-card" data-step-id="${step.id}">
+        <div class="step-number-badge">${badgeNum}</div>
 
-        <!-- FIX 2: align-items: flex-start keeps checkbox / handle / delete
+        <!-- align-items: flex-start keeps checkbox / handle / delete
              pinned to the TOP of the card even when the screenshot makes
              .step-main tall. -->
         <div class="step-top" style="align-items: flex-start;">
 
-          <!-- drag handle -->
-          <div class="step-handle" title="Drag to reorder" style="font-size: 20px; padding-top: 10px;">⋮⋮</div>
+          <!-- UX-009: draggable="true" on handle only, not whole card -->
+          <div class="step-handle" draggable="true" tabindex="0" role="button"
+               aria-label="Drag to reorder step ${badgeNum}"
+               title="Drag to reorder" style="font-size: 20px; padding-top: 10px; cursor: grab;">⋮⋮</div>
 
           <!-- checkbox – fixed width, top-aligned -->
           <div style="display: flex; align-items: flex-start; justify-content: center; width: 40px; flex-shrink: 0; padding-top: 8px;">
             <input type="checkbox" class="step-checkbox" data-step-id="${step.id}"
                    ${step.selected ? 'checked' : ''}
-                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--accent);">
+                   draggable="false"
+                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--primary);">
           </div>
 
           <!-- main content (textarea + optional screenshot) -->
@@ -512,6 +595,7 @@ async function renderSteps() {
               class="step-description-area"
               data-step-id="${step.id}"
               placeholder="Describe this step..."
+              draggable="false"
               rows="1">${safeDescription}</textarea>
 
             ${screenshotData ? `
@@ -523,7 +607,8 @@ async function renderSteps() {
 
           <!-- delete button – top-aligned -->
           <div class="step-actions" style="flex-shrink: 0; padding-top: 4px;">
-            <button class="delete-btn" title="Delete Step" data-step-id="${step.id}">
+            <button class="icon-btn delete-btn" title="Delete Step" aria-label="Delete step ${badgeNum}"
+                    data-step-id="${step.id}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
               ✕
             </button>
           </div>
@@ -531,7 +616,7 @@ async function renderSteps() {
       </div>
       ${index === visibleSteps.length - 1 ? `
         <div class="add-between">
-           <button class="btn-add" data-after-last="true" title="Add step at the end">+</button>
+           <button class="btn-add" data-after-last="true" title="Add step at the end" aria-label="Add step at the end">+</button>
         </div>
       ` : ''}
     `;
@@ -540,6 +625,30 @@ async function renderSteps() {
   attachStepEventListeners();
 }
 
+function generateStepDescription(step) {
+  const action = step.action || 'Action';
+  const field = step.fieldName ? Utils.escapeHtml(step.fieldName.trim()) : '';
+  const value = step.value ? Utils.escapeHtml(step.value.trim()) : '';
+
+  switch (action.toLowerCase()) {
+    case 'click':
+      return `Click "${field || 'element'}"`;
+    case 'type':
+      return `Type "${value || 'text'}" in ${field || 'field'}`;
+    case 'navigate':
+      return `Navigate to ${value}`;
+    case 'select':
+      return `Select "${value || field}" from dropdown`;
+    case 'check':
+      return `Check the box ${field ? `for "${field}"` : ''}`;
+    case 'submit':
+      return `Submit the form`;
+    case 'screenshot':
+      return step.isManual ? '📸 Manual screenshot' : '📸 Auto screenshot';
+    default:
+      return `${action} ${field} ${value ? `→ "${value}"` : ''}`.trim();
+  }
+}
 
 function attachStepEventListeners() {
   document.querySelectorAll('.delete-btn').forEach(btn =>
@@ -558,11 +667,12 @@ function attachStepEventListeners() {
       const stepId = btn.dataset.beforeStepId;
       const isLast = btn.dataset.afterLast === 'true';
       if (isLast) {
-        openAddStepModal(stepsData[stepsData.length - 1]?.id);
+        // UX-012: pass btn as trigger for focus restore
+        openAddStepModal(stepsData[stepsData.length - 1]?.id, btn);
       } else {
         const index = stepsData.findIndex(s => s.id === stepId);
         const targetId = index > 0 ? stepsData[index - 1].id : null;
-        openAddStepModal(targetId);
+        openAddStepModal(targetId, btn);
       }
     })
   );
@@ -582,15 +692,15 @@ function attachStepEventListeners() {
       if (!step) return;
 
       const newText = e.target.value.trim();
-      const oldText = step.description || Utils.generateStepDescription(step);
+      const oldText = step.description || generateStepDescription(step);
 
       if (newText && newText !== oldText) {
         try {
           saveToHistory('edit');
           step.description = newText;
-          await fsStorage.updateStep(step);
+          await storage.updateStep(step);
           showMessage('Step updated', 'success');
-            } catch (err) {
+        } catch (err) {
           console.error('Failed to update step:', err);
           showMessage('Failed to update step: ' + err.message, 'error');
           e.target.value = oldText;
@@ -599,18 +709,49 @@ function attachStepEventListeners() {
     });
   });
 
+  // UX-009: Drag events on the handle only; drop target remains the card
+  document.querySelectorAll('.step-handle').forEach(handle => {
+    handle.addEventListener('dragstart', handleDragStart);
+    handle.addEventListener('dragend', handleDragEnd);
+
+    // UX-009: Keyboard reorder via ArrowUp/Down on focused handle
+    handle.addEventListener('keydown', async (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const card = handle.closest('.step-card');
+      if (!card) return;
+      const stepId = card.dataset.stepId;
+      const currentIndex = stepsData.findIndex(s => s.id === stepId);
+      if (currentIndex === -1) return;
+
+      const targetIndex = e.key === 'ArrowUp' ? currentIndex - 1 : currentIndex + 1;
+      if (targetIndex < 0 || targetIndex >= stepsData.length) return;
+
+      saveToHistory('reorder');
+      const [moved] = stepsData.splice(currentIndex, 1);
+      stepsData.splice(targetIndex, 0, moved);
+      await resequenceAndPersist();
+
+      // Restore focus to the moved handle
+      setTimeout(() => {
+        const handles = document.querySelectorAll('.step-handle');
+        if (handles[targetIndex]) handles[targetIndex].focus();
+      }, 50);
+    });
+  });
+
   document.querySelectorAll('.step-card').forEach(card => {
-    card.addEventListener('dragstart', handleDragStart);
     card.addEventListener('dragover', handleDragOver);
     card.addEventListener('drop', handleDrop);
-    card.addEventListener('dragend', handleDragEnd);
     card.addEventListener('dragleave', handleDragLeave);
   });
 }
 
 // ==================== Add Step Modal ====================
 
-function openAddStepModal(afterStepId) {
+function openAddStepModal(afterStepId, triggerElement) {
+  // UX-012: Save trigger so focus can be restored on close
+  _modalTriggerElement = triggerElement || document.activeElement;
   insertAfterStepId = afterStepId;
   newStepDescription.value = '';
   newStepAction.value = 'click';
@@ -625,6 +766,11 @@ function closeAddStepModal() {
   addStepModal.classList.remove('active');
   insertAfterStepId = null;
   newStepScreenshotBlob = null;
+  // UX-012: Restore focus to the element that triggered the modal
+  if (_modalTriggerElement && typeof _modalTriggerElement.focus === 'function') {
+    _modalTriggerElement.focus();
+  }
+  _modalTriggerElement = null;
 }
 
 function handleScreenshotUpload(event) {
@@ -681,8 +827,10 @@ async function handleConfirmAddStep() {
     };
 
     // Add step to database
-    await fsStorage.addStep(newStep);
+    await storage.addStep(newStep);
 
+    // If screenshot provided, save it as both blob AND data URL so it
+    // survives the chrome.storage.local JSON round-trip.
     if (newStepScreenshotBlob) {
       let dataUrl = null;
       try {
@@ -691,16 +839,17 @@ async function handleConfirmAddStep() {
         console.warn('Failed to convert new screenshot to data URL:', err);
       }
 
-      if (dataUrl) {
-        await fsStorage.addAsset({
-          id: Utils.generateUUID(),
-          sessionId: sessionId,
-          stepId: newStep.id,
-          type: 'screenshot',
-          dataUrl,
-          createdAt: new Date().toISOString()
-        });
-      }
+      await storage.addAsset({
+        id: Utils.generateUUID(),
+        sessionId: sessionId,
+        stepId: newStep.id,
+        type: 'screenshot',
+        blob: newStepScreenshotBlob,   // live-session use (won't survive reload)
+        data: dataUrl,                  // persisted base64 string (survives reload)
+        createdAt: new Date().toISOString()
+      });
+      // PERF-008: Invalidate cache so new screenshot is picked up
+      _assetCache = null;
     }
 
     // Save history BEFORE mutation
@@ -725,11 +874,16 @@ async function handleDeleteStep(stepId) {
     // Save history BEFORE mutation
     saveToHistory('delete');
 
-    await fsStorage.deleteStep(stepId);
+    await storage.deleteStep(stepId);
     stepsData = stepsData.filter(s => s.id !== stepId);
 
+    // PERF-008: Invalidate asset cache if step had a screenshot
+    _assetCache = null;
+
     await resequenceAndPersist();
-    showMessage('Step deleted successfully', 'success');
+
+    // UX-017: Show undo hint in the toast
+    showMessageWithUndo('Step deleted');
   } catch (error) {
     console.error('Failed to delete step:', error);
     showMessage('Failed to delete: ' + error.message, 'error');
@@ -752,7 +906,7 @@ async function handleBulkDelete() {
 
     // STR-MED-002: Use batch delete for better performance
     const stepIds = selectedSteps.map(s => s.id);
-    await fsStorage.batchDeleteSteps(stepIds);
+    await storage.batchDeleteSteps(stepIds);
 
     stepsData = stepsData.filter(s => !s.selected);
 
@@ -785,9 +939,12 @@ function updateBulkDeleteButton() {
 // ==================== Drag & Drop Reordering ====================
 
 function handleDragStart(event) {
-  const line = event.currentTarget;
-  draggedStepId = line.dataset.stepId;
-  line.classList.add('dragging');
+  // UX-009: drag starts from .step-handle; find parent card for stepId
+  const handle = event.currentTarget;
+  const card = handle.closest('.step-card');
+  if (!card) return;
+  draggedStepId = card.dataset.stepId;
+  card.classList.add('dragging');
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move';
   }
@@ -832,7 +989,11 @@ async function handleDrop(event) {
   await resequenceAndPersist();
 }
 
-function handleDragEnd() {
+function handleDragEnd(event) {
+  // UX-009: handle is currentTarget; remove classes from parent card
+  const handle = event.currentTarget;
+  const card = handle ? handle.closest('.step-card') : null;
+  if (card) card.classList.remove('dragging');
   draggedStepId = null;
   document.querySelectorAll('.step-card.dragging').forEach(el =>
     el.classList.remove('dragging')
@@ -847,11 +1008,11 @@ async function resequenceAndPersist() {
     step.sequence = index + 1;
   });
 
-  await fsStorage.updateAllSteps(sessionId, stepsData);
+  await storage.updateAllSteps(sessionId, stepsData);
 
   if (sessionData) {
     sessionData.stepCount = stepsData.length;
-    await fsStorage.updateSession(sessionData);
+    await storage.updateSession(sessionData);
     sessionStepCount.textContent = `Steps: ${stepsData.length}`;
   }
 
@@ -914,33 +1075,17 @@ async function handleSaveAndExport() {
     const format = exportFormatSelect.value;
     showMessage(`Exporting as ${format.toUpperCase()}...`, 'info');
 
-    const progressCallback = (update) => handleExportProgress(update);
-
-    const result = await exportService.exportSession(sessionId, format, progressCallback);
-
-    let downloadUrl;
-    let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
-
-    if (result.blob) {
-      downloadUrl = await Utils.blobToDataURL(result.blob);
-    } else {
-      const utf8Bytes = new TextEncoder().encode(result.content);
-      let binaryString = '';
-      const chunkSize = 0x8000;
-      for (let i = 0; i < utf8Bytes.length; i += chunkSize) {
-        binaryString += String.fromCharCode.apply(null, utf8Bytes.subarray(i, i + chunkSize));
-      }
-      downloadUrl = `data:${result.mimeType};charset=utf-8;base64,${btoa(binaryString)}`;
-    }
-
-    await chrome.downloads.download({
-      url: downloadUrl,
-      filename,
-      saveAs: false,
-      conflictAction: 'uniquify'
+    const response = await chrome.runtime.sendMessage({
+      action: 'exportSession',
+      sessionId: sessionId,
+      format: format
     });
 
-    showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
+    if (response && response.success) {
+      showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
+    } else if (response && !response.success) {
+      throw new Error(response.error || 'Export failed');
+    }
   } catch (error) {
     console.error('Save and export failed:', error);
     showMessage('Failed: ' + error.message, 'error');
@@ -952,7 +1097,39 @@ async function handleSaveAndExport() {
 // ==================== UI Helpers ====================
 
 function showMessage(text, type = 'info') {
-  DomUtils.showMessage(messageDiv, text, type);
+  Utils.showMessage(messageDiv, text, type);
+}
+
+/**
+ * UX-017: Show a message with a clickable Undo link.
+ */
+function showMessageWithUndo(text) {
+  // Clear any previous timer
+  if (messageDiv._msgTimer) {
+    clearTimeout(messageDiv._msgTimer);
+    messageDiv._msgTimer = null;
+  }
+  // Set innerHTML with a link to trigger undo
+  messageDiv.innerHTML = '';
+  const span = document.createElement('span');
+  span.textContent = text + ' — ';
+  const undoLink = document.createElement('a');
+  undoLink.href = '#';
+  undoLink.textContent = 'Undo';
+  undoLink.style.cssText = 'font-weight:bold; text-decoration:underline; cursor:pointer;';
+  undoLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    messageDiv.style.display = 'none';
+    undo();
+  });
+  messageDiv.appendChild(span);
+  messageDiv.appendChild(undoLink);
+  messageDiv.className = 'message success';
+  messageDiv.style.display = 'block';
+  messageDiv._msgTimer = setTimeout(() => {
+    messageDiv.style.display = 'none';
+    messageDiv._msgTimer = null;
+  }, 6000);
 }
 
 function hideMessage() {

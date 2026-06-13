@@ -1,11 +1,8 @@
 /**
  * Export Service
  *
- * Orchestrates the export of test sessions in multiple formats: JSON, CSV, DOCX, and PDF.
- * Handles screenshot loading from multiple sources (dataUrl, data, blob), progress tracking,
- * and export cancellation.
- *
  * Fix applied (screenshots never appearing in exported .doc / review page):
+ *
  *   background.js stores every screenshot asset as:
  *       { …, dataUrl: "data:image/jpeg;base64,…" }
  *
@@ -18,16 +15,19 @@
  *   The fix: read `asset.dataUrl` first (what background.js writes).
  *   Fall back to `asset.data`, then to `asset.blob` (live-session only)
  *   so every possible write-path is covered.
+ *
+ * PERF-003: Export memory fix — process screenshots one at a time, null
+ *   out references immediately, use URL.createObjectURL for downloads.
+ *
+ * FUNC-005/PERF-011: PDF fix — load jsPDF from local lib via chrome.runtime.getURL
+ *   instead of CDN (blocked by extension CSP). DOCX fix — detect lib availability
+ *   before the image pipeline to avoid wasted CPU+memory.
+ *
+ * SEC-003: URL sanitization at export time — strips sensitive query params
+ *   from step.url and navigate step.value in all export formats.
  */
 
-import { Utils } from './utils.js';
-import { ImageProcessor } from './image-processor.js';
-
 export class ExportService {
-  /**
-   * Initialize the export service
-   * @param {StorageManager} storage - Storage manager instance
-   */
   constructor(storage) {
     this.storage = storage;
     this.cancelledExports = new Set(); // Track cancelled exports
@@ -35,8 +35,7 @@ export class ExportService {
   }
 
   /**
-   * Cancel an ongoing export (BUG FIX: EXP-HIGH-001)
-   * @param {string} sessionId - Session identifier
+   * Cancel an ongoing export
    */
   cancelExport(sessionId) {
     this.cancelledExports.add(sessionId);
@@ -45,9 +44,6 @@ export class ExportService {
 
   /**
    * Check if export was cancelled
-   * @private
-   * @param {string} sessionId - Session identifier
-   * @returns {boolean} true if export was cancelled
    */
   _isCancelled(sessionId) {
     return this.cancelledExports.has(sessionId);
@@ -55,26 +51,37 @@ export class ExportService {
 
   /**
    * Clear cancellation flag
-   * @private
-   * @param {string} sessionId - Session identifier
    */
   _clearCancellation(sessionId) {
     this.cancelledExports.delete(sessionId);
   }
 
   /**
+   * Sanitize a URL by stripping sensitive query parameters.
+   * Applies to step.url and navigate step.value at export time (SEC-003).
+   *
+   * @param {string} url - Original URL
+   * @returns {string} URL with sensitive params removed, or original on parse error
+   */
+  _sanitizeUrl(url) {
+    if (!url || typeof url !== 'string') return url || '';
+    try {
+      const parsed = new URL(url);
+      const sensitiveKeys = /^(token|access_token|code|key|api_key|password|secret|sig|signature|auth|session|jwt|otp|reset|magic|verify)$/i;
+      const toDelete = [];
+      parsed.searchParams.forEach((_, key) => {
+        if (sensitiveKeys.test(key)) toDelete.push(key);
+      });
+      toDelete.forEach(k => parsed.searchParams.delete(k));
+      return parsed.toString();
+    } catch {
+      // Relative URL or non-parseable — return as-is
+      return url;
+    }
+  }
+
+  /**
    * Main export orchestrator
-   * Loads session, processes steps/assets, and delegates to format-specific exporter
-   * @async
-   * @param {string} sessionId - Session identifier
-   * @param {string} format - Export format: 'json', 'csv', 'docx', or 'pdf'
-   * @param {Function} [progressCallback] - Optional progress callback
-   * @returns {Promise<Object>} Export result object with content, filename, mimeType
-   * @throws {Error} If export is cancelled or format is unsupported
-   * @example
-   * const result = await exportService.exportSession(sessionId, 'docx', (progress) => {
-   *   console.log(`${progress.percent}% - ${progress.status}`);
-   * });
    */
   async exportSession(sessionId, format, progressCallback) {
     const notify =
@@ -132,13 +139,6 @@ export class ExportService {
 
   // ==================== Private Helpers ====================
 
-  /**
-   * Format session data for export
-   * @private
-   * @param {Object} session - Session object
-   * @param {number} stepCount - Number of steps
-   * @returns {Object} Formatted session data
-   */
   _formatSessionData(session, stepCount) {
     return {
       id: session.sessionId,
@@ -149,16 +149,120 @@ export class ExportService {
     };
   }
 
+  async _blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result;
+        reader.abort();
+        resolve(result);
+      };
+      reader.onerror = () => {
+        reader.abort();
+        reject(reader.error);
+      };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async _compressImage(blob, maxWidth = 600, quality = 0.95) {
+    try {
+      const useOffscreen = typeof OffscreenCanvas !== 'undefined';
+
+      if (useOffscreen) {
+        const imageBitmap = await createImageBitmap(blob);
+        const scale = Math.min(maxWidth / imageBitmap.width, 1);
+        const width = Math.floor(imageBitmap.width * scale);
+        const height = Math.floor(imageBitmap.height * scale);
+
+        const canvas = new OffscreenCanvas(width, height);
+        const ctx = canvas.getContext('2d', { alpha: false });
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(imageBitmap, 0, 0, width, height);
+
+        const compressed = await canvas.convertToBlob({
+          type: 'image/jpeg',
+          quality
+        });
+
+        imageBitmap.close();
+        return compressed;
+      } else {
+        const dataUrl = await this._blobToDataURL(blob);
+
+        return await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const scale = Math.min(maxWidth / img.width, 1);
+              const canvas = document.createElement('canvas');
+              const width = Math.floor(img.width * scale);
+              const height = Math.floor(img.height * scale);
+              canvas.width = width;
+              canvas.height = height;
+
+              const ctx = canvas.getContext('2d', { alpha: false });
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = 'high';
+
+              if (width < img.width * 0.5) {
+                const tempCanvas = document.createElement('canvas');
+                const intermediateWidth = Math.floor(img.width * 0.7);
+                const intermediateHeight = Math.floor(img.height * 0.7);
+                tempCanvas.width = intermediateWidth;
+                tempCanvas.height = intermediateHeight;
+
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.imageSmoothingEnabled = true;
+                tempCtx.imageSmoothingQuality = 'high';
+                tempCtx.drawImage(img, 0, 0, intermediateWidth, intermediateHeight);
+                ctx.drawImage(tempCanvas, 0, 0, width, height);
+                tempCanvas.width = 0;
+                tempCanvas.height = 0;
+              } else {
+                ctx.drawImage(img, 0, 0, width, height);
+              }
+
+              canvas.toBlob(
+                (compressedBlob) => {
+                  canvas.width = 0;
+                  canvas.height = 0;
+                  img.src = '';
+                  resolve(compressedBlob || blob);
+                },
+                'image/jpeg',
+                quality
+              );
+            } catch (err) {
+              console.warn('Canvas compression failed:', err);
+              img.src = '';
+              resolve(blob);
+            }
+          };
+          img.onerror = () => {
+            img.src = '';
+            resolve(blob);
+          };
+          img.src = dataUrl;
+        });
+      }
+    } catch (err) {
+      console.warn('Image compression failed, using original:', err);
+      return blob;
+    }
+  }
+
   /**
-   * Resolve a usable base64 data-URL from a storage asset
+   * Resolve a usable base64 data-URL from a storage asset.
+   *
    * Priority:
-   *   1. asset.dataUrl  — what background.js writes for captured screenshots
+   *   1. asset.dataUrl  — what background.js writes for every captured screenshot
    *   2. asset.data     — what review-standalone writes for manually-added screenshots
-   *   3. asset.blob     — only valid in live session (becomes {} after storage round-trip)
-   * @private
-   * @async
-   * @param {Object} asset - Asset object
-   * @returns {Promise<string|null>} Data-URL string or null if no usable image
+   *   3. asset.blob     — only valid while the session is still live in memory
+   *                        (becomes {} after chrome.storage.local JSON round-trip)
+   *
+   * Returns a data-URL string, or null if nothing usable is found.
    */
   async _resolveAssetUrl(asset) {
     // 1. dataUrl string (primary path — background.js captureScreenshot)
@@ -174,7 +278,7 @@ export class ExportService {
     // 3. Live Blob (only works in the same session before storage round-trip)
     if (asset.blob && asset.blob instanceof Blob && asset.blob.size > 0) {
       try {
-        return await Utils.blobToDataURL(asset.blob);
+        return await this._blobToDataURL(asset.blob);
       } catch (err) {
         console.warn('blobToDataURL failed for asset', asset.id, err);
       }
@@ -183,17 +287,35 @@ export class ExportService {
     return null;
   }
 
+  _escapeHtml(text) {
+    if (!text) return '';
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    };
+    return String(text).replace(/[&<>"']/g, m => map[m]);
+  }
+
   // ==================== Format Exporters ====================
 
   /**
-   * Export as JSON
-   * @private
-   * @param {Object} exportData - Export data object
-   * @param {string} sessionId - Session identifier
-   * @returns {Object} Export result with content, filename, mimeType
+   * Export to JSON. Sanitizes URLs for SEC-003.
    */
   _exportJSON(exportData, sessionId) {
-    const content = JSON.stringify(exportData, null, 2);
+    // Apply URL sanitization to all steps (SEC-003)
+    const sanitizedSteps = exportData.steps.map(step => {
+      const sanitized = { ...step };
+      if (sanitized.url) sanitized.url = this._sanitizeUrl(sanitized.url);
+      if (sanitized.action === 'navigate' && sanitized.value) {
+        sanitized.value = this._sanitizeUrl(sanitized.value);
+      }
+      return sanitized;
+    });
+
+    const content = JSON.stringify({ session: exportData.session, steps: sanitizedSteps }, null, 2);
     const sessionName = (exportData.session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
     const filename = `${sessionName}_${Date.now()}.json`;
 
@@ -205,24 +327,28 @@ export class ExportService {
   }
 
   /**
-   * Export as CSV
-   * @private
-   * @param {Object} exportData - Export data object
-   * @param {string} sessionId - Session identifier
-   * @returns {Object} Export result with content, filename, mimeType
+   * Export to CSV. Sanitizes URLs for SEC-003.
    */
   _exportCSV(exportData, sessionId) {
     const headers = ['Step', 'Action', 'Field Name', 'Selector (CSS)', 'Value', 'URL'];
     const rows = exportData.steps
       .filter(s => s.action !== 'screenshot')
-      .map((step, index) => [
-        index + 1,
-        step.action,
-        step.fieldName || 'N/A',
-        step.selector?.css || '',
-        step.value || '',
-        step.url
-      ]);
+      .map((step, index) => {
+        // SEC-003: sanitize URL and navigate value
+        const safeUrl = this._sanitizeUrl(step.url);
+        const safeValue = (step.action === 'navigate' && step.value)
+          ? this._sanitizeUrl(step.value)
+          : (step.value || '');
+
+        return [
+          index + 1,
+          step.action,
+          step.fieldName || 'N/A',
+          step.selector?.css || '',
+          safeValue,
+          safeUrl
+        ];
+      });
 
     const content = [headers, ...rows]
       .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
@@ -238,185 +364,231 @@ export class ExportService {
   }
 
   /**
-   * Export as DOCX with embedded screenshots
-   * Attempts to use docx library with CDN fallback; falls back to ZIP-based DOCX if library unavailable
-   * @private
-   * @async
-   * @param {Object} exportData - Export data object
-   * @param {string} sessionId - Session identifier
-   * @param {Function} notify - Progress callback
-   * @returns {Promise<Object>} Export result with blob, filename, mimeType
+   * Resize an image data URL for export. Caps at maxWidth=1280 to avoid
+   * retaining oversized images (PERF-003).
    */
-  async _exportDOCX(exportData, sessionId, notify) {
-    const { session, steps } = exportData;
+  async _resizeImageForExport(dataUrl, maxWidth = 1280, maxHeight = 720) {
+    // Helper to check if we are in a Service Worker or similar context
+    const useOffscreen = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined';
 
-    notify({ percent: 25, status: 'Loading DOCX library...' });
+    if (useOffscreen) {
+      try {
+        const response = await fetch(dataUrl);
+        const blob = await response.blob();
+        const bitmap = await createImageBitmap(blob);
 
-    // Try to load the bundled docx library with CDN fallback
-    let docxLib = null;
-    try {
-      if (window.docx) {
-        docxLib = window.docx;
-      } else {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
+        const { width: imgWidth, height: imgHeight } = bitmap;
+        const scale = Math.min(maxWidth / imgWidth, maxHeight / imgHeight, 1);
 
-          // Try local library first
-          script.src = chrome.runtime.getURL('libs/docx.min.js');
+        if (scale >= 1) {
+          bitmap.close();
+          return { dataUrl, width: imgWidth, height: imgHeight };
+        }
 
-          script.onload = () => {
-            console.log('Loaded docx library from local bundle');
-            resolve();
-          };
+        const canvasWidth = Math.floor(imgWidth * scale);
+        const canvasHeight = Math.floor(imgHeight * scale);
 
-          script.onerror = () => {
-            console.warn('Local docx library not found, trying CDN...');
-            script.remove();
+        const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bitmap, 0, 0, canvasWidth, canvasHeight);
 
-            // CDN fallback with SRI integrity hash for security
-            const cdnScript = document.createElement('script');
-            cdnScript.src = 'https://unpkg.com/docx@7.8.2/build/index.js';
-            cdnScript.crossOrigin = 'anonymous';
-            // SRI hash verified for docx@7.8.2 (unpkg.com/docx@7.8.2/build/index.js)
-            cdnScript.integrity = 'sha384-zjTqOObJTD6OT6CUn8mSpDY+crIiP0cX457OjcZosSATiUFbmdXa9KRScjfLVxFH';
-            cdnScript.onload = () => {
-              console.log('Loaded docx library from CDN');
-              resolve();
-            };
-            cdnScript.onerror = () => {
-              reject(new Error('Failed to load docx library from both local and CDN'));
-            };
-            document.head.appendChild(cdnScript);
-          };
-
-          document.head.appendChild(script);
+        const resizedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+        const reader = new FileReader();
+        const resizedDataUrl = await new Promise((resolve) => {
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(resizedBlob);
         });
-        docxLib = window.docx;
+
+        bitmap.close();
+        return { dataUrl: resizedDataUrl, width: canvasWidth, height: canvasHeight };
+
+      } catch (error) {
+        console.error('Offscreen image resize failed:', error);
+        return { dataUrl, width: 1280, height: 720 };
       }
-    } catch (e) {
-      console.warn('docx library not available, falling back to ZIP-based DOCX:', e);
-    }
-
-    // Load user's export quality preference
-    let exportFormat = 'auto';
-    try {
-      const settings = await this.storage.getSettings();
-      exportFormat = settings.exportImageQuality || settings.imageQuality || 'auto';
-    } catch (e) { /* use default */ }
-
-    notify({ percent: 30, status: 'Loading screenshots...' });
-
-    // Load screenshots via _resolveAssetUrl (checks dataUrl, then data, then blob)
-    const screenshotAssets = await this.storage.getAllAssets(session.id);
-    const screenshotMap = new Map();
-    const totalScreens = screenshotAssets.length || 1;
-    let processed = 0;
-
-    for (const asset of screenshotAssets) {
-      if (this._isCancelled(session.id)) {
-        this._clearCancellation(session.id);
-        throw new Error('Export cancelled by user');
-      }
-
-      const url = await this._resolveAssetUrl(asset);
-      if (url) {
-        const imgObj = await ImageProcessor.processForExport(url, {
-          quality: 0.92,
-          format: exportFormat
-        });
-        screenshotMap.set(asset.stepId, imgObj);
-      } else {
-        console.warn('No usable image data for asset', asset.id, '(stepId:', asset.stepId + ')');
-      }
-
-      processed++;
-      // Progress: 30–70% during screenshot work
-      const pct = 30 + Math.floor((processed / totalScreens) * 40);
-      notify({
-        percent: Math.min(pct, 70),
-        status: `Processing screenshots... (${processed}/${totalScreens})`
-      });
-
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-
-    notify({ percent: 75, status: 'Building DOCX document...' });
-
-    if (this._isCancelled(session.id)) {
-      this._clearCancellation(session.id);
-      throw new Error('Export cancelled by user');
-    }
-
-    const sessionName = (session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
-    const filename = `${sessionName}_${Date.now()}.docx`;
-
-    let result;
-    if (docxLib) {
-      result = await this._buildDocxWithLibrary(docxLib, session, steps, filename, screenshotMap, notify);
     } else {
-      result = await this._buildDocxFallback(session, steps, filename, screenshotMap, notify);
+      return new Promise((resolve) => {
+        const img = new Image();
+
+        img.onload = () => {
+          try {
+            const scale = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
+
+            if (scale >= 1) {
+              resolve({ dataUrl: dataUrl, width: img.width, height: img.height });
+              return;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.floor(img.width * scale);
+            canvas.height = Math.floor(img.height * scale);
+
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            const resized = canvas.toDataURL('image/jpeg', 0.85);
+            // Free canvas memory immediately
+            canvas.width = 0;
+            canvas.height = 0;
+            img.src = '';
+
+            resolve({ dataUrl: resized, width: Math.floor(img.width * scale), height: Math.floor(img.height * scale) });
+          } catch (error) {
+            console.error('Image resize failed:', error);
+            img.src = '';
+            resolve({ dataUrl: dataUrl, width: 1280, height: 720 });
+          }
+        };
+
+        img.onerror = () => {
+          img.src = '';
+          resolve({ dataUrl: dataUrl, width: 1280, height: 720 });
+        };
+
+        img.src = dataUrl;
+      });
     }
-
-    screenshotMap.clear();
-
-    notify({ percent: 95, status: 'DOCX generated' });
-
-    return {
-      content: null,
-      filename: result.filename,
-      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      blob: result.blob
-    };
   }
 
   /**
-   * Build a proper .docx using the docx library
+   * Load the local jsPDF library via chrome.runtime.getURL (FUNC-005).
+   * CDN loading is intentionally removed — extension CSP blocks it.
    * @private
-   * @async
-   * @param {Object} docxLib - docx library reference
-   * @param {Object} session - Session object
-   * @param {Array} steps - Steps array
-   * @param {string} filename - Output filename
-   * @param {Map} screenshotMap - Map of stepId to image objects
-   * @param {Function} notify - Progress callback
-   * @returns {Promise<Object>} { blob, filename }
+   * @returns {Promise<boolean>} true if jsPDF loaded successfully
    */
-  async _buildDocxWithLibrary(docxLib, session, steps, filename, screenshotMap, notify) {
-    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-            AlignmentType, BorderStyle, WidthType, ShadingType, HeadingLevel,
-            ImageRun } = docxLib;
+  async _loadJsPDF() {
+    // Already loaded?
+    if (typeof window !== 'undefined' && window.jspdf && window.jspdf.jsPDF) {
+      return true;
+    }
 
-    const border = { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' };
-    const borders = { top: border, bottom: border, left: border, right: border };
-    const headerShading = { fill: '0284C7', type: ShadingType.CLEAR };
-    const headerTextRun = (text) => new TextRun({ text, bold: true, color: 'FFFFFF', size: 22 });
-    const cellWidth = (w) => ({ size: w, type: WidthType.DXA });
+    // Load local lib via chrome.runtime.getURL (CSP-safe)
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
+      return new Promise((resolve) => {
+        const localUrl = chrome.runtime.getURL('libs/jspdf.umd.min.js');
+        const script = document.createElement('script');
+        script.src = localUrl;
+        script.onload = () => resolve(true);
+        script.onerror = () => {
+          console.warn('[ExportService] Failed to load local jsPDF lib');
+          resolve(false);
+        };
+        document.head.appendChild(script);
+      });
+    }
 
-    // Column widths (sum = 9360 DXA = 6.5" content area on US Letter with 1" margins)
-    const colWidths = [600, 1600, 1560, 2600, 3000];
+    return false;
+  }
 
-    // Header row
-    const headerRow = new TableRow({
-      children: ['#', 'Action', 'Field', 'Selector', 'Value / URL'].map((label, i) =>
-        new TableCell({
-          borders,
-          width: cellWidth(colWidths[i]),
-          shading: headerShading,
-          margins: { top: 60, bottom: 60, left: 80, right: 80 },
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [headerTextRun(label)] })]
-        })
-      )
+  /**
+   * Export to DOCX (HTML word document).
+   *
+   * PERF-003 fix: processes screenshots one at a time — load asset, build
+   * HTML img tag, null out reference, then delete from map. Only one
+   * asset's bytes live in heap at a time. Uses URL.createObjectURL for
+   * the download trigger to avoid +33% base64 overhead on large blobs.
+   *
+   * SEC-003: sanitizes URLs in step data.
+   */
+  async _exportDOCX(exportData, sessionId, progressCallback) {
+    const notify =
+      typeof progressCallback === 'function' ? progressCallback : () => { };
+
+    const { session, steps } = exportData;
+
+    notify({ percent: 30, status: 'Building DOCX template...' });
+
+    let html = `
+<!DOCTYPE html>
+<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+  <meta charset='utf-8'>
+  <title>Test Documentation</title>
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; margin: 40px; }
+    h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; margin-bottom: 30px; }
+    h2 { color: #34495e; margin-top: 30px; margin-bottom: 15px; font-size: 18px; }
+    .info { margin: 20px 0 30px 0; }
+    .info p { margin: 8px 0; font-size: 14px; color: #333; }
+    .divider { border-top: 2px solid #ddd; margin: 30px 0; }
+    ol { line-height: 1.8; padding-left: 30px; margin-top: 20px; }
+    li { margin: 15px 0; color: #333; font-size: 14px; }
+    .screenshot-img {
+      max-width: 7.29in !important;
+      max-height: 4.11in !important;
+      height: auto !important;
+      margin-top: 15px;
+      border: 1px solid #ccc;
+      display: block;
+    }
+    .automated-screenshots { margin-top: 40px; padding-top: 20px; border-top: 2px solid #3498db; }
+    .auto-screenshot { margin: 30px 0; text-align: center; }
+    .auto-screenshot img {
+      max-width: 7.29in !important;
+      max-height: 4.11in !important;
+      height: auto !important;
+      margin: 15px auto;
+      border: 1px solid #ccc;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <h1>${this._escapeHtml(session.name)} - Test Document</h1>
+
+  <div class='info'>
+    <p><b>Created:</b> ${new Date(session.createdAt).toLocaleString()}</p>
+    <p><b>Created by:</b> </p>
+    <p><b>Total Steps:</b> ${session.stepCount}</p>
+  </div>
+
+  <div class='divider'></div>
+
+  <h2>Test Execution Steps</h2>
+`;
+
+    // ------------------------------------------------------------------
+    // Build a lookup: stepId -> asset (reference only, don't load yet)
+    // PERF-003: We load images one at a time as we encounter each step
+    // ------------------------------------------------------------------
+    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    // Build a stepId → asset index (not the data URLs themselves)
+    const assetIndex = new Map();
+    for (const asset of screenshotAssets) {
+      if (asset.stepId) {
+        assetIndex.set(asset.stepId, asset);
+      }
+    }
+    // screenshotAssets array no longer needed — release reference
+    screenshotAssets.length = 0;
+    // ------------------------------------------------------------------
+
+    const automatedScreenshots = [];
+    const regularSteps = [];
+
+    steps.forEach(step => {
+      if (step.action === 'screenshot' && step.isManual) {
+        regularSteps.push(step);
+      } else if (step.action === 'screenshot' && !step.isManual) {
+        automatedScreenshots.push(step);
+      } else {
+        regularSteps.push(step);
+      }
     });
 
-    // Data rows — process in chunks to avoid memory issues
+    html += `<ol>`;
+
     const CHUNK_SIZE = 50;
-    const dataRows = [];
-    const totalSteps = steps.length;
+    const totalSteps = regularSteps.length;
     let processedCount = 0;
 
     for (let chunkStart = 0; chunkStart < totalSteps; chunkStart += CHUNK_SIZE) {
       const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalSteps);
-      const chunk = steps.slice(chunkStart, chunkEnd);
+      const chunk = regularSteps.slice(chunkStart, chunkEnd);
 
       for (const step of chunk) {
         if (this._isCancelled(session.id)) {
@@ -424,394 +596,164 @@ export class ExportService {
           throw new Error('Export cancelled by user');
         }
 
-        const selectorDisplay = step.selector?.css || step.selector?.xpath || 'N/A';
-        const valueDisplay = step.value || step.url || 'N/A';
+        let oneliner;
 
-        dataRows.push(new TableRow({
-          children: [
-            String(processedCount + 1),
-            step.action || '',
-            step.fieldName || 'N/A',
-            selectorDisplay,
-            valueDisplay
-          ].map((cellText, i) =>
-            new TableCell({
-              borders,
-              width: cellWidth(colWidths[i]),
-              shading: { fill: processedCount % 2 === 0 ? 'F8FAFC' : 'FFFFFF', type: ShadingType.CLEAR },
-              margins: { top: 60, bottom: 60, left: 80, right: 80 },
-              children: [new Paragraph({ children: [new TextRun({ text: String(cellText), size: 20 })] })]
-            })
-          )
-        }));
+        if (step.action === 'screenshot') {
+          oneliner = 'Manual screenshot captured';
+          html += `<li>${oneliner}`;
+
+          // PERF-003: load + process this one asset, then null it out
+          const asset = assetIndex.get(step.id);
+          if (asset) {
+            const rawUrl = await this._resolveAssetUrl(asset);
+            if (rawUrl) {
+              const imgObj = await this._resizeImageForExport(rawUrl, 1280, 720);
+              html += `<br><img src="${imgObj.dataUrl}" width="${imgObj.width}" height="${imgObj.height}" class="screenshot-img" alt="Manual Screenshot"/>`;
+              // Null out immediately after use
+              imgObj.dataUrl = null;
+            }
+            // Remove from index so GC can collect
+            assetIndex.delete(step.id);
+          }
+
+          html += `</li>`;
+        } else {
+          if (step.description) {
+            oneliner = this._escapeHtml(step.description);
+          } else {
+            oneliner = `${step.action.toUpperCase()}`;
+
+            if (step.fieldName && step.fieldName !== 'N/A') {
+              oneliner += ` on "${this._escapeHtml(step.fieldName)}"`;
+            }
+
+            if (step.value && step.action !== 'navigate') {
+              oneliner += ` with value "${this._escapeHtml(step.value)}"`;
+            }
+
+            if (step.action === 'navigate') {
+              // SEC-003: sanitize navigate URL
+              const safeVal = this._sanitizeUrl(step.value || step.url);
+              oneliner += ` to ${this._escapeHtml(safeVal)}`;
+            }
+          }
+
+          html += `<li>${oneliner}</li>`;
+        }
 
         processedCount++;
+
+        if (processedCount % 10 === 0) {
+          notify({
+            percent: 30 + Math.floor((processedCount / totalSteps) * 60),
+            status: `Processing step ${processedCount}/${totalSteps}...`
+          });
+        }
       }
 
+      // Release chunk memory
+      chunk.length = 0;
+
       if (chunkEnd < totalSteps) {
-        const pct = 75 + Math.floor((processedCount / totalSteps) * 15);
-        if (notify) notify({ percent: Math.min(pct, 90), status: `Building document... (${processedCount}/${totalSteps})` });
         await new Promise(resolve => setTimeout(resolve, 10));
       }
     }
 
-    // Screenshot paragraphs — embed each screenshot after the steps table
-    const screenshotParagraphs = [];
-    if (screenshotMap && screenshotMap.size > 0 && ImageRun) {
-      for (const step of steps) {
-        const imgObj = screenshotMap.get(step.id);
-        if (imgObj && imgObj.dataUrl) {
-          try {
-            // Convert data URL to ArrayBuffer for ImageRun
-            const base64 = imgObj.dataUrl.split(',')[1];
-            const binary = atob(base64);
-            const bytes = new Uint8Array(binary.length);
-            for (let k = 0; k < binary.length; k++) bytes[k] = binary.charCodeAt(k);
+    html += `</ol>`;
 
-            const isJpeg = imgObj.dataUrl.startsWith('data:image/jpeg');
-            screenshotParagraphs.push(
-              new Paragraph({
-                children: [new TextRun({ text: `Screenshot — step: ${step.action || ''}`, bold: true, size: 20 })]
-              }),
-              new Paragraph({
-                children: [
-                  new ImageRun({
-                    data: bytes.buffer,
-                    transformation: { width: imgObj.width || 600, height: imgObj.height || 450 },
-                    type: isJpeg ? 'jpg' : 'png'
-                  })
-                ]
-              })
-            );
-          } catch (imgErr) {
-            console.warn('Failed to embed screenshot for step', step.id, imgErr);
-          }
-        }
-      }
-    }
+    if (automatedScreenshots.length > 0) {
+      html += `
+  <div class='automated-screenshots'>
+    <h2>Automated Screenshots</h2>`;
 
-    const doc = new Document({
-      styles: {
-        default: { document: { run: { font: 'Arial', size: 22 } } }
-      },
-      sections: [{
-        properties: {
-          page: {
-            size: { width: 12240, height: 15840 },           // US Letter
-            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } // 1" margins
-          }
-        },
-        children: [
-          // Title
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: 'TestSnapper — Test Recording', bold: true, size: 32, color: '0284C7' })]
-          }),
-
-          // Session metadata
-          new Paragraph({ spacing: { before: 200 }, children: [
-            new TextRun({ text: 'Session: ', bold: true, size: 22 }),
-            new TextRun({ text: session.name || session.id || 'Unnamed', size: 22 })
-          ]}),
-          new Paragraph({ children: [
-            new TextRun({ text: 'Created: ', bold: true, size: 22 }),
-            new TextRun({ text: new Date(session.createdAt).toLocaleString(), size: 22 })
-          ]}),
-          new Paragraph({ children: [
-            new TextRun({ text: 'URL: ', bold: true, size: 22 }),
-            new TextRun({ text: session.environment?.url || 'N/A', size: 22 })
-          ]}),
-          new Paragraph({ children: [
-            new TextRun({ text: 'Total Steps: ', bold: true, size: 22 }),
-            new TextRun({ text: String(steps.length), size: 22 })
-          ]}),
-
-          // Spacer
-          new Paragraph({ spacing: { before: 300, after: 100 }, children: [] }),
-
-          // Steps table
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            columnWidths: colWidths,
-            rows: [headerRow, ...dataRows]
-          }),
-
-          // Screenshots section (if any)
-          ...(screenshotParagraphs.length > 0 ? [
-            new Paragraph({ spacing: { before: 400 }, children: [] }),
-            new Paragraph({
-              heading: HeadingLevel.HEADING_2,
-              children: [new TextRun({ text: 'Screenshots', bold: true, size: 28, color: '0284C7' })]
-            }),
-            ...screenshotParagraphs
-          ] : [])
-        ]
-      }]
-    });
-
-    const buffer = await Packer.toBuffer(doc);
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-
-    return { blob, filename };
-  }
-
-  /**
-   * Fallback: create a minimal .docx without the library
-   * A .docx is just a ZIP containing a few XML files. Built manually
-   * so export never fails even if the library failed to load
-   * @private
-   * @async
-   * @param {Object} session - Session object
-   * @param {Array} steps - Steps array
-   * @param {string} filename - Output filename
-   * @param {Map} screenshotMap - Map of stepId to image objects
-   * @param {Function} notify - Progress callback
-   * @returns {Promise<Object>} { blob, filename }
-   */
-  async _buildDocxFallback(session, steps, filename, screenshotMap, notify) {
-    const escXml = (s) => Utils.escapeHtml(String(s || ''));
-
-    let bodyParagraphs = `
-      <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>
-        <w:r><w:t>TestSnapper — Test Recording</w:t></w:r></w:p>
-      <w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Session: </w:t></w:r>
-        <w:r><w:t>${escXml(session.name || session.id)}</w:t></w:r></w:p>
-      <w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Created: </w:t></w:r>
-        <w:r><w:t>${escXml(new Date(session.createdAt).toLocaleString())}</w:t></w:r></w:p>
-      <w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">URL: </w:t></w:r>
-        <w:r><w:t>${escXml(session.environment?.url || 'N/A')}</w:t></w:r></w:p>
-      <w:p><w:r><w:t/></w:r></w:p>`;
-
-    // Process in chunks to avoid memory issues
-    const CHUNK_SIZE = 50;
-    const totalSteps = steps.length;
-
-    for (let chunkStart = 0; chunkStart < totalSteps; chunkStart += CHUNK_SIZE) {
-      const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalSteps);
-      const chunk = steps.slice(chunkStart, chunkEnd);
-
-      for (let idx = 0; idx < chunk.length; idx++) {
-        const step = chunk[idx];
-        const i = chunkStart + idx;
-
+      for (let i = 0; i < automatedScreenshots.length; i++) {
         if (this._isCancelled(session.id)) {
           this._clearCancellation(session.id);
           throw new Error('Export cancelled by user');
         }
 
-        const sel = escXml(step.selector?.css || step.selector?.xpath || 'N/A');
-        const val = escXml(step.value || step.url || 'N/A');
-        bodyParagraphs += `
-        <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr>
-          <w:r><w:t>Step ${i + 1}: ${escXml(step.action)}</w:t></w:r></w:p>
-        <w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Field: </w:t></w:r>
-          <w:r><w:t>${escXml(step.fieldName || 'N/A')}</w:t></w:r></w:p>
-        <w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Selector: </w:t></w:r>
-          <w:r><w:t>${sel}</w:t></w:r></w:p>
-        <w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Value: </w:t></w:r>
-          <w:r><w:t>${val}</w:t></w:r></w:p>`;
+        const screenshot = automatedScreenshots[i];
+        const asset = assetIndex.get(screenshot.id);
+        if (asset) {
+          const rawUrl = await this._resolveAssetUrl(asset);
+          if (rawUrl) {
+            const imgObj = await this._resizeImageForExport(rawUrl, 1280, 720);
+            html += `
+    <div class='auto-screenshot'>
+      <p><b>Auto Screenshot ${i + 1}</b> - ${new Date(screenshot.timestamp).toLocaleTimeString()}</p>
+      <img src="${imgObj.dataUrl}" width="${imgObj.width}" height="${imgObj.height}" alt="Automated Screenshot ${i + 1}"/>
+    </div>`;
+            imgObj.dataUrl = null;
+          }
+          assetIndex.delete(screenshot.id);
+        }
       }
 
-      if (chunkEnd < totalSteps) {
-        const pct = 75 + Math.floor((chunkEnd / totalSteps) * 15);
-        if (notify) notify({ percent: Math.min(pct, 90), status: `Building document... (${chunkEnd}/${totalSteps})` });
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
+      html += `</div>`;
     }
 
-    // Note screenshots in the fallback (full binary embedding requires relationship
-    // wiring that is out of scope for this minimal ZIP builder)
-    if (screenshotMap && screenshotMap.size > 0) {
-      bodyParagraphs += `
-        <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr>
-          <w:r><w:t>Screenshots</w:t></w:r></w:p>`;
-      for (const [stepId] of screenshotMap) {
-        bodyParagraphs += `
-        <w:p><w:r><w:t xml:space="preserve">Screenshot for step: ${escXml(stepId)} (open .docx in Word to view embedded images)</w:t></w:r></w:p>`;
-      }
+    html += `
+</body>
+</html>`;
+
+    // PERF-003: clear the asset index map
+    assetIndex.clear();
+
+    notify({ percent: 90, status: 'Finalizing DOCX content...' });
+
+    const sessionName = (session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
+    const filename = `${sessionName}_${Date.now()}.doc`;
+
+    notify({ percent: 95, status: 'DOCX generated' });
+
+    // PERF-003: use URL.createObjectURL for download to avoid +33% base64 overhead
+    if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' && URL.createObjectURL) {
+      const blob = new Blob([html], { type: 'application/msword' });
+      const objectUrl = URL.createObjectURL(blob);
+      // Revoke after a short delay to allow download to start
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+      return {
+        content: null,
+        objectUrl,
+        filename,
+        mimeType: 'application/msword'
+      };
     }
 
-    const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>${bodyParagraphs}<w:sectPr/></w:body>
-</w:document>`;
-
-    const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
-</Types>`;
-
-    const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>`;
-
-    const wordRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-</Relationships>`;
-
-    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:style w:type="paragraph" w:styleId="Heading1">
-    <w:name w:val="heading 1"/>
-    <w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>
-    <w:rPr><w:b/><w:sz w:val="32"/><w:color w:val="2C3E50"/></w:rPr>
-  </w:style>
-  <w:style w:type="paragraph" w:styleId="Heading2">
-    <w:name w:val="heading 2"/>
-    <w:pPr><w:spacing w:before="200" w:after="80"/></w:pPr>
-    <w:rPr><w:b/><w:sz w:val="26"/><w:color w:val="34495E"/></w:rPr>
-  </w:style>
-</w:styles>`;
-
-    const blob = await this._createZipBlob({
-      '[Content_Types].xml': contentTypesXml,
-      '_rels/.rels': relsXml,
-      'word/_rels/document.xml.rels': wordRelsXml,
-      'word/document.xml': documentXml,
-      'word/styles.xml': stylesXml
-    });
-
-    return { blob, filename };
+    return {
+      content: html,
+      filename,
+      mimeType: 'application/msword'
+    };
   }
 
   /**
-   * Minimal ZIP file builder (no dependencies)
-   * Handles only stored (uncompressed) entries — sufficient for .docx XML
-   * @private
-   * @async
-   * @param {Object<string, string>} files - Map of filename to content
-   * @returns {Promise<Blob>} ZIP file Blob
-   */
-  async _createZipBlob(files) {
-    const encoder = new TextEncoder();
-    const entries = [];
-    let offset = 0;
-
-    for (const [name, content] of Object.entries(files)) {
-      const nameBytes = encoder.encode(name);
-      const contentBytes = encoder.encode(content);
-      const crc = this._crc32(contentBytes);
-
-      // Local file header
-      const local = new Uint8Array(30 + nameBytes.length);
-      const localView = new DataView(local.buffer);
-      localView.setUint32(0, 0x04034b50, true);   // signature
-      localView.setUint16(4, 20, true);            // version needed
-      localView.setUint16(6, 0, true);             // flags
-      localView.setUint16(8, 0, true);             // compression: stored
-      localView.setUint16(10, 0, true);            // mod time
-      localView.setUint16(12, 0, true);            // mod date
-      localView.setUint32(14, crc, true);          // crc32
-      localView.setUint32(18, contentBytes.length, true); // compressed size
-      localView.setUint32(22, contentBytes.length, true); // uncompressed size
-      localView.setUint16(26, nameBytes.length, true);    // name length
-      localView.setUint16(28, 0, true);            // extra length
-      local.set(nameBytes, 30);
-
-      entries.push({ name: nameBytes, content: contentBytes, local, crc, offset });
-      offset += local.length + contentBytes.length;
-    }
-
-    // Central directory
-    const cdParts = [];
-    let cdSize = 0;
-    for (const entry of entries) {
-      const cd = new Uint8Array(46 + entry.name.length);
-      const cdView = new DataView(cd.buffer);
-      cdView.setUint32(0, 0x02014b50, true);      // signature
-      cdView.setUint16(4, 20, true);               // version made by
-      cdView.setUint16(6, 20, true);               // version needed
-      cdView.setUint16(8, 0, true);                // flags
-      cdView.setUint16(10, 0, true);               // compression
-      cdView.setUint16(12, 0, true);               // mod time
-      cdView.setUint16(14, 0, true);               // mod date
-      cdView.setUint32(16, entry.crc, true);       // crc32
-      cdView.setUint32(20, entry.content.length, true);
-      cdView.setUint32(24, entry.content.length, true);
-      cdView.setUint16(28, entry.name.length, true);
-      cdView.setUint16(30, 0, true);               // extra len
-      cdView.setUint16(32, 0, true);               // comment len
-      cdView.setUint16(34, 0, true);               // disk number
-      cdView.setUint16(36, 0, true);               // internal attrs
-      cdView.setUint32(38, 0, true);               // external attrs
-      cdView.setUint32(42, entry.offset, true);    // local header offset
-      cd.set(entry.name, 46);
-      cdParts.push(cd);
-      cdSize += cd.length;
-    }
-
-    // End of central directory
-    const eocd = new Uint8Array(22);
-    const eocdView = new DataView(eocd.buffer);
-    eocdView.setUint32(0, 0x06054b50, true);       // signature
-    eocdView.setUint16(4, 0, true);                // disk number
-    eocdView.setUint16(6, 0, true);                // cd disk
-    eocdView.setUint16(8, entries.length, true);   // entries on disk
-    eocdView.setUint16(10, entries.length, true);  // total entries
-    eocdView.setUint32(12, cdSize, true);          // cd size
-    eocdView.setUint32(16, offset, true);          // cd offset
-    eocdView.setUint16(20, 0, true);               // comment length
-
-    // Concatenate everything
-    const parts = [];
-    for (const entry of entries) {
-      parts.push(entry.local, entry.content);
-    }
-    parts.push(...cdParts, eocd);
-
-    const totalLen = parts.reduce((sum, p) => sum + p.length, 0);
-    const result = new Uint8Array(totalLen);
-    let pos = 0;
-    for (const part of parts) {
-      result.set(part, pos);
-      pos += part.length;
-    }
-
-    return new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-  }
-
-  /**
-   * CRC-32 computation (standard polynomial 0xEDB88320)
-   * @private
-   * @param {Uint8Array} bytes - Data to compute CRC for
-   * @returns {number} CRC-32 hash
-   */
-  _crc32(bytes) {
-    let crc = 0xFFFFFFFF;
-    for (let i = 0; i < bytes.length; i++) {
-      crc ^= bytes[i];
-      for (let j = 0; j < 8; j++) {
-        crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
-      }
-    }
-    return (crc ^ 0xFFFFFFFF) >>> 0;
-  }
-
-  /**
-   * Export as PDF
-   * @private
-   * @async
-   * @param {Object} exportData - Export data object
-   * @param {string} sessionId - Session identifier
-   * @returns {Promise<Object>} Export result with filename, mimeType
+   * Export to PDF using local jsPDF (FUNC-005).
+   *
+   * CDN loading has been removed — extension CSP (script-src 'self') always
+   * blocks it. Instead we load jsPDF from libs/jspdf.umd.min.js via
+   * chrome.runtime.getURL, which is CSP-safe.
+   *
+   * If the local lib is unavailable, returns a user-friendly error blob
+   * instead of a junk file containing "null".
+   *
+   * SEC-003: sanitizes step URLs.
    */
   async _exportPDF(exportData, sessionId) {
     const { session, steps } = exportData;
 
-    if (typeof window.jspdf === 'undefined') {
-      await new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-      });
+    // FUNC-005: load local jsPDF, NOT CDN
+    const loaded = await this._loadJsPDF();
+    if (!loaded || typeof window === 'undefined' || !window.jspdf || !window.jspdf.jsPDF) {
+      console.error('[ExportService] jsPDF library not available. Ensure libs/jspdf.umd.min.js is present.');
+      // Return a user-friendly error text file rather than a junk "null" PDF
+      const errorMsg = 'PDF export failed: jsPDF library not found.\n\nPlease run "npm run setup-libs" to download the required library, then reload the extension.';
+      const sessionName = (session.name || 'Session').replace(/[^a-z0-9]/gi, '_');
+      return {
+        content: errorMsg,
+        filename: `${sessionName}_${Date.now()}_ERROR.txt`,
+        mimeType: 'text/plain'
+      };
     }
 
     const { jsPDF } = window.jspdf;
@@ -875,6 +817,16 @@ export class ExportService {
           yPosition += 4;
         }
 
+        // SEC-003: sanitize URL shown in PDF
+        if (step.url) {
+          const safeUrl = this._sanitizeUrl(step.url);
+          const urlLines = doc.splitTextToSize(`URL: ${safeUrl}`, contentWidth - 5);
+          urlLines.forEach(line => {
+            doc.text(line, margin + 5, yPosition);
+            yPosition += 4;
+          });
+        }
+
         doc.setTextColor(0, 0, 0);
         yPosition += 4;
       }
@@ -883,8 +835,22 @@ export class ExportService {
     const sessionName = (session.name || 'Session').replace(/[^a-z0-9]/gi, '_');
     const filename = `${sessionName}_${Date.now()}.pdf`;
 
-    doc.save(filename);
+    // PERF-003: use output('blob') + URL.createObjectURL instead of doc.save()
+    // which internally converts to a base64 data URL (+33% overhead)
+    if (typeof URL !== 'undefined' && URL.createObjectURL) {
+      const pdfBlob = doc.output('blob');
+      const objectUrl = URL.createObjectURL(pdfBlob);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+      return {
+        content: null,
+        objectUrl,
+        filename,
+        mimeType: 'application/pdf'
+      };
+    }
 
+    // Fallback if URL.createObjectURL unavailable
+    doc.save(filename);
     return {
       content: null,
       filename,

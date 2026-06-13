@@ -10,23 +10,43 @@
  *     /g already returns the original string unchanged when there is no match, so
  *     the .test() guard is unnecessary and was the source of the bug.
  *  3. Fixed mojibaked bullet character (â€¢ → •).
+ *  4. FUNC-001: Guard against re-injection SyntaxError.
+ *  5. PERF-017: Pre-compile /g regex variants once in constructor.
+ *  6. FUNC-014: Removed dead inner shouldIgnoreField early-return in maskValue.
  */
 
+// FUNC-001: Guard against re-injection SyntaxError — same pattern as selector.js.
+if (typeof window !== 'undefined' && window.Redactor) {
+  // Already defined — skip re-declaration entirely.
+} else {
+
 class Redactor {
-  /**
-   * Initialize the redactor with sensitive patterns and PII detection
-   */
   constructor() {
-    // Keywords that flag a field as sensitive
+    // Keywords that flag a field as sensitive (no /g needed — used with .some/.test on short strings)
     // RED-MED-001: Enhanced with PIN, routing, account, DOB patterns
     this.sensitivePatterns = [
-      /password/i, /passwd/i, /pwd/i, /secret/i, /token/i,
-      /api[_-]?key/i, /auth/i, /credit[_-]?card/i, /cvv/i,
-      /ssn/i, /social[_-]?security/i, /\bpin\b/i,
-      /routing[_-]?number/i, /account[_-]?number/i,
-      /bank[_-]?account/i, /dob/i,
-      /date[_-]?of[_-]?birth/i, /birthdate/i,
-      /tax[_-]?id/i, /ein/i, /driver[_-]?license/i, /passport/i
+      /password/i,
+      /passwd/i,
+      /pwd/i,
+      /secret/i,
+      /token/i,
+      /api[_-]?key/i,
+      /auth/i,
+      /credit[_-]?card/i,
+      /cvv/i,
+      /ssn/i,
+      /social[_-]?security/i,
+      /\bpin\b/i,
+      /routing[_-]?number/i,
+      /account[_-]?number/i,
+      /bank[_-]?account/i,
+      /dob/i,
+      /date[_-]?of[_-]?birth/i,
+      /birthdate/i,
+      /tax[_-]?id/i,
+      /ein/i,
+      /driver[_-]?license/i,
+      /passport/i
     ];
 
     // PII detection patterns — stored WITHOUT /g to avoid lastIndex state.
@@ -38,13 +58,19 @@ class Redactor {
     this.pinPattern = /\b\d{4,6}\b/; // 4-6 digit PINs
     this.routingPattern = /\b\d{9}\b/; // 9 digit routing numbers
     this.dobPattern = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/; // MM/DD/YYYY or MM-DD-YY
+
+    // PERF-017: Pre-compile /g variants once to avoid per-call RegExp construction.
+    this._emailPatternG = new RegExp(this.emailPattern.source, 'g');
+    this._phonePatternG = new RegExp(this.phonePattern.source, 'g');
+    this._creditCardPatternG = new RegExp(this.creditCardPattern.source, 'g');
+    this._ssnPatternG = new RegExp(this.ssnPattern.source, 'g');
+    this._routingPatternG = new RegExp(this.routingPattern.source, 'g');
+    this._dobPatternG = new RegExp(this.dobPattern.source, 'g');
+    this._pinPatternG = new RegExp(this.pinPattern.source, 'g');
   }
 
   /**
-   * Check if an input field should be ignored / fully redacted
-   * Considers element type, data attributes, and semantic names
-   * @param {Element} element - Form element to check
-   * @returns {boolean} true if field should be fully redacted
+   * Check if an input field should be ignored / fully redacted.
    */
   shouldIgnoreField(element) {
     if (!element) return false;
@@ -66,15 +92,12 @@ class Redactor {
   }
 
   /**
-   * Mask sensitive value
+   * Mask sensitive value.
    *
    * If the field itself is sensitive (password, etc.) the entire value is
    * replaced with dots. Otherwise each replacement runs unconditionally —
    * .replace() is a no-op when the pattern doesn't match, so no .test()
    * guard is needed.
-   * @param {string} value - Value to mask
-   * @param {Element} element - Form element context
-   * @returns {string} Masked value or empty string
    */
   maskValue(value, element) {
     if (!value) return '';
@@ -84,11 +107,20 @@ class Redactor {
       return '\u2022'.repeat(Math.min(value.length, 8)); // •••••••• (up to 8)
     }
 
+    // FUNC-014: Apply PII pattern masking unconditionally for ALL fields.
+    // Previously this block was only reached when shouldIgnoreField was false,
+    // but callers only called maskValue when shouldIgnoreField was true \u2014
+    // making the PII patterns unreachable dead code. Now callers always invoke
+    // maskValue and this function handles the full masking logic.
+    // PERF-017: Use pre-compiled /g regex variants; reset lastIndex before each
+    // use since they are stored as instance properties shared across calls.
+
     let result = value;
 
     // RED-MED-002: Mask emails - full masking for email fields, partial for others
+    this._emailPatternG.lastIndex = 0;
     result = result.replace(
-      new RegExp(this.emailPattern.source, 'g'),
+      this._emailPatternG,
       (email) => {
         // Check if element is an email input field - use full masking
         if (element && (element.type === 'email' ||
@@ -104,50 +136,33 @@ class Redactor {
     );
 
     // Mask phone numbers
-    result = result.replace(
-      new RegExp(this.phonePattern.source, 'g'),
-      '***-***-****'
-    );
+    this._phonePatternG.lastIndex = 0;
+    result = result.replace(this._phonePatternG, '***-***-****');
 
     // Mask credit card numbers
-    result = result.replace(
-      new RegExp(this.creditCardPattern.source, 'g'),
-      '**** **** **** ****'
-    );
+    this._creditCardPatternG.lastIndex = 0;
+    result = result.replace(this._creditCardPatternG, '**** **** **** ****');
 
-    // Mask SSN
-    result = result.replace(
-      new RegExp(this.ssnPattern.source, 'g'),
-      '***-**-****'
-    );
+    // RED-MED-001: Mask SSN
+    this._ssnPatternG.lastIndex = 0;
+    result = result.replace(this._ssnPatternG, '***-**-****');
 
     // Mask routing numbers (9 digits)
-    result = result.replace(
-      new RegExp(this.routingPattern.source, 'g'),
-      '*********'
-    );
+    this._routingPatternG.lastIndex = 0;
+    result = result.replace(this._routingPatternG, '*********');
 
     // Mask dates of birth
-    result = result.replace(
-      new RegExp(this.dobPattern.source, 'g'),
-      '**/**/****'
-    );
+    this._dobPatternG.lastIndex = 0;
+    result = result.replace(this._dobPatternG, '**/**/****');
 
-    // Mask PINs (4-6 digit numbers) - only if in sensitive context
-    if (this.shouldIgnoreField(element)) {
-      result = result.replace(
-        new RegExp(this.pinPattern.source, 'g'),
-        (match) => '\u2022'.repeat(match.length)
-      );
-    }
+    // FUNC-014: Removed dead inner shouldIgnoreField guard for PIN masking.
+    // The guard above already returned early for fully-sensitive fields.
 
     return result;
   }
 
   /**
-   * Redact sensitive data from a recorded step object
-   * @param {Object} step - Step object to redact
-   * @returns {Object} Redacted step object
+   * Redact sensitive data from a recorded step object.
    */
   redactStep(step) {
     if (!step) return step;
@@ -163,11 +178,11 @@ class Redactor {
 }
 
 if (typeof window !== 'undefined') {
-  if (!window.Redactor) {
-    window.Redactor = Redactor;
-  }
+  window.Redactor = Redactor;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { Redactor };
 }
+
+} // end of FUNC-001 guard: if (!window.Redactor)

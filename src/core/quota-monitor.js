@@ -1,107 +1,97 @@
 /**
- * QuotaMonitor – Storage quota monitoring subsystem.
+ * QuotaMonitor - Self-imposed storage budget monitoring
  *
- * Extracted from StorageManager (BUG-004 / MED-002 architecture refactor).
- * Provides quota usage reporting, threshold-based warnings, and a listener
- * pattern so callers can react to low-storage conditions without polling.
+ * PERF-014+FUNC-018: With unlimitedStorage removed from manifest.json,
+ * chrome.storage.local has a practical default quota (~10 MB in older Chrome,
+ * up to the profile disk space in modern Chrome with storage).
+ * We enforce a configurable self-imposed cap (default 500 MB) so warnings
+ * remain meaningful, and cache the permission check once per instance init.
  */
-
-export const QUOTA_WARNING_THRESHOLD = 0.80; // 80%
-export const QUOTA_ERROR_THRESHOLD = 0.95;   // 95%
-
 export class QuotaMonitor {
-  constructor() {
-    this.quotaListeners = new Set();
+  /**
+   * @param {number} maxBytes  Self-imposed byte budget (default 500 MB)
+   */
+  constructor(maxBytes = 500 * 1024 * 1024) {
+    this.maxBytes = maxBytes;
+    this._hasUnlimitedStorage = null; // cached after first check
+    this.WARN_THRESHOLD  = 0.80; // 80% warn
+    this.CRIT_THRESHOLD  = 0.95; // 95% critical
   }
 
   /**
-   * Get current storage usage.
-   * Returns { used, total, percentage, warning, error }
+   * Check chrome.permissions for unlimitedStorage once per instance lifetime.
+   * @returns {Promise<boolean>}
+   */
+  async _checkUnlimited() {
+    if (this._hasUnlimitedStorage !== null) {
+      return this._hasUnlimitedStorage;
+    }
+    try {
+      this._hasUnlimitedStorage = await new Promise((resolve) =>
+        chrome.permissions.contains({ permissions: ['unlimitedStorage'] }, resolve)
+      );
+    } catch {
+      this._hasUnlimitedStorage = false;
+    }
+    return this._hasUnlimitedStorage;
+  }
+
+  /**
+   * Get current storage usage against the self-imposed budget.
+   * @returns {Promise<{used: number, total: number, percentage: number, warning: boolean, error: boolean}>}
    */
   async getStorageUsage() {
     try {
-      const bytesInUse = await chrome.storage.local.getBytesInUse();
+      const bytesInUse = await new Promise((resolve, reject) =>
+        chrome.storage.local.getBytesInUse(null, (bytes) => {
+          if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
+          resolve(bytes);
+        })
+      );
 
-      let hasUnlimited = false;
-      let QUOTA_BYTES = 10485760; // 10MB default (no unlimitedStorage)
-      try {
-        hasUnlimited = await chrome.permissions.contains({ permissions: ['unlimitedStorage'] });
-        if (!hasUnlimited) {
-          QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 10485760;
-        }
-      } catch (err) {
-        QUOTA_BYTES = chrome.storage.local.QUOTA_BYTES || 10485760;
-      }
-
-      if (hasUnlimited) {
-        return {
-          used: bytesInUse,
-          total: Infinity,
-          percentage: 0,
-          warning: false,
-          error: false
-        };
-      }
-
-      const percentage = bytesInUse / QUOTA_BYTES;
+      const total      = this.maxBytes;
+      const used       = bytesInUse;
+      const percentage = used / total;
 
       return {
-        used: bytesInUse,
-        total: QUOTA_BYTES,
-        percentage: percentage,
-        warning: percentage >= QUOTA_WARNING_THRESHOLD,
-        error: percentage >= QUOTA_ERROR_THRESHOLD
+        used,
+        total,
+        percentage,
+        warning: percentage >= this.WARN_THRESHOLD && percentage < this.CRIT_THRESHOLD,
+        error:   percentage >= this.CRIT_THRESHOLD,
       };
-    } catch (error) {
-      console.error('Failed to get storage usage:', error);
-      return { used: 0, total: 0, percentage: 0, warning: false, error: false };
+    } catch (err) {
+      console.error('[QuotaMonitor] Failed to get storage usage:', err);
+      return { used: 0, total: this.maxBytes, percentage: 0, warning: false, error: false };
     }
   }
 
   /**
-   * Check quota before a write operation.
-   * Throws if quota is critically exceeded; warns (and notifies listeners) if
-   * usage is above the warning threshold.
+   * Check quota and send a warning notification if thresholds are exceeded.
+   * @returns {Promise<void>}
    */
-  async checkQuota() {
+  async checkAndNotify() {
     const usage = await this.getStorageUsage();
 
     if (usage.error) {
-      throw new Error(`Storage quota critically low (${(usage.percentage * 100).toFixed(1)}%). Delete old sessions or enable cleanup.`);
-    }
-
-    if (usage.warning) {
-      console.warn(`⚠️ Storage quota warning: ${(usage.percentage * 100).toFixed(1)}% used`);
-      this._notifyQuotaWarning(usage);
-    }
-
-    return usage;
-  }
-
-  /**
-   * Notify all registered quota warning listeners.
-   */
-  _notifyQuotaWarning(usage) {
-    this.quotaListeners.forEach(listener => {
+      console.warn(`[QuotaMonitor] CRITICAL: ${(usage.percentage * 100).toFixed(1)}% of budget used.`);
+      // Broadcast to any open popup/review pages
       try {
-        listener(usage);
-      } catch (error) {
-        console.error('Quota listener error:', error);
-      }
-    });
-  }
-
-  /**
-   * Add a quota warning listener.
-   */
-  onQuotaWarning(listener) {
-    this.quotaListeners.add(listener);
-  }
-
-  /**
-   * Remove a quota warning listener.
-   */
-  offQuotaWarning(listener) {
-    this.quotaListeners.delete(listener);
+        chrome.runtime.sendMessage({
+          action: 'storageQuotaWarning',
+          level: 'critical',
+          usage,
+        });
+      } catch { /* no listeners */ }
+    } else if (usage.warning) {
+      console.warn(`[QuotaMonitor] WARNING: ${(usage.percentage * 100).toFixed(1)}% of budget used.`);
+      try {
+        chrome.runtime.sendMessage({
+          action: 'storageQuotaWarning',
+          level: 'warning',
+          usage,
+        });
+      } catch { /* no listeners */ }
+    }
   }
 }
