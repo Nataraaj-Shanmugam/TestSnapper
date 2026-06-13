@@ -19,14 +19,19 @@ step happened. So the bar is:
   (PERF-003); any change must preserve that.
 
 ## Status
-**Phase 1 complete** (EXP-IMG-001/002/003/004) — implemented directly in
-`export-service.js`, 207 tests passing, build clean. Phase 2 (EXP-IMG-005,
-`.docx` library migration) and EXP-IMG-006 (full-page/HiDPI capture) remain.
+**Phase 1 + Phase 2 complete** (EXP-IMG-001..005) — implemented in
+`export-service.js`, 207 tests passing, build clean. DOCX now builds a true
+OOXML `.docx` via the bundled `docx` library (binary `ImageRun`, EMU sizing)
+with the legacy HTML `.doc` retained as an automatic fallback. Also fixed a
+latent bug: DOCX/PDF returned `objectUrl`, which neither caller consumed —
+both now return a `Blob` (popup/background both handle `result.blob`).
+
+Only EXP-IMG-006 (optional full-page/HiDPI capture) remains.
 
 ## Severity rollup
 | Severity | Remaining |
 |----------|-----------|
-| Low      | 2         |
+| Low      | 1         |
 
 ---
 
@@ -81,7 +86,7 @@ the current `.doc` at least positions images correctly in the meantime.
   - Impact: inconsistent image sizing and images cut in half at page boundaries — poor-looking evidence docs.
   - Fix (if staying on HTML `.doc`): emit **one unit only** — set `width` to the intended *display* px (not the 1280 source px) and **omit `height`** so aspect ratio follows; add `page-break-inside:avoid` to `.screenshot-img` and `.auto-screenshot`. (Superseded entirely by EXP-IMG-005 / Phase 2.)
 
-- [ ] **[LOW][EXP-IMG-005]** HTML-as-`.doc` with base64 data-URLs is version-fragile — `export-service.js` 497-728.
+- [x] **[LOW][EXP-IMG-005]** HTML-as-`.doc` with base64 data-URLs is version-fragile — `export-service.js` 497-728.
   - Problem: Word's support for `<img src="data:...">` varies by version/config (strict setups historically need MHTML/Content-Location embedding); the `.doc` is HTML, not real OOXML.
   - Impact: on some Word installs images may not render or the file warns about format mismatch.
   - Fix (Phase 2, recommended): build a true `.docx` with the bundled `docx` library + `ImageRun` (EMU sizing, binary-embedded images) — eliminates EXP-IMG-004 and this item together, within the export context already in use.

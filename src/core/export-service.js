@@ -402,16 +402,178 @@ export class ExportService {
   }
 
   /**
-   * Export to DOCX (HTML word document).
+   * Export to DOCX.
    *
-   * PERF-003 fix: processes screenshots one at a time — load asset, build
-   * HTML img tag, null out reference, then delete from map. Only one
-   * asset's bytes live in heap at a time. Uses URL.createObjectURL for
-   * the download trigger to avoid +33% base64 overhead on large blobs.
+   * EXP-IMG-005: prefer a real OOXML `.docx` built with the bundled `docx`
+   * library — images embed as binary `ImageRun` parts (no fragile base64
+   * data-URLs), sized in EMUs (deterministic across Word versions). Falls
+   * back to the legacy HTML `.doc` builder when the library can't load
+   * (e.g. a non-window/service-worker context).
    *
-   * SEC-003: sanitizes URLs in step data.
+   * @returns {Promise<{ blob?: Blob, content?: string, filename: string, mimeType: string }>}
    */
   async _exportDOCX(exportData, sessionId, progressCallback) {
+    const notify = typeof progressCallback === 'function' ? progressCallback : () => { };
+    const loaded = await this._loadDocx();
+    if (loaded) {
+      try {
+        return await this._buildDocxBlob(exportData, sessionId, notify);
+      } catch (err) {
+        if (err && /cancelled/i.test(err.message || '')) throw err;
+        console.warn('[ExportService] docx-library build failed, falling back to HTML .doc:', err);
+      }
+    }
+    return this._exportDOCXHtml(exportData, sessionId, notify);
+  }
+
+  /**
+   * Load the bundled `docx` library via chrome.runtime.getURL (CSP-safe).
+   * Returns false in non-window contexts (no document to inject into) so the
+   * caller can fall back to the HTML `.doc` path.
+   * @private
+   * @returns {Promise<boolean>}
+   */
+  async _loadDocx() {
+    if (typeof window !== 'undefined' && window.docx && window.docx.Packer) return true;
+    if (typeof document === 'undefined' || typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.getURL) {
+      return false;
+    }
+    return new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = chrome.runtime.getURL('libs/docx.min.js');
+      script.onload = () => resolve(!!(window.docx && window.docx.Packer));
+      script.onerror = () => {
+        console.warn('[ExportService] Failed to load local docx lib');
+        resolve(false);
+      };
+      document.head.appendChild(script);
+    });
+  }
+
+  /**
+   * Build a true `.docx` Blob with the `docx` library (EXP-IMG-005).
+   * Mirrors the HTML builder's structure: numbered execution steps with inline
+   * manual screenshots, then an "Automated Screenshots" section. Each image is
+   * embedded as a binary ImageRun via {@link _docxImageParagraph}.
+   * @private
+   */
+  async _buildDocxBlob(exportData, sessionId, notify) {
+    const { session, steps } = exportData;
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel } = window.docx;
+
+    notify({ percent: 30, status: 'Building DOCX...' });
+
+    // stepId → asset index; images are loaded lazily as each step is reached.
+    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const assetIndex = new Map();
+    for (const asset of screenshotAssets) {
+      if (asset.stepId) assetIndex.set(asset.stepId, asset);
+    }
+    screenshotAssets.length = 0;
+
+    const automatedScreenshots = [];
+    const regularSteps = [];
+    steps.forEach(step => {
+      if (step.action === 'screenshot' && !step.isManual) automatedScreenshots.push(step);
+      else regularSteps.push(step);
+    });
+
+    const children = [];
+    children.push(new Paragraph({ text: `${session.name || 'Untitled Session'} - Test Document`, heading: HeadingLevel.HEADING_1 }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'Created: ', bold: true }), new TextRun(new Date(session.createdAt).toLocaleString())] }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'Total Steps: ', bold: true }), new TextRun(String(session.stepCount))] }));
+    children.push(new Paragraph({ text: 'Test Execution Steps', heading: HeadingLevel.HEADING_2 }));
+
+    const total = regularSteps.length;
+    let stepNumber = 0;
+    for (const step of regularSteps) {
+      if (this._isCancelled(session.id)) { this._clearCancellation(session.id); throw new Error('Export cancelled by user'); }
+      stepNumber++;
+
+      let text;
+      if (step.action === 'screenshot') {
+        text = `${stepNumber}. Manual screenshot`;
+      } else if (step.description) {
+        text = `${stepNumber}. ${step.description}`;
+      } else {
+        text = `${stepNumber}. ${step.action.toUpperCase()}`;
+        if (step.fieldName && step.fieldName !== 'N/A') text += ` on "${step.fieldName}"`;
+        if (step.value && step.action !== 'navigate') text += ` with value "${step.value}"`;
+        if (step.action === 'navigate') text += ` to ${this._sanitizeUrl(step.value || step.url)}`;
+      }
+      children.push(new Paragraph({ children: [new TextRun(text)], spacing: { before: 120 } }));
+
+      const imgPara = await this._docxImageParagraph(assetIndex.get(step.id));
+      if (imgPara) children.push(imgPara);
+      assetIndex.delete(step.id);
+
+      if (stepNumber % 10 === 0) {
+        notify({ percent: 30 + Math.floor((stepNumber / Math.max(total, 1)) * 55), status: `Processing step ${stepNumber}/${total}...` });
+      }
+    }
+
+    if (automatedScreenshots.length > 0) {
+      children.push(new Paragraph({ text: 'Automated Screenshots', heading: HeadingLevel.HEADING_2 }));
+      for (let i = 0; i < automatedScreenshots.length; i++) {
+        if (this._isCancelled(session.id)) { this._clearCancellation(session.id); throw new Error('Export cancelled by user'); }
+        const shot = automatedScreenshots[i];
+        children.push(new Paragraph({ children: [new TextRun({ text: `Auto Screenshot ${i + 1}`, bold: true }), new TextRun(` - ${new Date(shot.timestamp).toLocaleTimeString()}`)] }));
+        const imgPara = await this._docxImageParagraph(assetIndex.get(shot.id));
+        if (imgPara) children.push(imgPara);
+        assetIndex.delete(shot.id);
+      }
+    }
+
+    assetIndex.clear();
+
+    notify({ percent: 90, status: 'Finalizing DOCX...' });
+    const doc = new Document({ sections: [{ children }] });
+    const blob = await Packer.toBlob(doc);
+    notify({ percent: 95, status: 'DOCX generated' });
+
+    const sessionName = (session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
+    return {
+      blob,
+      filename: `${sessionName}_${Date.now()}.docx`,
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    };
+  }
+
+  /**
+   * Build a docx Paragraph holding one screenshot as a binary ImageRun, or
+   * null if the asset has no usable image. Runs the image through the
+   * content-aware ImageProcessor (lossless PNG for text) and embeds the bytes
+   * directly. Display size is in pixels (docx converts px → EMU).
+   * @private
+   */
+  async _docxImageParagraph(asset) {
+    if (!asset) return null;
+    const rawUrl = await this._resolveAssetUrl(asset);
+    if (!rawUrl) return null;
+    try {
+      const { Paragraph, ImageRun } = window.docx;
+      const imgObj = await ImageProcessor.processForExport(rawUrl, {
+        maxWidth: 1920, maxHeight: 1080, displayWidth: 600, displayHeight: 450, format: 'auto', quality: 0.92
+      });
+      const bytes = new Uint8Array(await (await fetch(imgObj.dataUrl)).arrayBuffer());
+      const type = /^data:image\/png/i.test(imgObj.dataUrl) ? 'png' : 'jpg';
+      imgObj.dataUrl = null;
+      return new Paragraph({
+        children: [new ImageRun({ type, data: bytes, transformation: { width: imgObj.width, height: imgObj.height } })],
+        spacing: { after: 200 }
+      });
+    } catch (err) {
+      console.warn('[ExportService] docx image embed failed:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Legacy HTML-based `.doc` export (fallback when the docx library is
+   * unavailable). Processes screenshots one at a time (PERF-003) and embeds
+   * them via the content-aware ImageProcessor pipeline. SEC-003: sanitizes URLs.
+   */
+  async _exportDOCXHtml(exportData, sessionId, progressCallback) {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
 
@@ -630,15 +792,11 @@ export class ExportService {
 
     notify({ percent: 95, status: 'DOCX generated' });
 
-    // PERF-003: use URL.createObjectURL for download to avoid +33% base64 overhead
-    if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' && URL.createObjectURL) {
-      const blob = new Blob([html], { type: 'application/msword' });
-      const objectUrl = URL.createObjectURL(blob);
-      // Revoke after a short delay to allow download to start
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+    // Return a Blob — both callers (popup, background) consume result.blob and
+    // create their own object URL / data URL. Text fallback for non-Blob ctx.
+    if (typeof Blob !== 'undefined') {
       return {
-        content: null,
-        objectUrl,
+        blob: new Blob([html], { type: 'application/msword' }),
         filename,
         mimeType: 'application/msword'
       };
@@ -808,24 +966,10 @@ export class ExportService {
     const sessionName = (session.name || 'Session').replace(/[^a-z0-9]/gi, '_');
     const filename = `${sessionName}_${Date.now()}.pdf`;
 
-    // PERF-003: use output('blob') + URL.createObjectURL instead of doc.save()
-    // which internally converts to a base64 data URL (+33% overhead)
-    if (typeof URL !== 'undefined' && URL.createObjectURL) {
-      const pdfBlob = doc.output('blob');
-      const objectUrl = URL.createObjectURL(pdfBlob);
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-      return {
-        content: null,
-        objectUrl,
-        filename,
-        mimeType: 'application/pdf'
-      };
-    }
-
-    // Fallback if URL.createObjectURL unavailable
-    doc.save(filename);
+    // Return a Blob — both callers (popup, background) consume result.blob and
+    // build their own object URL / data URL for chrome.downloads.
     return {
-      content: null,
+      blob: doc.output('blob'),
       filename,
       mimeType: 'application/pdf'
     };
