@@ -480,7 +480,7 @@ class StorageManager {
    * @returns {Promise<void>}
    */
   async _autoCleanupCheck() {
-    return this.orphanCleaner.autoCleanupCheck();
+    return this.orphanCleaner.cleanupOrphans();
   }
 
   // ════════════════════════════════════════════════════════════════
