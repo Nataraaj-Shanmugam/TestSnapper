@@ -1,5 +1,10 @@
 const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
+const fs = require('fs');
+
+// Read version from package.json for manifest injection
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
+const VERSION = packageJson.version;
 
 module.exports = {
   mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
@@ -41,8 +46,17 @@ module.exports = {
   plugins: [
     new CopyPlugin({
       patterns: [
-        // Manifest
-        { from: 'manifest.json', to: 'manifest.json' },
+        // Manifest — inject version from package.json
+        {
+          from: 'manifest.json',
+          to: 'manifest.json',
+          transform(content) {
+            // Replace version placeholder with actual version from package.json
+            const manifest = JSON.parse(content.toString());
+            manifest.version = VERSION;
+            return JSON.stringify(manifest, null, 2);
+          }
+        },
 
         // Source files (non-bundled)
         { from: 'src/content', to: 'src/content' },

@@ -45,3 +45,6 @@ export const Logger = {
 if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'production') {
   Logger.setLevel('warn');
 }
+
+// Expose Logger to content scripts (window context)
+if (typeof window !== 'undefined') window.Logger = Logger;

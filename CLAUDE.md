@@ -90,8 +90,9 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
 
 ## Git Branching
 - **Main branch:** `master`
-- **Current dev branch:** `V1.1.3`
-- Branch naming: `V{major}.{minor}.{patch}`
+- **Current version:** 1.1.5 (see `package.json`)
+- **Branch naming:** `fix/` or feature prefixes (e.g., `fix/v1.1.6-parallel-fixes`)
+- Versions are single-sourced from `package.json` and injected into `manifest.json` at build time
 
 ## Architecture Review & Refactoring
 - `arch-review.md` — Comprehensive architecture audit (12 high/medium issues identified and resolved)
