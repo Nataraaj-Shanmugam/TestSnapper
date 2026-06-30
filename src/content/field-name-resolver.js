@@ -72,18 +72,11 @@ var FieldNameResolver = (function () {
     this._cachedFrameLabel = null;
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  //  PUBLIC API
-  // ══════════════════════════════════════════════════════════════════
-
   /**
    * Main entry point. Returns a cleaned, meaningful field name or null.
    * Tries multiple strategies in priority order until one succeeds
    * @param {Element} element - Form element to resolve name for
    * @returns {string|null} Cleaned field name or null if not found
-   * @example
-   * const fieldName = resolver.resolve(element);
-   * console.log(fieldName); // "First Name" or "Email Address"
    */
   FieldNameResolver.prototype.resolve = function (element) {
     if (!element) return null;
@@ -145,7 +138,7 @@ var FieldNameResolver = (function () {
         this._cachedFrameLabel = response.label;
       }
     } catch (e) {
-      // Not critical — iframe label is a bonus
+      window.Logger?.debug('Frame context initialization note:', e);
     }
   };
 

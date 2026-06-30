@@ -1,15 +1,15 @@
 /**
- * Content Script - FIXED: Modal state management + session recovery
+ * Content Script - Modal state management + session recovery
  */
 
-// UX-019: Shared design-system palette constants — "Steel & Slate" tokens
+// Shared design-system palette constants — "Steel & Slate" tokens
 var TS_BLUE = '#4A7FB5';
 var TS_BLUE_DARK = '#3A6699';
 var TS_SLATE_900 = '#1E293B';
 var TS_SLATE_700 = '#334155';
 
-// FUNC-001: Guard against duplicate initialization on re-injection.
-// Background.js (Agent 1) pings before injecting so re-injection shouldn't happen,
+// Guard against duplicate initialization on re-injection.
+// Background.js pings before injecting so re-injection shouldn't happen,
 // but as a belt-and-suspenders measure we also guard here.
 // 'var' declarations don't throw SyntaxError on re-injection, but their initializers
 // DO re-run, which would reset isRecording to false and orphan the old state.
@@ -17,6 +17,7 @@ var TS_SLATE_700 = '#334155';
 
 var selectorEngine;
 var redactor;
+var fieldNameResolver;
 var isRecording;
 var currentSessionId;
 var highlightOverlay;
@@ -70,7 +71,7 @@ if (!window.__testSnapperInitialized) {
 }
 
 // Initialize modules
-// FUNC-004: Check for all required globals. FieldNameResolver absence is tolerated
+// Check for all required globals. FieldNameResolver absence is tolerated
 // (background agent adds it to executeScript list) but SelectorEngine + Redactor
 // are mandatory — if either is absent, recording will fail immediately.
 function initModules() {
@@ -79,26 +80,35 @@ function initModules() {
   if (!window.Redactor) missing.push('Redactor');
   // FieldNameResolver is optional but warn if absent
   if (!window.FieldNameResolver) {
-    console.warn('TestSnapper: FieldNameResolver not loaded — field names may degrade');
+    window.Logger?.warn('TestSnapper: FieldNameResolver not loaded — field names may degrade');
   }
 
   if (missing.length > 0) {
-    console.warn('TestSnapper: Missing modules:', missing.join(', '));
+    window.Logger?.warn('TestSnapper: Missing modules:', missing.join(', '));
     return false;
   }
 
   selectorEngine = new window.SelectorEngine();
   redactor = new window.Redactor();
-  console.log('TestSnapper content script initialized');
+  // Wire the superior FieldNameResolver when present. Cache a single instance
+  // (it holds a WeakMap cache) instead of constructing one per resolve() call.
+  if (window.FieldNameResolver) {
+    try {
+      fieldNameResolver = new window.FieldNameResolver(selectorEngine);
+    } catch (e) {
+      fieldNameResolver = null;
+    }
+  }
+  window.Logger?.info('TestSnapper content script initialized');
   return true;
 }
 
 var _modulesInitialized = initModules();
 if (!_modulesInitialized) {
-  console.log('TestSnapper: Waiting for modules to load...');
+  window.Logger?.debug('TestSnapper: Waiting for modules to load...');
   setTimeout(function() {
     if (!initModules()) {
-      console.error('TestSnapper: Failed to initialize - modules not available');
+      window.Logger?.error('TestSnapper: Failed to initialize - modules not available');
     }
   }, 100);
 }
@@ -107,6 +117,18 @@ if (!_modulesInitialized) {
  * Enhanced field name extraction for better reporting
  */
 function getEnhancedFieldName(element) {
+  // Prefer the dedicated FieldNameResolver (Shadow DOM, ARIA, form groups,
+  // proximity scoring, etc.) when it is loaded. Fall back to the inline
+  // heuristics below if the resolver is absent, throws, or returns null.
+  if (fieldNameResolver) {
+    try {
+      const resolved = fieldNameResolver.resolve(element);
+      if (resolved) return resolved;
+    } catch (e) {
+      // Fall through to inline heuristics
+    }
+  }
+
   const label = findAssociatedLabel(element);
   if (label) return cleanFieldName(label);
 
@@ -197,6 +219,16 @@ function findNearbyText(element) {
 function cleanFieldName(text) {
   if (!text) return '';
 
+  // Prefer the resolver's cleaning logic so names stay consistent with the
+  // primary resolve() path. Fall back to the inline implementation below.
+  if (fieldNameResolver && typeof fieldNameResolver._cleanFieldName === 'function') {
+    try {
+      return fieldNameResolver._cleanFieldName(text);
+    } catch (e) {
+      // Fall through to inline cleaning
+    }
+  }
+
   return text
     .trim()
     .replace(/[*:]/g, '')
@@ -231,7 +263,7 @@ function getSuggestedFieldName(element, selector) {
 /**
  * UX-002: Unified page theme detection.
  * Handles transparent/semi-transparent backgrounds by falling back to
- * documentElement, and defaults to 'light' when alpha is negligible.
+ * documentElement, checks prefers-color-scheme media query, and defaults to 'light' when alpha is negligible.
  * @returns {'light'|'dark'}
  */
 function detectPageTheme() {
@@ -275,7 +307,12 @@ function detectPageTheme() {
       return luminance(r2, g2, b2) < 0.5 ? 'dark' : 'light';
     }
 
-    // Both transparent — default to light (most pages are light)
+    // Both transparent — check prefers-color-scheme media query
+    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return 'dark';
+    }
+
+    // Default to light (most pages are light)
     return 'light';
   } catch(e) {
     return 'light';
@@ -287,7 +324,7 @@ function showManualEntryModal(element, action, stepData) {
 }
 
 /**
- * BUG FIX: BUG-003 - Queue-based modal system
+ * Queue-based modal system
  */
 async function queueModal(element, action, stepData) {
   const modalId = `modal_${Date.now()}_${Math.random()}`;
@@ -327,7 +364,7 @@ async function processModalQueue() {
     );
     modalRequest.resolve(result);
   } catch (error) {
-    console.error('Modal error:', error);
+    window.Logger?.error('Modal error:', error);
     modalRequest.resolve(null);
   }
 
@@ -341,7 +378,7 @@ function closeModalById(modalId, result) {
   var state = modalStates.get(modalId);
   if (!state) return;
 
-  // UX-001: New modals use shadow DOM and expose _closeWithRestore
+  // New modals use shadow DOM and expose _closeWithRestore
   if (state._closeWithRestore) {
     state._closeWithRestore(result);
     return;
@@ -368,14 +405,14 @@ function closeModalById(modalId, result) {
 
 /**
  * Internal modal implementation with unique ID tracking.
- * UX-001: Wrapped in Shadow DOM to isolate styles from host page.
- * UX-002: Uses detectPageTheme() helper.
- * UX-011: Resets 30s timeout on typing; submits typed value on timeout; ARIA + focus trap.
- * UX-019: Uses TS_BLUE palette constants.
+ * Wrapped in Shadow DOM to isolate styles from host page.
+ * Uses detectPageTheme() helper.
+ * Resets 30s timeout on typing; submits typed value on timeout; ARIA + focus trap.
+ * Uses TS_BLUE palette constants.
  */
 function showManualEntryModalInternal(element, action, stepData, modalId) {
   return new Promise(function(resolve) {
-    // UX-011: Track the element that triggered the modal so focus can be restored on close
+    // Track the element that triggered the modal so focus can be restored on close
     var previouslyFocused = document.activeElement;
 
     // Create modal state
@@ -389,7 +426,7 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
 
     modalStates.set(modalId, state);
 
-    // UX-002: Use shared detectPageTheme() helper (handles transparent body, alpha blending)
+    // Use shared detectPageTheme() helper (handles transparent body, alpha blending)
     var modalTheme = detectPageTheme();
     var isLight = modalTheme === 'light';
     var modalBg = isLight ? '#ffffff' : '#1a1a1f';
@@ -401,7 +438,7 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     var inputBg = isLight ? '#ffffff' : '#111113';
     var cancelHoverBg = isLight ? '#e9ecef' : '#2e2e35';
 
-    // UX-001: Create Shadow DOM host so styles don't leak into/from host page
+    // Create Shadow DOM host so styles don't leak into/from host page
     var shadowHost = document.createElement('div');
     shadowHost.id = 'testsnapper-modal-host-' + modalId;
     // Position the host so the shadow overlay can be fixed inside it
@@ -409,13 +446,13 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     var shadow = shadowHost.attachShadow({ mode: 'open' });
     state.shadowHost = shadowHost;
 
-    // UX-001: Inject keyframes + reset CSS inside shadow root (no host-page pollution)
+    // Inject keyframes + reset CSS inside shadow root (no host-page pollution)
     var style = document.createElement('style');
     style.textContent = [
       /* CSS reset to prevent host-page inheritance */
       ':host { all: initial; }',
       '*, *::before, *::after { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.5; text-transform: none; }',
-      /* UX-001: Keyframes prefixed with testsnapper- so they never collide with host animations */
+      /* Keyframes prefixed with testsnapper- so they never collide with host animations */
       '@keyframes testsnapper-fadeIn { from { opacity: 0; } to { opacity: 1; } }',
       '@keyframes testsnapper-slideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }',
       '@keyframes testsnapper-fadeOut { from { opacity: 1; } to { opacity: 0; } }',
@@ -443,7 +480,7 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
 
     var modalDiv = document.createElement('div');
     modalDiv.className = 'ts-modal';
-    // UX-011: ARIA dialog semantics
+    // ARIA dialog semantics
     modalDiv.setAttribute('role', 'dialog');
     modalDiv.setAttribute('aria-modal', 'true');
     modalDiv.setAttribute('aria-labelledby', headingId);
@@ -467,9 +504,9 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     var cancelBtn = shadow.getElementById(cancelId);
     var confirmBtn = shadow.getElementById(confirmId);
 
-    // Enhanced closeModalById that restores focus
+    // Enhanced closeWithRestore that restores focus
     function closeWithRestore(result) {
-      // UX-011: Restore focus to triggering element
+      // Restore focus to triggering element
       if (previouslyFocused && previouslyFocused.focus) {
         try { previouslyFocused.focus(); } catch(e) { /* ignore */ }
       }
@@ -490,7 +527,7 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     // Focus input
     setTimeout(function() { if (input) input.focus(); }, 100);
 
-    // UX-011: Tab focus trap (input → skip → confirm → back to input)
+    // Tab focus trap (input → skip → confirm → back to input)
     var focusableEls = [input, cancelBtn, confirmBtn];
     overlayDiv.addEventListener('keydown', function(e) {
       if (e.key === 'Tab') {
@@ -503,11 +540,11 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
       }
     });
 
-    // UX-011: Reset auto-close timeout on input; submit typed value on timeout (not null)
+    // Reset auto-close timeout on input; submit typed value on timeout (not null)
     function resetTimeout() {
       if (state.timeout) clearTimeout(state.timeout);
       state.timeout = setTimeout(function() {
-        console.warn('Modal auto-closed after timeout:', modalId);
+        window.Logger?.warn('Modal auto-closed after timeout:', modalId);
         var typedValue = input ? input.value.trim() : '';
         closeWithRestore(typedValue || null);
       }, 30000);
@@ -536,38 +573,15 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     resetTimeout();
   });
 }
-/**
- * 🔧 FIX #2: Enhanced cleanup
- */
-function closeModal(overlay) {
-  if (modalTimeout) {
-    clearTimeout(modalTimeout);
-    modalTimeout = null;
-  }
-
-  if (overlay && overlay.parentNode) {
-    overlay.style.animation = 'fadeOut 0.2s ease-out';
-    setTimeout(() => {
-      overlay.remove();
-      isModalOpen = false;
-      pendingStep = null;
-      modalResolver = null;
-    }, 200);
-  } else {
-    isModalOpen = false;
-    pendingStep = null;
-    modalResolver = null;
-  }
-}
 
 /**
- * 🔧 FIX #2: Process step with modal pause/resume
+ * Process step with modal pause/resume
  */
 async function processStepWithManualEntry(element, action, stepData) {
   let fieldName = stepData.fieldName;
 
   if (!fieldName || fieldName === 'Unknown Field' || fieldName.trim() === '') {
-    console.log('⚠️ Field name not detected, requesting manual entry...');
+    window.Logger?.debug('⚠️ Field name not detected, requesting manual entry...');
 
     const wasRecording = isRecording;
     isRecording = false;
@@ -575,7 +589,7 @@ async function processStepWithManualEntry(element, action, stepData) {
 
     fieldName = await showManualEntryModal(element, action, stepData);
 
-    // 🔧 FIX #2: Only resume if still valid
+    // Only resume if still valid
     if (wasRecording && currentSessionId) {
       // Validate session still exists
       const valid = await validateSession();
@@ -583,18 +597,18 @@ async function processStepWithManualEntry(element, action, stepData) {
         isRecording = true;
         updateRecordingIndicator('RECORDING');
       } else {
-        console.error('❌ Session invalidated during modal - stopping recording');
+        window.Logger?.error('❌ Session invalidated during modal - stopping recording');
         stopRecording();
         return null;
       }
     }
 
     if (!fieldName) {
-      console.log('⏭️ User skipped field name entry');
+      window.Logger?.debug('⏭️ User skipped field name entry');
       return null;
     }
 
-    console.log('✅ Manual field name entered:', fieldName);
+    window.Logger?.info('✅ Manual field name entered:', fieldName);
   }
 
   stepData.fieldName = fieldName;
@@ -602,7 +616,7 @@ async function processStepWithManualEntry(element, action, stepData) {
 }
 
 /**
- * 🔧 FIX #7: Validate session still exists in background
+ * Validate session still exists in background
  */
 async function validateSession() {
   if (!currentSessionId) return false;
@@ -610,12 +624,12 @@ async function validateSession() {
   try {
     const response = await chrome.runtime.sendMessage({ action: 'getState' });
     if (!response || response.session?.sessionId !== currentSessionId) {
-      console.error('❌ Session mismatch or background restarted');
+      window.Logger?.error('❌ Session mismatch or background restarted');
       return false;
     }
     return true;
   } catch (error) {
-    console.error('❌ Failed to validate session:', error);
+    window.Logger?.error('❌ Failed to validate session:', error);
     return false;
   }
 }
@@ -654,7 +668,7 @@ function isDuplicateInteraction(element, action, value = null) {
   const now = Date.now();
   const timeSinceLastAction = now - lastInteraction.timestamp;
 
-  // CNT-MED-004: Smarter duplicate detection with action-specific time windows
+  // Smarter duplicate detection with action-specific time windows
   let timeWindow = 500; // Default 500ms
 
   // Stricter window for rapid clicks
@@ -703,12 +717,12 @@ async function handleClick(event) {
     if (element.id?.startsWith('testsnapper-')) return;
 
     if (isInputElement(element) && element.type !== 'radio' && element.type !== 'checkbox' && element.type !== 'submit' && element.type !== 'button') {
-      console.log('Skipping click on input field - will capture as type/change');
+      window.Logger?.debug('Skipping click on input field - will capture as type/change');
       return;
     }
 
     if (isDuplicateInteraction(element, 'click')) {
-      console.log('Skipping duplicate click');
+      window.Logger?.debug('Skipping duplicate click');
       return;
     }
 
@@ -743,9 +757,9 @@ async function handleClick(event) {
     updateLastInteraction(element, action, value);
     sendStepToBackground(stepData);
 
-    console.log('Interaction captured:', action, stepData.fieldName);
+    window.Logger?.info('Interaction captured:', action, stepData.fieldName);
   } catch (error) {
-    console.error('❌ Error capturing click:', error);
+    window.Logger?.error('❌ Error capturing click:', error);
     // showErrorNotification('Failed to capture click: ' + error.message);
     // Don't stop recording, just log and continue
   }
@@ -756,10 +770,10 @@ function showErrorNotification(message) {
 }
 
 /**
- * CNT-MED-003: Show toast notification - theme-aware with left border accent.
- * UX-001: Wrapped in Shadow DOM to isolate styles from host page.
- * UX-002: Uses detectPageTheme() helper.
- * UX-019: Uses TS_BLUE palette constants.
+ * Show toast notification - theme-aware with left border accent.
+ * Wrapped in Shadow DOM to isolate styles from host page.
+ * Uses detectPageTheme() helper.
+ * Uses TS_BLUE palette constants.
  * @param {string} message
  * @param {string} type - 'info' | 'success' | 'warning' | 'error'
  */
@@ -770,7 +784,7 @@ function showToastNotification(message, type) {
   var existingHost = document.getElementById('testsnapper-toast-host');
   if (existingHost) existingHost.remove();
 
-  // UX-002: Use shared detectPageTheme() helper
+  // Use shared detectPageTheme() helper
   var toastTheme = detectPageTheme();
 
   // Map legacy color params to types
@@ -781,12 +795,12 @@ function showToastNotification(message, type) {
     else type = 'info';
   }
 
-  // UX-019: Use TS_BLUE for info accent
+  // Use TS_BLUE for info accent
   var accentColors = { info: TS_BLUE, success: '#16a34a', warning: '#d97706', error: '#dc2626' };
   var accentColor = accentColors[type] || accentColors.info;
   var isLt = toastTheme === 'light';
 
-  // UX-001: Create Shadow DOM host to isolate toast styles from host page
+  // Create Shadow DOM host to isolate toast styles from host page
   var shadowHost = document.createElement('div');
   shadowHost.id = 'testsnapper-toast-host';
   shadowHost.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483646;width:0;height:0;';
@@ -796,7 +810,7 @@ function showToastNotification(message, type) {
   style.textContent = [
     ':host { all: initial; }',
     '*, *::before, *::after { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 13px; line-height: 1.5; text-transform: none; }',
-    /* UX-001: Prefixed keyframe name */
+    /* Prefixed keyframe name */
     '@keyframes testsnapper-slideInRight { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }',
     '.toast { position: fixed; bottom: 16px; right: 16px; background: ' + (isLt ? '#ffffff' : '#1a1a1f') + '; color: ' + (isLt ? '#495057' : '#a1a1aa') + '; border: 1px solid ' + (isLt ? '#dee2e6' : '#2e2e35') + '; border-left: 3px solid ' + accentColor + '; padding: 12px 16px; border-radius: 8px; font-weight: 500; box-shadow: ' + (isLt ? '0 4px 12px rgba(0,0,0,0.08)' : '0 4px 12px rgba(0,0,0,0.4)') + '; animation: testsnapper-slideInRight 0.2s ease; max-width: 360px; transition: opacity 0.2s ease; }'
   ].join('\n');
@@ -816,7 +830,7 @@ function showToastNotification(message, type) {
 }
 
 /**
- * CNT-MED-003: Show rate limit feedback
+ * Show rate limit feedback
  */
 function showRateLimitFeedback() {
   showToastNotification('Screenshot rate limited - please wait a moment', 'warning');
@@ -827,7 +841,7 @@ function handleInput(event) {
 
   try {
     const element = event.target;
-    // PERF-015: Use the element object itself as the Map key to avoid calling
+    // Use the element object itself as the Map key to avoid calling
     // generateSelector() synchronously on every keystroke. generateSelector() is
     // deferred to the debounced callback body where it runs only once per burst.
     const elementKey = element;
@@ -837,11 +851,11 @@ function handleInput(event) {
     }
 
     const timeoutId = setTimeout(async () => {
-      // PERF-015: generateSelector is now called here (deferred), not in the outer scope.
+      // generateSelector is now called here (deferred), not in the outer scope.
       const selector = selectorEngine.generateSelector(element);
       const fieldName = getEnhancedFieldName(element);
 
-      // FUNC-014: Always run the value through redactor to catch PII in generic fields.
+      // Always run the value through redactor to catch PII in generic fields.
       // maskValue() returns the original string unchanged when no patterns match,
       // so this is always safe to call.
       const maskedValue = redactor.maskValue(element.value, element);
@@ -849,7 +863,7 @@ function handleInput(event) {
       const value = maskedValue;
 
       if (isDuplicateInteraction(element, 'type', value)) {
-        console.log('Skipping duplicate input');
+        window.Logger?.debug('Skipping duplicate input');
         return;
       }
 
@@ -870,12 +884,12 @@ function handleInput(event) {
       sendStepToBackground(stepData);
       pendingInputs.delete(elementKey);
 
-      console.log('Input captured:', stepData.fieldName, value);
+      window.Logger?.info('Input captured:', stepData.fieldName, value);
     }, 800);
 
     pendingInputs.set(elementKey, timeoutId);
   } catch (error) {
-    console.error('❌ Error capturing input:', error);
+    window.Logger?.error('❌ Error capturing input:', error);
     // Don't stop recording, just log and continue
   }
 }
@@ -886,7 +900,7 @@ async function handleChange(event) {
   try {
     const element = event.target;
 
-    // PERF-015: Use element object as Map key (same as handleInput)
+    // Use element object as Map key (same as handleInput)
     const elementKey = element;
     if (pendingInputs.has(elementKey)) {
       clearTimeout(pendingInputs.get(elementKey));
@@ -909,14 +923,14 @@ async function handleChange(event) {
       value = element.options[element.selectedIndex]?.text || element.value;
     } else {
       action = 'type';
-      // FUNC-014: Always run through redactor to catch PII in generic fields.
+      // Always run through redactor to catch PII in generic fields.
       const maskedValue = redactor.maskValue(element.value, element);
       isSensitive = maskedValue !== element.value || redactor.shouldIgnoreField(element);
       value = maskedValue;
     }
 
     if (isDuplicateInteraction(element, action, value)) {
-      console.log('Skipping duplicate change');
+      window.Logger?.debug('Skipping duplicate change');
       return;
     }
 
@@ -935,9 +949,9 @@ async function handleChange(event) {
 
     updateLastInteraction(element, action, value);
     sendStepToBackground(stepData);
-    console.log('Change captured:', stepData.fieldName, value);
+    window.Logger?.info('Change captured:', stepData.fieldName, value);
   } catch (error) {
-    console.error('❌ Error capturing change:', error);
+    window.Logger?.error('❌ Error capturing change:', error);
     // Don't stop recording, just log and continue
   }
 }
@@ -949,7 +963,7 @@ function handleSubmit(event) {
     const form = event.target;
 
     if (isDuplicateInteraction(form, 'submit')) {
-      console.log('Skipping duplicate submit');
+      window.Logger?.debug('Skipping duplicate submit');
       return;
     }
 
@@ -968,9 +982,9 @@ function handleSubmit(event) {
 
     updateLastInteraction(form, 'submit');
     sendStepToBackground(stepData);
-    console.log('Submit captured:', fieldName);
+    window.Logger?.info('Submit captured:', fieldName);
   } catch (error) {
-    console.error('❌ Error capturing click:', error);
+    window.Logger?.error('❌ Error capturing click:', error);
     // showErrorNotification('Failed to capture click: ' + error.message);
     // Don't stop recording, just log and continue
   }
@@ -988,7 +1002,7 @@ function captureNavigation() {
   if (isInitialNavigation) {
     isInitialNavigation = false;
     lastNavigationUrl = currentUrl;
-    console.log('Skipping initial navigation');
+    window.Logger?.debug('Skipping initial navigation');
     return;
   }
 
@@ -998,7 +1012,7 @@ function captureNavigation() {
 
   lastNavigationUrl = currentUrl;
 
-  // SEC-002: If a sensitive field (password, CC, SSN, etc.) is active when the
+  // If a sensitive field (password, CC, SSN, etc.) is active when the
   // navigation fires, suppress the automatic screenshot so PII isn't captured.
   // Also honor the "Screenshot Before Navigation" setting (captureOnNavigation):
   // the navigation step is still recorded, but no screenshot is attached when off.
@@ -1015,19 +1029,19 @@ function captureNavigation() {
     value: currentUrl,
     isSensitive: false,
     hasScreenshot: !suppressScreenshot,
-    // PERF-010+FUNC-012: Explicitly mark as non-manual so the background applies
+    // Explicitly mark as non-manual so the background applies
     // rate limiting and does NOT call tabs.update({active:true}) (which yanked
     // focus back to the recorded tab on every SPA navigation).
     isManual: false
   };
 
   sendStepToBackground(stepData);
-  console.log('Navigation captured:', currentUrl, suppressScreenshot ? '(screenshot suppressed — sensitive field active)' : '');
+  window.Logger?.info('Navigation captured:', currentUrl, suppressScreenshot ? '(screenshot suppressed — sensitive field active)' : '');
 }
 
 /**
  * Send a step to the background service worker.
- * FUNC-003: Retries once after ~1s on 'No active session' (background may still be
+ * Retries once after ~1s on 'No active session' (background may still be
  * recovering its state after a service-worker restart). Shows a toast instead of
  * silently calling stopRecording() on the first failure.
  */
@@ -1036,7 +1050,7 @@ function sendStepToBackground(stepData, isRetry) {
 
   // Validate session before sending
   if (!currentSessionId) {
-    console.error('No active session - cannot send step');
+    window.Logger?.error('No active session - cannot send step');
     stopRecording();
     return;
   }
@@ -1046,19 +1060,19 @@ function sendStepToBackground(stepData, isRetry) {
     stepData: stepData
   }, function(response) {
     if (chrome.runtime.lastError) {
-      console.error('Failed to send step:', chrome.runtime.lastError);
+      window.Logger?.error('Failed to send step:', chrome.runtime.lastError);
       if (!isRetry) {
-        // FUNC-003: Retry once — background may be recovering from SW restart
+        // Retry once — background may be recovering from SW restart
         setTimeout(function() { sendStepToBackground(stepData, true); }, 1000);
       } else {
         showToastNotification('TestSnapper: Connection lost — stopping recording', 'error');
         stopRecording();
       }
     } else if (response && !response.success) {
-      console.error('Failed to add step:', response.error);
+      window.Logger?.error('Failed to add step:', response.error);
       if (response.error === 'No active session') {
         if (!isRetry) {
-          // FUNC-003: Retry once after delay
+          // Retry once after delay
           setTimeout(function() { sendStepToBackground(stepData, true); }, 1000);
         } else {
           showToastNotification('TestSnapper: Session lost — stopping recording', 'warning');
@@ -1069,17 +1083,17 @@ function sendStepToBackground(stepData, isRetry) {
   });
 }
 
-// FUNC-011: Store session settings so auto-screenshot continues after navigation
+// Store session settings so auto-screenshot continues after navigation
 // (Initialized in __testSnapperInitialized guard; declared here for hoisting)
 var sessionSettings;
 
 /**
- * FUNC-020: Shared setup helper — called from both normal start and the async
+ * Shared setup helper — called from both normal start and the async
  * session-fetch path to avoid the previously broken recursive startRecording call.
- * FUNC-001: Aborts old event listeners/intervals before creating new ones.
+ * Aborts old event listeners/intervals before creating new ones.
  */
 function _finishStartRecording(sessionId, isRestoring, startTime) {
-  // FUNC-001: Abort old AbortController before creating a new one to prevent
+  // Abort old AbortController before creating a new one to prevent
   // orphaned listeners from a prior injection cycle.
   if (eventListenerController) {
     eventListenerController.abort();
@@ -1109,14 +1123,14 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
   document.addEventListener('change', handleChange, { capture: true, signal: signal });
   document.addEventListener('submit', handleSubmit, { capture: true, signal: signal });
 
-  console.log('Starting timer with:', { startTime: startTime, now: Date.now() });
+  window.Logger?.debug('Starting timer with:', { startTime: startTime, now: Date.now() });
   addRecordingIndicator(startTime);
 
   // Start session validation heartbeat
   sessionValidationInterval = setInterval(async function() {
     var valid = await validateSession();
     if (!valid) {
-      console.error('Session validation failed - stopping recording');
+      window.Logger?.error('Session validation failed - stopping recording');
       stopRecording();
     }
   }, 15000);
@@ -1136,7 +1150,7 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
 
   // Auto-Capture Screenshots: when enabled, request a (non-manual) screenshot
   // every N seconds while actively recording. Background applies rate limiting
-  // and sensitive-field suppression (SEC-002). Paused state no-ops via isRecording.
+  // and sensitive-field suppression. Paused state no-ops via isRecording.
   if (sessionSettings && sessionSettings.autoScreenshot) {
     var autoSecs = Math.max(1, Math.min(60, parseInt(sessionSettings.screenshotSeconds) || 5));
     autoScreenshotInterval = setInterval(function() {
@@ -1144,14 +1158,14 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
         chrome.runtime.sendMessage({ action: 'captureScreenshot', isManual: false });
       }
     }, autoSecs * 1000);
-    console.log('Auto-screenshot enabled: every ' + autoSecs + 's');
+    window.Logger?.info('Auto-screenshot enabled: every ' + autoSecs + 's');
   }
 
-  console.log('Content script: Recording started');
+  window.Logger?.info('Content script: Recording started');
 }
 
 /**
- * FUNC-011: Accept settings parameter so auto-screenshot works after navigation.
+ * Accept settings parameter so auto-screenshot works after navigation.
  */
 function startRecording(sessionId, isRestoring, startTimeStr, settings) {
   if (isRestoring === undefined) isRestoring = false;
@@ -1174,15 +1188,15 @@ function startRecording(sessionId, isRestoring, startTimeStr, settings) {
   }
 
   if (isRestoring && !startTimeStr) {
-    // FUNC-020: Async fetch of start time — delegates to _finishStartRecording
+    // Async fetch of start time — delegates to _finishStartRecording
     // instead of recursing (which previously hit the isRecording guard and was a no-op).
-    console.log('startRecording: Missing startTimeStr during restore, fetching from session...');
+    window.Logger?.debug('startRecording: Missing startTimeStr during restore, fetching from session...');
     chrome.runtime.sendMessage({ action: 'getSession', sessionId: sessionId }, function(res) {
       if (res && res.session && res.session.createdAt) {
         var t = new Date(res.session.createdAt).getTime();
         _finishStartRecording(sessionId, isRestoring, t);
       } else {
-        console.warn('Failed to recover start time, defaulting to now');
+        window.Logger?.warn('Failed to recover start time, defaulting to now');
         _finishStartRecording(sessionId, isRestoring, Date.now());
       }
     });
@@ -1201,7 +1215,7 @@ function pauseRecording() {
   isRecording = false;
   isPaused = true;
   updateRecordingIndicator('PAUSED');
-  console.log('Content script: Recording paused');
+  window.Logger?.info('Content script: Recording paused');
 }
 
 function resumeRecording() {
@@ -1209,7 +1223,7 @@ function resumeRecording() {
   isRecording = true;
   isPaused = false;
   updateRecordingIndicator('RECORDING');
-  console.log('Content script: Recording resumed');
+  window.Logger?.info('Content script: Recording resumed');
 }
 
 function stopRecording() {
@@ -1218,7 +1232,7 @@ function stopRecording() {
   isRecording = false;
   currentSessionId = null;
 
-  // 🔧 FIX #7: Clear validation interval
+  // Clear validation interval
   if (sessionValidationInterval) {
     clearInterval(sessionValidationInterval);
     sessionValidationInterval = null;
@@ -1233,7 +1247,7 @@ function stopRecording() {
 
   lastInteraction = { element: null, action: null, timestamp: 0, value: null };
 
-  // Force close any open modal (UX-001: modals now use shadow host elements)
+  // Force close any open modal (modals now use shadow host elements)
   modalStates.forEach(function(state, modalId) {
     closeModalById(modalId, null);
   });
@@ -1246,13 +1260,13 @@ function stopRecording() {
     modalTimeout = null;
   }
 
-  // 🔧 FIX: CNT-007 - Abort all event listeners at once
+  // Abort all event listeners at once
   if (eventListenerController) {
     eventListenerController.abort();
     eventListenerController = null;
   }
 
-  // 🔧 FIX: CNT-HIGH-001 - Clear navigation interval
+  // Clear navigation interval
   if (navigationCheckInterval) {
     clearInterval(navigationCheckInterval);
     navigationCheckInterval = null;
@@ -1261,7 +1275,7 @@ function stopRecording() {
   removeRecordingIndicator();
   removeHighlight();
 
-  console.log('Content script: Recording stopped');
+  window.Logger?.info('Content script: Recording stopped');
 }
 
 function addRecordingIndicator(startTime = Date.now()) {
@@ -1275,7 +1289,7 @@ function addRecordingIndicator(startTime = Date.now()) {
   panelContainer.id = 'testsnapper-control-panel-container';
   const shadow = panelContainer.attachShadow({ mode: 'open' });
 
-  // UX-002: Use shared detectPageTheme() helper (handles transparent background / alpha).
+  // Use shared detectPageTheme() helper (handles transparent background / alpha).
   // Panel defaults to 'light' (same as modal/toast) instead of inconsistent 'dark'.
   var panelTheme = detectPageTheme();
 
@@ -1364,7 +1378,7 @@ function addRecordingIndicator(startTime = Date.now()) {
     .btn:hover.stop { color: #dc2626; }
     .btn:hover.pause { color: #d97706; }
     .btn:hover.resume { color: #16a34a; }
-    /* UX-019: TS_BLUE palette constant via CSS string interpolation */
+    /* TS_BLUE palette constant via CSS string interpolation */
     .btn:hover.screenshot { color: ${TS_BLUE}; }
     .btn svg {
       width: 16px;
@@ -1408,27 +1422,11 @@ function addRecordingIndicator(startTime = Date.now()) {
   floatingPanelContainer = panelContainer;
 
   // --- Drag Logic ---
+  // On drag start we switch the container from transform-centered positioning
+  // to explicit pixel top/left so the panel tracks the cursor smoothly.
   let isDragging = false;
-  let startX, startY;
-  let initialLeft, initialTop;
-
-  // We need to handle offsets because the container uses transform for centering first
-  // But subsequent drags should probably set top/left directly and remove transform centering
-
-  // Actually simplest way: Use transform translate for dragging
-  let currentTranslateX = -50; // percent
-  let currentTranslateY = 0;   // px
-  // But wait, using pixels for drag is smoother.
-  // Let's reset the container positioning to simply be absolute/fixed coordinates after first drag.
-
-  let xOffset = 0;
-  let yOffset = 0;
   let initialX;
   let initialY;
-
-  // We will use transform properly
-  // Since initial is left:50% translateX(-50%)
-  // It's tricky. Let's just set top/left to computed values on drag start.
 
   const handleMouseDown = (e) => {
     if (e.target.closest('button')) return;
@@ -1506,7 +1504,7 @@ function addRecordingIndicator(startTime = Date.now()) {
   const secs = (recordingSeconds % 60).toString().padStart(2, '0');
   if (timeDisplay) timeDisplay.textContent = `${mins}:${secs}`;
 
-  // 🔧 FIX: CNT-005 - Only increment timer when not paused
+  // Only increment timer when not paused
   timerInterval = setInterval(() => {
     if (!isPaused) {
       recordingSeconds++;
@@ -1549,16 +1547,16 @@ function removeRecordingIndicator() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('Content script received message:', message.action);
+  window.Logger?.debug('Content script received message:', message.action);
 
   switch (message.action) {
     case 'startRecording':
-      // FUNC-004: Check modules are loaded before starting; fail gracefully if not.
+      // Check modules are loaded before starting; fail gracefully if not.
       if (!selectorEngine || !redactor) {
         sendResponse({ success: false, error: 'modules not loaded — extension may need reload' });
         break;
       }
-      // FUNC-011: Pass settings so auto-screenshot survives navigation.
+      // Pass settings so auto-screenshot survives navigation.
       // Background sends settings as a top-level field (message.settings), not nested.
       startRecording(message.sessionId, false, message.session?.createdAt, message.settings);
       sendResponse({ success: true });
@@ -1579,7 +1577,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
-    // SEC-002: Background queries before auto-capturing to skip sensitive pages
+    // Background queries before auto-capturing to skip sensitive pages
     case 'isSensitiveFieldActive': {
       var activeEl = document.activeElement;
       var isSensitive = !!(activeEl && redactor && redactor.shouldIgnoreField(activeEl));
@@ -1600,7 +1598,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
-    // CNT-MED-003: Visual feedback when rate limited
+    // Visual feedback when rate limited
     case 'screenshotRateLimited':
       showRateLimitFeedback();
       sendResponse({ success: true });
@@ -1619,38 +1617,38 @@ function formatTime(totalSeconds) {
   return `${mins}:${secs}`;
 }
 
-console.log('TestSnapper content script loaded');
+window.Logger?.info('TestSnapper content script loaded');
 
 // Check for active recording on load to restore overlay and state.
-// FUNC-002: Gate auto-restore to the top frame only — iframes must not capture
+// Gate auto-restore to the top frame only — iframes must not capture
 // events or add their own panel/heartbeat.
 if (window !== window.top) {
-  console.log('TestSnapper: skipping restore in sub-frame');
+  window.Logger?.debug('TestSnapper: skipping restore in sub-frame');
 } else {
   chrome.runtime.sendMessage({ action: 'getState' }, function(response) {
     if (chrome.runtime.lastError) {
-      console.log('Background connection error:', chrome.runtime.lastError);
+      window.Logger?.debug('Background connection error:', chrome.runtime.lastError);
       return;
     }
 
     if (response && response.session) {
-      // FUNC-002: Only restore in the tab that owns the session.
-      // background.js (Agent 1) includes tabId in the response; compare here.
+      // Only restore in the tab that owns the session.
+      // background.js includes tabId in the response; compare here.
       // If tabId is not yet returned by the background, we allow restore (safe degradation).
       if (response.tabId) {
         // We can't call chrome.tabs.getCurrent() in a content script, but we can
-        // compare with the tabId stored in the response since Agent 1 includes it.
+        // compare with the tabId stored in the response since the background includes it.
         // The background validates sender.tab.id === session.tabId in addStep too.
         // We use location to detect if we're truly in the recorded tab's top frame:
         // If the response contains a different tabId, skip restore.
         // Note: content scripts don't have direct access to their own tabId without
         // messaging. We use a heuristic: if response.tabId is provided and the
         // document URL doesn't match the session's expected URL, skip.
-        // Full fix requires Agent 1 to send tabId — for now we trust the background.
+        // Full fix requires background to send tabId — for now we trust the background.
       }
 
-      console.log('Restoring session state:', response.state, response.session);
-      // FUNC-011: Pass settings so auto-screenshot continues after page load.
+      window.Logger?.info('Restoring session state:', response.state, response.session);
+      // Pass settings so auto-screenshot continues after page load.
       var settings = response.settings || response.session?.settings || {};
 
       if (response.state === 'recording') {
@@ -1660,7 +1658,7 @@ if (window !== window.top) {
         pauseRecording();
       }
     } else {
-      console.log('No active session state to restore');
+      window.Logger?.debug('No active session state to restore');
     }
   });
 }

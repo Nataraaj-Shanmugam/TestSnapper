@@ -1,11 +1,9 @@
 /**
  * Enhanced Selector Engine - Multi-Strategy Locator Generation
- * UPDATED: Added deduplication check method
- * Mimics: SelectorsHub, ChroPath, Truepath, Scraper
  * Generates multiple selector candidates with scoring
  */
 
-// FUNC-001: Guard against re-injection SyntaxError — class declaration is lexical (not hoisted),
+// Guard against re-injection SyntaxError — class declaration is lexical (not hoisted),
 // so re-running this script in the same context would throw "Identifier already declared".
 // Wrap with a guard so injection is idempotent.
 if (typeof window !== 'undefined' && window.SelectorEngine) {
@@ -75,7 +73,7 @@ class SelectorEngine {
 
     const candidates = [];
 
-    // PERF-015 + FUNC-013: Wrap each strategy in try/catch so one failing strategy
+    // Wrap each strategy in try/catch so one failing strategy
     // degrades gracefully without aborting the others. Also break early after finding
     // a high-confidence unique candidate to avoid unnecessary DOM work.
 
@@ -250,10 +248,7 @@ class SelectorEngine {
   }
 
   /**
-   * NEW: Detect if ID looks auto-generated
-   */
-  /**
-   * SEL-HIGH-001: Refined auto-generated ID detection
+   * Detect if ID looks auto-generated
    * Less aggressive - only matches clearly generated patterns.
    * Short IDs (< 4 chars) are never considered generated.
    * Human-readable IDs with hyphens/underscores are allowed.
@@ -380,7 +375,7 @@ class SelectorEngine {
   }
 
   /**
-   * 🔧 FIX: SEL-001 - Framework attribute support
+   * Framework attribute support
    */
   _addFrameworkSelectors(element, candidates) {
     // React detection
@@ -463,7 +458,7 @@ class SelectorEngine {
       });
     }
 
-    // SEL-MED-002: Svelte detection
+    // Svelte detection
     const hasSvelte = element.__svelte_meta ||
       element.hasAttribute('bind:value') ||
       element.hasAttribute('on:click') ||
@@ -483,7 +478,7 @@ class SelectorEngine {
       });
     }
 
-    // SEL-MED-002: Solid.js detection
+    // Solid.js detection
     const hasSolid = element._$owner || // Solid's internal marker
       element.hasAttribute('use:') ||
       Array.from(element.attributes).some(attr => attr.name.startsWith('prop:'));
@@ -504,7 +499,7 @@ class SelectorEngine {
   }
 
   _addClassSelectors(element, candidates) {
-    // SEL-MED-003: Handle both regular elements and SVG elements
+    // Handle both regular elements and SVG elements
     let className = '';
     if (typeof element.className === 'string') {
       className = element.className;
@@ -642,7 +637,7 @@ class SelectorEngine {
   }
 
   /**
-   * 🔧 FIX: SEL-003 - Semantic XPath with attributes over positions
+   * Semantic XPath with attributes over positions
    */
   _addXPathRelative(element, candidates) {
     const parts = [];
@@ -665,7 +660,7 @@ class SelectorEngine {
       } else if (current.getAttribute('data-testid')) {
         part = `${tag}[@data-testid='${current.getAttribute('data-testid')}']`;
       } else if (current.className && !this._isGeneratedClass(current.className)) {
-        // FUNC-013: Normalize SVGAnimatedString to plain string before calling .trim()
+        // Normalize SVGAnimatedString to plain string before calling .trim()
         const clsStr = typeof current.className === 'string'
           ? current.className
           : (current.className.baseVal || current.getAttribute('class') || '');
@@ -725,8 +720,6 @@ class SelectorEngine {
       return false;
     }
   }
-
-  // _isGeneratedId: single definition at line 183 (SEL-HIGH-001 fix - removed duplicate)
 
   /**
    * Check if class looks generated/dynamic
@@ -885,7 +878,7 @@ class SelectorEngine {
     // Uniqueness is most important
     if (candidate.isUnique) score += 100;
 
-    // SEL-MED-001: Comprehensive strategy priority scores
+    // Comprehensive strategy priority scores
     const strategyScores = {
       'ID': 95,
       'data-testid': 90,
@@ -950,8 +943,8 @@ class SelectorEngine {
       () => element.getAttribute('aria-label'),
       () => element.getAttribute('aria-labelledby') && this._getTextFromId(element.getAttribute('aria-labelledby')),
       () => element.placeholder,
-      () => element.name && !this._isGeneratedId(element.name) ? element.name : null,  // UPDATED: Skip generated names
-      () => element.id && !this._isGeneratedId(element.id) ? element.id : null,        // UPDATED: Skip generated IDs
+      () => element.name && !this._isGeneratedId(element.name) ? element.name : null,
+      () => element.id && !this._isGeneratedId(element.id) ? element.id : null,
       () => this._getLabelText(element),
       () => element.title,
       () => this.getElementText(element),
@@ -1055,14 +1048,14 @@ class SelectorEngine {
   }
 
   /**
-   * 🔧 FIX: SEL-002 - Cache management
+   * Cache management
    */
   clearCache() {
     const stats = this.getCacheStats();
     this.selectorCache = new WeakMap();
     this.cacheHits = 0;
     this.cacheMisses = 0;
-    console.log('Selector cache cleared:', stats);
+    window.Logger?.info('Selector cache cleared:', stats);
   }
 
   getCacheStats() {

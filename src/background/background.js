@@ -1,28 +1,16 @@
 /**
  * Background Service Worker
  *
- * CRITICAL FIXES APPLIED:
- * - [CRIT] FUNC-003+PERF-001: Recovery promise gate (recoveryReady) prevents SW-restart race
- * - [CRIT] PERF-004: addPendingFlush() called on all crash/incomplete paths before removing activeRecording
- * - [HIGH] FUNC-004(bg): field-name-resolver.js added to CONTENT_SCRIPT_FILES constant; ping-before-inject
- * - [HIGH] PERF-009: Unconditional cleanupOrphans() removed from startup; storage.init() handles weekly gate
- * - [MED]  FUNC-016: getSenderTabId falls back to stateManager.session?.tabId; captureScreenshot validates tab
- * - [MED]  FUNC-017: Dead exportSession/getScreenshot pipeline removed from message handler
- * - [LOW]  SEC-005: sender.id validation guard at onMessage entry; getSenderTabId trusts message.tabId only from popup
- * - [FUNC-002]: addStep validates sender tab ID against recorded tab
- * - BUG-005: Complete session recovery with tab validation and content script re-injection
- * - BUG-006: Screenshot serialization validated (using dataUrl throughout)
- * - BG-002: Rate limiting on screenshots (1 second debounce)
- * - BG-004: Export progress error handling improved
- * - BG-005: Export cancellation implemented
- * - BG-006: Settings validation added
- * - Added storage quota monitoring and notifications
+ * Manages extension lifecycle, recording state, message routing, screenshots,
+ * API capture, and session export with crash recovery.
  */
 
 import { StorageManager } from '../core/storage.js';
 import { ExportService } from '../core/export-service.js';
 import { Utils } from '../core/utils.js';
 import { addPendingFlush, removePendingFlush, getPendingFlush } from '../core/flush-utils.js';
+import { Logger } from '../core/logger.js';
+import { _isConsecutiveDuplicate, shouldRecordRequest, validateSettings } from '../core/recorder-utils.js';
 
 // ==================== Broadcast Helpers ====================
 
@@ -46,7 +34,7 @@ class RecordingStateManager {
     this.session = null;
     this.stepSequence = 0;
     this.sequenceLock = Promise.resolve();
-    this.lastScreenshotTime = 0; // BUG FIX: BG-002
+    this.lastScreenshotTime = 0;
     this.screenshotDebounceMs = 1000; // 1 second minimum between screenshots
   }
 
@@ -96,7 +84,7 @@ class RecordingStateManager {
       setTimeout(() => reject(new Error('sequenceLock timeout after 10s')), 10000)
     );
     await Promise.race([this.sequenceLock, lockTimeout]).catch((err) => {
-      console.warn('[StateManager] sequenceLock timed out, resetting:', err.message);
+      Logger.warn('[StateManager] sequenceLock timed out, resetting:', err.message);
       this.sequenceLock = Promise.resolve(); // reset so future calls aren't permanently stuck
     });
 
@@ -172,7 +160,6 @@ class SettingsManager {
     const result = await chrome.storage.local.get('settings');
     const loadedSettings = result.settings || {};
 
-    // BG-MED-003: Validate settings on load
     const validated = {};
 
     // Validate screenshotSeconds
@@ -269,8 +256,7 @@ const exportService = new ExportService(storage);
 const stateManager = new RecordingStateManager();
 const settingsManager = new SettingsManager();
 
-// [HIGH] FUNC-004(bg): Shared content-script file list — both inject sites use this constant
-// so they can never drift from each other.
+// Shared content-script file list — both injection sites use this constant so they never drift.
 // Note: field-name-resolver.js must be injected before content.js which depends on window.FieldNameResolver
 const CONTENT_SCRIPT_FILES = [
   'src/content/selector.js',
@@ -279,21 +265,20 @@ const CONTENT_SCRIPT_FILES = [
   'src/content/content.js'
 ];
 
-// SEC-012: Set uninstall URL and handle install/update events
 chrome.runtime.onInstalled.addListener((details) => {
-  // Set feedback URL for when users uninstall the extension
+  // Opens a voluntary feedback form on uninstall — no data is sent automatically.
   chrome.runtime.setUninstallURL('https://forms.gle/testsnapper-feedback');
 
   if (details.reason === 'install') {
-    console.log('✅ TestSnapper installed successfully');
+    Logger.info('✅ TestSnapper installed successfully');
   } else if (details.reason === 'update') {
-    console.log(`✅ TestSnapper updated from ${details.previousVersion} to ${chrome.runtime.getManifest().version}`);
+    Logger.info(`✅ TestSnapper updated from ${details.previousVersion} to ${chrome.runtime.getManifest().version}`);
   }
 });
 
-// [HIGH] PERF-009: storage.init() already calls _autoCleanupCheck() which enforces the 7-day
-// gate — no unconditional cleanupOrphans() call needed here.
-storage.init().catch(console.error);
+// storage.init() already calls _autoCleanupCheck() which enforces the 7-day gate —
+// no unconditional cleanupOrphans() call needed here.
+storage.init().catch(Logger.error);
 
 // Setup storage quota monitoring
 storage.onQuotaWarning((usage) => {
@@ -322,11 +307,11 @@ const recoveryReady = (async () => {
     const { activeRecording } = await chrome.storage.local.get('activeRecording');
     if (!activeRecording) return;
 
-    console.log('🔄 Recovering active recording:', activeRecording.sessionId);
+    Logger.debug('🔄 Recovering active recording:', activeRecording.sessionId);
 
     // Validate that the recording data is complete
     if (!activeRecording.session || !activeRecording.session.sessionId) {
-      console.warn('⚠️ Invalid active recording data, clearing...');
+      Logger.warn('⚠️ Invalid active recording data, clearing...');
       await chrome.storage.local.remove('activeRecording');
       return;
     }
@@ -352,35 +337,33 @@ const recoveryReady = (async () => {
         }
       }
     } catch (err) {
-      console.warn('Tab from recording session no longer exists');
+      Logger.warn('Tab from recording session no longer exists');
     }
 
     if (recordingTab) {
       // Tab still exists — ping first to check if content scripts are already loaded
-      console.log('✅ Found recording tab, checking for existing content scripts...');
+      Logger.debug('✅ Found recording tab, checking for existing content scripts...');
 
       let alreadyInjected = false;
       try {
         await chrome.tabs.sendMessage(recordingTab.id, { action: 'ping' });
         alreadyInjected = true;
-        console.log('Content scripts already present, skipping re-injection');
+        Logger.debug('Content scripts already present, skipping re-injection');
       } catch (_pingErr) {
         // No response — need to inject
       }
 
       if (!alreadyInjected) {
         try {
-          // [HIGH] FUNC-004(bg): Use shared constant to inject all required content scripts
           await chrome.scripting.executeScript({
             target: { tabId: recordingTab.id },
             files: CONTENT_SCRIPT_FILES
           });
-          console.log('Content scripts re-injected');
+          Logger.debug('Content scripts re-injected');
         } catch (injectErr) {
           if (!injectErr.message?.includes('already')) {
             // Injection failed (e.g. chrome:// page) — mark incomplete and bail
-            console.error('Failed to re-inject content scripts:', injectErr);
-            // [CRIT] PERF-004: addPendingFlush before removing activeRecording
+            Logger.error('Failed to re-inject content scripts:', injectErr);
             await addPendingFlush(session.sessionId);
             await markSessionIncomplete(session.sessionId);
             await chrome.storage.local.remove('activeRecording');
@@ -394,13 +377,11 @@ const recoveryReady = (async () => {
         await new Promise(resolve => setTimeout(resolve, 200));
 
         // Restore recording state in content script
-        // BUG-006 FIX: Guard settingsManager.get() so a settings failure
-        // doesn't abort the entire recovery path and mark the session incomplete
         let restoreSettings = {};
         try {
           restoreSettings = await settingsManager.get();
         } catch (settingsErr) {
-          console.warn('[BG] Failed to load settings during restore, using defaults:', settingsErr);
+          Logger.warn('[BG] Failed to load settings during restore, using defaults:', settingsErr);
         }
         await chrome.tabs.sendMessage(recordingTab.id, {
           action: 'restoreRecording',
@@ -423,23 +404,20 @@ const recoveryReady = (async () => {
           await BadgeManager.setPaused(recordingTab.id);
         }
 
-        console.log('✅ Recording session fully recovered');
+        Logger.debug('✅ Recording session fully recovered');
       } catch (err) {
-        console.error('Failed to restore recording state:', err);
-        // [CRIT] PERF-004: addPendingFlush before removing activeRecording
+        Logger.error('Failed to restore recording state:', err);
         await addPendingFlush(session.sessionId);
         await markSessionIncomplete(session.sessionId);
         await chrome.storage.local.remove('activeRecording');
       }
     } else {
       // Tab is gone - mark session as incomplete
-      console.warn('⚠️ Recording tab no longer exists, marking session incomplete');
-      // [CRIT] PERF-004: addPendingFlush so crash-recovered sessions appear in all UIs
+      Logger.warn('⚠️ Recording tab no longer exists, marking session incomplete');
       await addPendingFlush(session.sessionId);
       await markSessionIncomplete(session.sessionId);
       await chrome.storage.local.remove('activeRecording');
 
-      // BG-HIGH-001: Notify user that recovery failed
       try {
         await chrome.notifications.create('session-recovery-failed', {
           type: 'basic',
@@ -449,11 +427,11 @@ const recoveryReady = (async () => {
           priority: 1
         });
       } catch (notifErr) {
-        console.warn('Could not show notification:', notifErr);
+        Logger.warn('Could not show notification:', notifErr);
       }
     }
   } catch (err) {
-    console.error('Failed to recover active recording:', err);
+    Logger.error('Failed to recover active recording:', err);
     // Clear corrupt active recording data
     await chrome.storage.local.remove('activeRecording');
   }
@@ -471,7 +449,7 @@ async function markSessionIncomplete(sessionId) {
       await storage.updateSession(session);
     }
   } catch (err) {
-    console.error('Failed to mark session incomplete:', err);
+    Logger.error('Failed to mark session incomplete:', err);
   }
 }
 
@@ -502,7 +480,7 @@ class BadgeManager {
 async function clearBufferForSession(sessionId) {
   await storage.clearSession(sessionId);
   await removePendingFlush(sessionId);
-  console.log(`[Background] Cleared buffer for session ${sessionId}`);
+  Logger.debug(`[Background] Cleared buffer for session ${sessionId}`);
 }
 
 // ==================== Session Management ====================
@@ -522,7 +500,7 @@ async function createSession(tabInfo) {
       }
     },
     stepCount: 0,
-    tabId: tabInfo.tabId // BUG FIX: Store tab ID for recovery
+    tabId: tabInfo.tabId
   };
 
   await storage.createSession(session);
@@ -546,45 +524,47 @@ async function persistActiveRecording() {
 // ==================== Screenshot Management ====================
 
 /**
- * BUG FIX: BG-002 - Added rate limiting
- * BUG FIX: BUG-006 - Validated screenshot serialization (using dataUrl)
- * [MED] FUNC-016: Validate that the capture target is the recorded tab (unless forced)
+ * Captures the current viewport screenshot and adds it as a step asset.
+ *
+ * @param {number} tabId - The tab ID to capture
+ * @param {boolean} [isManual=true] - If true, bypass rate limiting; if false, apply 1-second debounce
+ * @param {boolean} [forceAnyTab=false] - If true, allow screenshot from any tab; otherwise only recorded tab
+ * @returns {Promise<{success: boolean, error?: string, step?: Object, skipped?: boolean}>}
+ *
+ * @note Captures the full visible viewport; redaction applies to recorded values only — on-screen PII in screenshots is not masked.
  */
 async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
-  console.log('📸 Screenshot capture requested for tab:', tabId, 'manual:', isManual);
+  Logger.debug('📸 Screenshot capture requested for tab:', tabId, 'manual:', isManual);
 
   if (!stateManager.isRecording()) {
-    console.error('❌ Not recording, cannot capture screenshot');
+    Logger.error('❌ Not recording, cannot capture screenshot');
     return { success: false, error: 'Not recording' };
   }
 
   if (!stateManager.session) {
-    console.error('❌ No active session');
+    Logger.error('❌ No active session');
     return { success: false, error: 'No active session' };
   }
 
-  // [MED] FUNC-016: Reject screenshots from tabs other than the recorded tab
   const recordedTabId = stateManager.session.tabId;
   if (!forceAnyTab && recordedTabId && tabId !== recordedTabId) {
-    console.warn(`Screenshot skipped: tab ${tabId} is not the recorded tab ${recordedTabId}`);
+    Logger.warn(`Screenshot skipped: tab ${tabId} is not the recorded tab ${recordedTabId}`);
     return { success: false, error: 'Tab mismatch' };
   }
 
-  // BUG FIX: BG-002 - Rate limiting check (only for auto-screenshots)
-  // Manual screenshots always bypass rate limiting
+  // Rate limiting applies to auto-screenshots only; manual screenshots bypass it
   if (!isManual && !stateManager.canTakeScreenshot()) {
-    console.log('⏸️ Auto-screenshot rate limited');
+    Logger.debug('⏸️ Auto-screenshot rate limited');
     // CNT-MED-003: Notify content script to show visual feedback
     chrome.tabs.sendMessage(tabId, { action: 'screenshotRateLimited' }).catch(() => {});
     return { success: false, error: 'Rate limited' };
   }
 
-  // SEC-002: Skip auto-screenshots when a sensitive field (password, CC, SSN…) is active
   if (!isManual) {
     try {
       const sensitiveCheck = await chrome.tabs.sendMessage(tabId, { action: 'isSensitiveFieldActive' });
       if (sensitiveCheck?.sensitive) {
-        console.log('🔒 Auto-screenshot suppressed — sensitive field is active');
+        Logger.debug('🔒 Auto-screenshot suppressed — sensitive field is active');
         return { success: false, error: 'Sensitive field active' };
       }
     } catch (_) {
@@ -622,7 +602,7 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
 
     chrome.tabs.sendMessage(tabId, { action: 'afterScreenshot' }).catch(() => { });
 
-    // BUG FIX: BG-MED-001 - Validate screenshot data URL format
+    // Validate screenshot data URL format
     if (!dataUrl || !dataUrl.startsWith('data:image/')) {
       throw new Error('Screenshot capture returned invalid data URL format');
     }
@@ -633,7 +613,6 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
       throw new Error('Screenshot data URL has invalid format');
     }
 
-    // BUG FIX: BG-002 - Mark screenshot taken for rate limiting
     stateManager.markScreenshotTaken();
 
     const sequence = await stateManager.incrementStepCount();
@@ -658,7 +637,6 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
 
     await storage.addStep(step);
 
-    // BUG FIX: BUG-006 - Store dataUrl directly (validated working in storage.js)
     await storage.addAsset({
       id: Utils.generateUUID(),
       sessionId: stateManager.session.sessionId,
@@ -673,7 +651,7 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
 
     return { success: true, stepId: step.id };
   } catch (error) {
-    console.error('❌ Screenshot capture failed:', error);
+    Logger.error('❌ Screenshot capture failed:', error);
     return { success: false, error: error.message };
   }
 }
@@ -722,9 +700,9 @@ const ApiCapture = {
       chrome.webRequest.onCompleted.addListener(this._onCompleted, filter);
       chrome.webRequest.onErrorOccurred.addListener(this._onError, filter);
       this._attached = true;
-      console.log('🌐 API capture attached for tab', tabId);
+      Logger.debug('🌐 API capture attached for tab', tabId);
     } catch (err) {
-      console.warn('API capture failed to attach:', err);
+      Logger.warn('API capture failed to attach:', err);
     }
   },
 
@@ -781,7 +759,7 @@ const ApiCapture = {
       await persistActiveRecording();
       broadcastSessionChange(stateManager.session.sessionId, 'steps_changed');
     } catch (err) {
-      console.warn('API capture step failed:', err);
+      Logger.warn('API capture step failed:', err);
     }
   },
 
@@ -815,7 +793,6 @@ async function startRecording(tabId, tabInfo) {
 
     await BadgeManager.setRecording(tabId);
 
-    // [HIGH] FUNC-004(bg): Use shared constant so injection lists never drift
     // Ping first to skip re-injection if content scripts are already loaded
     let alreadyLoaded = false;
     try {
@@ -851,11 +828,11 @@ async function startRecording(tabId, tabInfo) {
     // API call capture (gated on captureApiCalls inside start())
     ApiCapture.start(tabId, settings);
 
-    console.log('✅ Recording started:', session.sessionId);
+    Logger.debug('✅ Recording started:', session.sessionId);
     return { success: true, sessionId: session.sessionId };
 
   } catch (error) {
-    console.error('Failed to start recording:', error);
+    Logger.error('Failed to start recording:', error);
     stateManager.stopRecording();
     await persistActiveRecording();
     return { success: false, error: error.message };
@@ -875,7 +852,7 @@ async function pauseRecording(tabId) {
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'pauseRecording' });
   } catch (err) {
-    console.warn('Could not notify content script of pause:', err);
+    Logger.warn('Could not notify content script of pause:', err);
   }
 
   return { success: true };
@@ -894,7 +871,7 @@ async function resumeRecording(tabId) {
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'resumeRecording' });
   } catch (err) {
-    console.warn('Could not notify content script of resume:', err);
+    Logger.warn('Could not notify content script of resume:', err);
   }
 
   return { success: true };
@@ -914,22 +891,20 @@ async function stopRecording(tabId) {
     try {
       await chrome.tabs.sendMessage(tabId, { action: 'stopRecording' });
     } catch (err) {
-      console.log('Content script not responding, continuing...');
+      Logger.debug('Content script not responding, continuing...');
     }
 
-    // [HIGH] PERF-009: Do NOT call cleanupOrphans() here.
-    // storage.init() already invokes _autoCleanupCheck() which enforces the 7-day gate.
-    // Running cleanupOrphans() unconditionally on every stop spikes SW memory proportional
-    // to total screenshot bytes and widens the FUNC-003 race window.
+    // Do NOT call cleanupOrphans() here. storage.init() already invokes _autoCleanupCheck()
+    // which enforces the 7-day gate. Unconditional cleanup would spike memory usage.
 
     // Check autoSave — if disabled, discard the session immediately
     const settings = await settingsManager.get();
     if (settings.autoSave === false) {
-      console.log('⚠️ autoSave=false — discarding session:', sessionId);
+      Logger.debug('⚠️ autoSave=false — discarding session:', sessionId);
       try {
         await storage.clearSession(sessionId);
       } catch (err) {
-        console.warn('Failed to discard session after stop:', err);
+        Logger.warn('Failed to discard session after stop:', err);
       }
       broadcastSessionChange(sessionId, 'deleted');
       return { success: true, sessionId, discarded: true };
@@ -943,14 +918,14 @@ async function stopRecording(tabId) {
         const sorted = allSessions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
         const toDelete = sorted.slice(0, allSessions.length - maxSessions);
         for (const old of toDelete) {
-          console.warn(`⚠️ maxSessions limit (${maxSessions}) reached — pruning session: ${old.sessionId} (created: ${old.createdAt})`);
+          Logger.warn(`⚠️ maxSessions limit (${maxSessions}) reached — pruning session: ${old.sessionId} (created: ${old.createdAt})`);
           await storage.clearSession(old.sessionId);
           broadcastSessionChange(old.sessionId, 'deleted');
-          console.log('🗑️ Pruned old session:', old.sessionId);
+          Logger.debug('🗑️ Pruned old session:', old.sessionId);
         }
       }
     } catch (err) {
-      console.warn('Session limit enforcement failed:', err);
+      Logger.warn('Session limit enforcement failed:', err);
     }
 
     // Add to pending flush list so window contexts know to flush to disk
@@ -966,7 +941,7 @@ async function stopRecording(tabId) {
       }).catch(() => { }); // No listeners is fine — safety net on next popup open
     }
 
-    console.log('✅ Recording stopped:', sessionId);
+    Logger.debug('✅ Recording stopped:', sessionId);
     broadcastSessionChange(sessionId, 'created');
 
     if (sessionId) {
@@ -978,7 +953,7 @@ async function stopRecording(tabId) {
 
     return { success: true, sessionId };
   } catch (error) {
-    console.error('Failed to stop recording:', error);
+    Logger.error('Failed to stop recording:', error);
     stateManager.stopRecording();
     await persistActiveRecording();
     return { success: false, error: error.message };
@@ -990,41 +965,15 @@ async function stopRecording(tabId) {
 // Track the last step to detect consecutive duplicates at the background level
 let _lastAddedStep = null;
 
-function _isConsecutiveDuplicate(stepData) {
-  if (!_lastAddedStep) return false;
-
-  // Same action + same fieldName + same selector CSS + same URL = duplicate
-  if (_lastAddedStep.action !== stepData.action) return false;
-  if (_lastAddedStep.fieldName !== stepData.fieldName) return false;
-  if (_lastAddedStep.url !== stepData.url) return false;
-
-  // For type/select actions, allow if value changed
-  if ((stepData.action === 'type' || stepData.action === 'select') &&
-      stepData.value !== _lastAddedStep.value) {
-    return false;
-  }
-
-  // Compare selector CSS if both have one
-  const prevCss = _lastAddedStep.selector?.css || '';
-  const currCss = stepData.selector?.css || '';
-  if (prevCss && currCss && prevCss !== currCss) return false;
-
-  // If target labels match too, it's definitely a duplicate
-  if (_lastAddedStep.targetLabel === stepData.targetLabel) return true;
-
-  // Even without matching targetLabel, same action+field+url+selector is enough
-  return true;
-}
-
 async function addStep(stepData, senderTabId) {
   // [FUNC-002]: Only accept steps from the recorded tab
   if (senderTabId && stateManager.session?.tabId && senderTabId !== stateManager.session.tabId) {
-    console.warn(`addStep: ignored step from tab ${senderTabId}, recorded tab is ${stateManager.session.tabId}`);
+    Logger.warn(`addStep: ignored step from tab ${senderTabId}, recorded tab is ${stateManager.session.tabId}`);
     return { success: false, error: 'Wrong tab' };
   }
 
   if (!stateManager.session) {
-    console.error('❌ No active session - rejecting step');
+    Logger.error('❌ No active session - rejecting step');
     return { success: false, error: 'No active session' };
   }
 
@@ -1032,8 +981,8 @@ async function addStep(stepData, senderTabId) {
     const settings = await settingsManager.get();
 
     // Server-side consecutive duplicate detection (gated on smartDedup setting)
-    if (settings.smartDedup !== false && _isConsecutiveDuplicate(stepData)) {
-      console.log('⏭️ Skipping consecutive duplicate step:', stepData.action, stepData.fieldName);
+    if (settings.smartDedup !== false && _isConsecutiveDuplicate(stepData, _lastAddedStep)) {
+      Logger.debug('⏭️ Skipping consecutive duplicate step:', stepData.action, stepData.fieldName);
       return { success: true, skipped: true };
     }
     const sequence = await stateManager.incrementStepCount();
@@ -1057,7 +1006,7 @@ async function addStep(stepData, senderTabId) {
 
     return { success: true, step };
   } catch (error) {
-    console.error('Failed to add step:', error);
+    Logger.error('Failed to add step:', error);
     return { success: false, error: error.message };
   }
 }
@@ -1072,13 +1021,11 @@ async function exportSession(sessionId, format = 'json') {
   try {
     stateManager.setExporting();
 
-    // BG-HIGH-003: Persist export state for crash recovery
     await chrome.storage.local.set({
       activeExport: { sessionId, format, startedAt: Date.now() }
     });
 
     const progressCallback = (update = {}) => {
-      // BUG FIX: BG-004 - Only send if there are listeners
       chrome.runtime.sendMessage({
         action: 'exportProgress',
         sessionId,
@@ -1100,13 +1047,12 @@ async function exportSession(sessionId, format = 'json') {
         totalSteps: steps.length
       });
     } catch (e) {
-      console.warn('Unable to load steps for progress metadata', e);
+      Logger.warn('Unable to load steps for progress metadata', e);
     }
 
     const result = await exportService.exportSession(sessionId, format, progressCallback);
 
     let downloadUrl;
-    // BUG FIX: BG-MED-004 - Sanitize filename to remove invalid characters
     let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
 
     if (result.blob) {
@@ -1141,7 +1087,6 @@ async function exportSession(sessionId, format = 'json') {
 
     stateManager.state = 'idle';
 
-    // BG-HIGH-003: Clear export state on success
     await chrome.storage.local.remove('activeExport');
 
     progressCallback({
@@ -1152,13 +1097,11 @@ async function exportSession(sessionId, format = 'json') {
 
     return { success: true, filename };
   } catch (error) {
-    console.error('Export failed:', error);
+    Logger.error('Export failed:', error);
     stateManager.state = 'idle';
 
-    // BG-HIGH-003: Clear export state on failure
     await chrome.storage.local.remove('activeExport').catch(() => {});
 
-    // BUG FIX: BG-004 - Safe error notification
     chrome.runtime.sendMessage({
       action: 'exportProgress',
       sessionId,
@@ -1204,15 +1147,13 @@ async function getSenderTabId(sender, message) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
-    // [LOW] SEC-005: Reject messages from outside this extension as a defense-in-depth guard
     if (sender.id !== chrome.runtime.id) {
-      console.warn('Rejected message from unknown sender:', sender.id);
+      Logger.warn('Rejected message from unknown sender:', sender.id);
       sendResponse({ success: false, error: 'Unauthorized' });
       return;
     }
 
     try {
-      // [CRIT] FUNC-003+PERF-001: Ensure recovery is complete before touching stateManager
       await recoveryReady;
 
       let response;
@@ -1250,14 +1191,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = await captureScreenshot(tabId, message.isManual !== false);
           break;
 
-        // [MED] FUNC-017: exportSession / getScreenshot pipeline removed from message handler.
         // Both UIs export locally via their own ExportService instance — there is no
-        // background export path. The dead code used window/document refs incompatible
-        // with a SW and created a false impression of crash-recovery for exports.
-        // The exportSession() function above is kept for any callers that bypass the message
-        // handler; the message handler no longer routes to it.
+        // background export path. The exportSession() function is kept for backward-compat.
 
-        // BUG FIX: BG-005 - Export cancellation
         case 'cancelExport':
           if (typeof exportService.cancelExport === 'function') {
             await exportService.cancelExport(message.sessionId);
@@ -1282,7 +1218,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'getSession': {
           const session = await storage.getSession(message.sessionId);
-          if (stateManager.session && stateManager.session.sessionId === message.sessionId) {
+          // session may be null if it was deleted; only enrich a real object.
+          if (session && stateManager.session && stateManager.session.sessionId === message.sessionId) {
             session.startTime = stateManager.session.createdAt;
           }
           response = { success: true, session };
@@ -1297,7 +1234,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'getScreenshot':
-          // [MED] FUNC-017: Kept for backward-compat — review UI still queries this for display
           response = await getScreenshot(message.stepId);
           break;
 
@@ -1418,7 +1354,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       sendResponse(response);
     } catch (error) {
-      console.error('Error handling message:', error);
+      Logger.error('Error handling message:', error);
       sendResponse({ success: false, error: error.message });
     }
   })();
@@ -1450,25 +1386,23 @@ async function getScreenshot(stepId) {
 // ==================== Keyboard Shortcut Handler ====================
 
 chrome.commands?.onCommand.addListener(async (command) => {
-  // [CRIT] FUNC-003+PERF-001: Await recovery before reading stateManager
   await recoveryReady;
 
-  // [MED] FUNC-016: Use the recorded tab's ID rather than the active tab for badge/message
   const recordedTabId = stateManager.session?.tabId;
 
   if (command === 'capture_screenshot' || command === '_execute_action') {
     try {
       // Screenshot must target the recorded tab, not the currently active tab
       if (!recordedTabId) {
-        console.warn('No recorded tab for screenshot command');
+        Logger.warn('No recorded tab for screenshot command');
         return;
       }
       const result = await captureScreenshot(recordedTabId, true);
       if (!result.success) {
-        console.warn('Screenshot command failed:', result.error);
+        Logger.warn('Screenshot command failed:', result.error);
       }
     } catch (err) {
-      console.error('Error handling screenshot command:', err);
+      Logger.error('Error handling screenshot command:', err);
     }
   }
 
@@ -1488,9 +1422,9 @@ chrome.commands?.onCommand.addListener(async (command) => {
 });
 
 chrome.runtime.onSuspend.addListener(() => {
-  console.log('⚠️ Service worker suspending - persisting state');
+  Logger.debug('⚠️ Service worker suspending - persisting state');
   // Best-effort: onSuspend cannot be awaited; state changes persist eagerly on each mutation
   persistActiveRecording();
 });
 
-console.log('✅ TestSnapper background service worker initialized');
+Logger.debug('✅ TestSnapper background service worker initialized');

@@ -90,3 +90,33 @@ describe('ExportService._isCancelled / cancelExport', () => {
     expect(service._isCancelled('session-2')).toBe(false);
   });
 });
+
+describe('ExportService._exportCSV — formula injection (CWE-1236)', () => {
+  let service;
+  beforeEach(() => { service = new ExportService(fakeStorage); });
+
+  it('neutralizes a cell starting with = (HYPERLINK formula)', () => {
+    const exportData = {
+      steps: [
+        { action: 'input', fieldName: '=HYPERLINK("x")', selector: { css: '#a' }, value: 'v', url: 'https://e.com' }
+      ]
+    };
+    const { content } = service._exportCSV(exportData, 'abc-123');
+    // The dangerous formula must be prefixed with an apostrophe inside the quoted cell.
+    expect(content).toContain(`"'=HYPERLINK(""x"")"`);
+    // And must NOT appear as a bare, executable formula.
+    expect(content).not.toContain(`"=HYPERLINK`);
+  });
+
+  it('defuses leading +, -, @ characters', () => {
+    expect(service._csvSafeCell('+1+1')).toBe("'+1+1");
+    expect(service._csvSafeCell('-2-2')).toBe("'-2-2");
+    expect(service._csvSafeCell('@cmd')).toBe("'@cmd");
+    expect(service._csvSafeCell('\t=evil')).toBe("'\t=evil");
+  });
+
+  it('leaves ordinary values untouched', () => {
+    expect(service._csvSafeCell('hello')).toBe('hello');
+    expect(service._csvSafeCell('https://example.com')).toBe('https://example.com');
+  });
+});

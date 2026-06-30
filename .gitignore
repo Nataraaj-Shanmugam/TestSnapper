@@ -84,3 +84,9 @@ yarn.lock
 .claude
 test-results/*
 playwright-report/*
+
+# TestSnapper scratch / build artifacts
+.clone/
+Observations/
+_smoke_out/
+_smoke_settings.cjs
