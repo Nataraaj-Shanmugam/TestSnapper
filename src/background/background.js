@@ -1304,6 +1304,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = { success: true };
           break;
 
+        case 'exportSession': {
+          const session = await storage.getSession(message.sessionId);
+          if (!session) {
+            response = { success: false, error: 'Session not found' };
+            break;
+          }
+          const steps = await storage.getSteps(message.sessionId);
+          const blob = await exportService.exportToFormat(
+            session,
+            steps,
+            message.format || 'json'
+          );
+          const dataUrl = await Utils.blobToDataURL(blob);
+          response = { success: true, dataUrl, mimeType: blob.type };
+          break;
+        }
+
         // Filesystem storage: clear buffer after successful flush to disk
         case 'clearBuffer':
           await clearBufferForSession(message.sessionId);
