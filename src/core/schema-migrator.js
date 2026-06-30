@@ -1,16 +1,12 @@
 /**
  * SchemaMigrator — handles versioned storage migrations for TestSnapper.
  *
- * FIX: FUNC-010 — v1→v2 migration never ran when meta key was absent.
- *
- * Root cause: _readMeta defaulted a missing meta key to { version: STORAGE_VERSION (=2) }
- * so migrateIfNeeded saw version 2 and skipped. Users upgrading from v1 were permanently
- * locked out of migration.
- *
- * Fix: detect v1 by checking for the presence of the old `testsnapper_data` key regardless
- * of what the meta version field says. Migration is idempotent — old key is removed after
- * successful migration so it will never re-run.
+ * v1→v2 migration is detected by checking for the presence of the old `testsnapper_data` key
+ * regardless of what the meta version field says. Migration is idempotent — old key is removed
+ * after successful migration so it will never re-run.
  */
+
+import { Logger } from './logger.js';
 
 const STORAGE_VERSION = 2;
 const META_KEY = 'testsnapper_meta';
@@ -32,7 +28,7 @@ export class SchemaMigrator {
      * @returns {Promise<void>}
      */
     async migrateIfNeeded() {
-        // FIX: FUNC-010 — Always probe for the v1 key regardless of meta.version.
+        // Always probe for the v1 key regardless of meta.version.
         // If testsnapper_data exists with sessions, we need to migrate no matter what
         // the meta says.  This handles users whose meta was missing (defaulted to v2).
         const v1Check = await chrome.storage.local.get(V1_DATA_KEY);
@@ -51,7 +47,7 @@ export class SchemaMigrator {
         }
 
         // Placeholder: future migrations (v2→v3, etc.) go here.
-        console.log(`SchemaMigrator: no migration path from v${meta.version} to v${STORAGE_VERSION}`);
+        Logger.debug(`SchemaMigrator: no migration path from v${meta.version} to v${STORAGE_VERSION}`);
     }
 
     /**
@@ -62,25 +58,25 @@ export class SchemaMigrator {
      * @returns {Promise<void>}
      */
     async _migrateV1toV2(v1Data) {
-        console.log('SchemaMigrator: migrating v1 → v2...');
+        Logger.info('SchemaMigrator: migrating v1 → v2...');
 
         const sessions = v1Data.sessions;
 
         if (!Array.isArray(sessions)) {
-            console.error('SchemaMigrator: v1 sessions is not an array — aborting migration');
+            Logger.error('SchemaMigrator: v1 sessions is not an array — aborting migration');
             throw new Error('Invalid v1 data format: sessions must be an array');
         }
 
         const validSessions = sessions.filter(s => {
             if (!s || !s.sessionId) {
-                console.warn('SchemaMigrator: skipping invalid session during migration:', s);
+                Logger.warn('SchemaMigrator: skipping invalid session during migration:', s);
                 return false;
             }
             return true;
         });
 
         if (validSessions.length === 0) {
-            console.warn('SchemaMigrator: no valid sessions in v1 data');
+            Logger.warn('SchemaMigrator: no valid sessions in v1 data');
         } else {
             // Write session index (strip embedded steps/assets from metadata row)
             const sessionMeta = validSessions.map(({ steps, assets, ...meta }) => meta);
@@ -96,7 +92,7 @@ export class SchemaMigrator {
                 await this._storage._writeAssetsLegacy(session.sessionId, assets);
             }
 
-            console.log(`SchemaMigrator: migrated ${validSessions.length} sessions`);
+            Logger.info(`SchemaMigrator: migrated ${validSessions.length} sessions`);
         }
 
         // Remove old key (idempotent — silently no-ops on second call)
@@ -110,6 +106,6 @@ export class SchemaMigrator {
         if (!meta.lastCleanup) meta.lastCleanup = Date.now();
         await chrome.storage.local.set({ [META_KEY]: meta });
 
-        console.log('SchemaMigrator: v1 → v2 migration complete');
+        Logger.info('SchemaMigrator: v1 → v2 migration complete');
     }
 }

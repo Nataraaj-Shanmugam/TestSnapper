@@ -22,6 +22,7 @@
  */
 
 import { Utils } from './utils.js';
+import { Logger } from './logger.js';
 
 export const ImageProcessor = {
 
@@ -68,7 +69,7 @@ export const ImageProcessor = {
       }
 
       const edgeDensity = totalPixels > 0 ? edgeCount / totalPixels : 0;
-      console.log(`🔍 Content detection: edge density = ${edgeDensity.toFixed(3)} → ${edgeDensity > 0.12 ? 'PNG (text/UI)' : 'JPEG (photo)'}`);
+      Logger.debug(`🔍 Content detection: edge density = ${edgeDensity.toFixed(3)} → ${edgeDensity > 0.12 ? 'PNG (text/UI)' : 'JPEG (photo)'}`);
       return edgeDensity > 0.12 ? 'png' : 'jpeg';
     } catch (e) {
       return 'jpeg'; // Safe fallback
@@ -176,11 +177,11 @@ export const ImageProcessor = {
         });
 
         bitmap.close();
-        console.log(`🗜️ Image compressed (Offscreen): ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
+        Logger.debug(`🗜️ Image compressed (Offscreen): ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
 
         return compressedDataUrl;
       } catch (error) {
-        console.error('Offscreen image compression failed:', error);
+        Logger.error('Offscreen image compression failed:', error);
         return dataUrl; // Fallback
       }
     } else {
@@ -208,17 +209,17 @@ export const ImageProcessor = {
 
             const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
 
-            console.log(`🗜️ Image compressed: ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
+            Logger.debug(`🗜️ Image compressed: ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
 
             resolve(compressedDataUrl);
           } catch (error) {
-            console.error('Image compression failed:', error);
+            Logger.error('Image compression failed:', error);
             resolve(dataUrl); // Fallback to original
           }
         };
 
         img.onerror = () => {
-          console.error('Failed to load image for compression');
+          Logger.error('Failed to load image for compression');
           resolve(dataUrl); // Fallback to original
         };
 
@@ -276,10 +277,10 @@ export const ImageProcessor = {
 
       const outputDataUrl = await Utils.blobToDataURL(outputBlob);
 
-      console.log(`📐 Export image (Offscreen): ${imgWidth}x${imgHeight} → ${canvasWidth}x${canvasHeight} [${outputFormat}]`);
+      Logger.debug(`📐 Export image (Offscreen): ${imgWidth}x${imgHeight} → ${canvasWidth}x${canvasHeight} [${outputFormat}]`);
       return { dataUrl: outputDataUrl, width: canvasWidth, height: canvasHeight, format: outputFormat };
     } catch (error) {
-      console.error('Offscreen export image processing failed:', error);
+      Logger.error('Offscreen export image processing failed:', error);
       return { dataUrl, width: 1200, height: 900, format: 'original' };
     }
   },
@@ -353,18 +354,18 @@ export const ImageProcessor = {
             canvas.width = 0;
             canvas.height = 0;
             img.src = '';
-            console.log(`📐 Export image: ${img.width || canvasWidth}x${img.height || canvasHeight} → ${canvasWidth}x${canvasHeight} [jpeg]`);
+            Logger.debug(`📐 Export image: ${img.width || canvasWidth}x${img.height || canvasHeight} → ${canvasWidth}x${canvasHeight} [jpeg]`);
             resolve({ dataUrl: jpegDataUrl, width: canvasWidth, height: canvasHeight, format: 'jpeg' });
           }
         } catch (error) {
-          console.error('DOM export image processing failed:', error);
+          Logger.error('DOM export image processing failed:', error);
           img.src = '';
           resolve({ dataUrl, width: 1200, height: 900, format: 'original' });
         }
       };
 
       img.onerror = () => {
-        console.error('Failed to load image for export processing');
+        Logger.error('Failed to load image for export processing');
         resolve({ dataUrl, width: 1200, height: 900, format: 'original' });
       };
 

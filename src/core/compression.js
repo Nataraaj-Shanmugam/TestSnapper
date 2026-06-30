@@ -1,11 +1,11 @@
 /**
  * Compression Utility for Step Data
- * 
+ *
  * Implements GZIP compression using native CompressionStream API
  * for compressing step JSON data before storage.
- * 
- * BUG FIX: STR-MED-001 - No Compression for Step Data
  */
+
+import { Logger } from './logger.js';
 
 const COMPRESSION_PREFIX = 'COMPRESSED::GZIP::';
 const PLAIN_PREFIX = 'PLAIN::';
@@ -56,12 +56,12 @@ export async function compress(data) {
         }
         const base64 = btoa(binary);
 
-        console.log(`🗜️ Step data compressed: ${(jsonString.length / 1024).toFixed(1)}KB → ${(base64.length / 1024).toFixed(1)}KB`);
+        Logger.debug(`🗜️ Step data compressed: ${(jsonString.length / 1024).toFixed(1)}KB → ${(base64.length / 1024).toFixed(1)}KB`);
 
         return COMPRESSION_PREFIX + base64;
     } catch (error) {
-        console.warn('Compression failed, storing with PLAIN prefix:', error);
-        // FIX: FUNC-007 — Use PLAIN:: prefix so _readSteps can identify and round-trip this format.
+        Logger.warn('Compression failed, storing with PLAIN prefix:', error);
+        // Use PLAIN:: prefix so _readSteps can identify and round-trip this format.
         // Previously returned bare JSON.stringify(data) which _readSteps could not recognise
         // (it only handled COMPRESSED::GZIP:: or a raw Array), silently yielding [] on read-back.
         return PLAIN_PREFIX + JSON.stringify(data);
@@ -81,7 +81,7 @@ export async function decompress(compressedString) {
             return compressedString;
         }
 
-        // FIX: FUNC-007 — Handle PLAIN:: prefix written by the compression fallback path.
+        // Handle PLAIN:: prefix written by the compression fallback path.
         if (compressedString.startsWith(PLAIN_PREFIX)) {
             return JSON.parse(compressedString.slice(PLAIN_PREFIX.length));
         }

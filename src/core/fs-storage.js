@@ -13,10 +13,10 @@
  * auto-routed: service-worker → buffer, window → filesystem (or buffer fallback).
  * This future-proofs the class against new methods added to StorageManager/FileSync.
  *
- * PERF-007: updateStep/deleteStep use the sessionId parameter for direct lookup
+ * updateStep/deleteStep use the sessionId parameter for direct lookup
  * instead of scanning all session files.
  *
- * PERF-016: exportAllData() no longer routes through the runtime message bus.
+ * exportAllData() no longer routes through the runtime message bus.
  * In filesystem mode it reads directly from FileSync. In chrome.storage mode it
  * aborts with a user-friendly error if the payload would exceed ~50MB.
  */
@@ -24,8 +24,9 @@
 import { FileSync } from './file-sync.js';
 import { StorageManager } from './storage.js';
 import { getPendingFlush, addPendingFlush, removePendingFlush } from './flush-utils.js';
+import { Logger } from './logger.js';
 
-// PERF-016: abort threshold for chrome.storage bulk export (bytes)
+// Abort threshold for chrome.storage bulk export (bytes)
 const EXPORT_SIZE_LIMIT_BYTES = 50 * 1024 * 1024; // 50 MB
 
 export class FSStorageManager {
@@ -40,8 +41,20 @@ export class FSStorageManager {
     this._fileSync = this._isServiceWorker ? null : new FileSync();
     this._initialized = false;
 
-    // Return a Proxy so unknown method calls are auto-routed.
-    // Any method not explicitly defined on this class falls through here.
+    /**
+     * Auto-routing Proxy for method dispatch
+     *
+     * Unknown method calls are routed based on context:
+     * - Service worker: all unknown methods route to `this._buffer` (StorageManager)
+     * - Window contexts: methods attempt filesystem first (FileSync), fall back to `this._buffer`
+     *
+     * Explicit `_fileSync`-only methods must be called directly on `this._fileSync`;
+     * the Proxy will not redirect them to the filesystem if they're not defined on
+     * the FSStorageManager instance.
+     *
+     * Note: background.js uses StorageManager directly; only window contexts
+     * (popup, review page) use FSStorageManager for hybrid storage.
+     */
     return new Proxy(this, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver);
@@ -160,10 +173,10 @@ export class FSStorageManager {
       // Clear from buffer
       await this.clearBuffer(sessionId);
 
-      console.log(`[FSStorage] Flushed session ${sessionId} to disk`);
+      Logger.info(`[FSStorage] Flushed session ${sessionId} to disk`);
       return true;
     } catch (error) {
-      console.error(`[FSStorage] Failed to flush session ${sessionId}:`, error);
+      Logger.error(`[FSStorage] Failed to flush session ${sessionId}:`, error);
       return false;
     }
   }
@@ -424,7 +437,7 @@ export class FSStorageManager {
     if (fsReady) {
       const data = await this._fileSync.readSession(step.sessionId);
       if (data) {
-        // FUNC-015: preserve all step fields; only strip raw image data
+        // Preserve all step fields; only strip raw image data
         const { dataUrl: _du, screenshot: _sc, ...stepFields } = step;
         const steps = [...(data.steps || []), stepFields];
         const assets = this._extractAssets(step.sessionId, steps);
@@ -483,7 +496,7 @@ export class FSStorageManager {
 
     const fsReady = await this.isFilesystemReady();
     if (fsReady) {
-      // PERF-007: if sessionId given, go directly to that session
+      // If sessionId given, go directly to that session
       if (sessionId) {
         const deleted = await this._fileSync.deleteStep(sessionId, stepId);
         if (deleted) return true;
@@ -516,7 +529,7 @@ export class FSStorageManager {
 
     const fsReady = await this.isFilesystemReady();
     if (fsReady) {
-      // PERF-007: prefer direct lookup using step.sessionId
+      // Prefer direct lookup using step.sessionId
       if (step.sessionId) {
         const updated = await this._fileSync.updateStep(step.sessionId, step.id, step);
         if (updated) return updated;
@@ -565,7 +578,7 @@ export class FSStorageManager {
             existingScreenshots.set(s.id, s.screenshot);
           }
         }
-        // FUNC-015: preserve all step fields, restore screenshot reference
+        // Preserve all step fields, restore screenshot reference
         const stepsWithScreenshots = steps.map(s => {
           const existing = existingScreenshots.get(s.id);
           if (!existing) return s;
@@ -604,7 +617,7 @@ export class FSStorageManager {
       const data = await this._fileSync.readSession(sessionId);
       if (data) {
         const updateMap = new Map(stepUpdates.map(s => [s.id, s]));
-        // FUNC-015: spread preserves all fields
+        // Spread preserves all fields
         const steps = (data.steps || []).map(step => {
           const update = updateMap.get(step.id);
           return update ? { ...step, ...update } : step;
@@ -701,7 +714,7 @@ export class FSStorageManager {
               const sessionDir = await this._fileSync._findSessionFolder(handle, asset.sessionId);
               if (sessionDir) {
                 const screenshotFile = await this._fileSync._writeScreenshot(sessionDir, asset.stepId, asset.dataUrl);
-                // FUNC-015: preserve all step fields
+                // Preserve all step fields
                 const { screenshot: _sc, ...stepFields } = steps[i];
                 steps[i] = { ...stepFields, screenshotFile };
                 updated = true;
@@ -861,7 +874,7 @@ export class FSStorageManager {
 
     const fsReady = await this.isFilesystemReady();
     if (fsReady) {
-      // PERF-016: read directly via FileSync — no message bus
+      // Read directly via FileSync — no message bus
       const allData = await this._fileSync.readAllSessionsFull();
       return {
         meta: { version: 2, sessionCount: allData.length },

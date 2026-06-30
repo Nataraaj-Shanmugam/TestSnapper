@@ -5,22 +5,22 @@
  * file on disk managed by Chrome. All public methods keep the same signatures
  * so the rest of the extension needs zero changes.
  *
- * CRITICAL FIXES APPLIED:
- * - BUG-004: Storage quota monitoring with warnings at 80%, errors at 95%
- * - STR-001: Image compression using canvas API
- * - STR-002: Schema versioning with migration support
- * - STR-003: Split storage into multiple keys to avoid 10MB per-key limit
- * - STR-004: Orphaned asset cleanup
- * - STR-005: Export/import for backup
- * - STR-006: Batch operations for better performance
- * - STR-MED-001: GZIP compression for step data
- * - [CRIT] PERF-002: Per-asset O(1) storage with index key
- * - [HIGH] FUNC-007: _readSteps handles PLAIN:: prefix from compression fallback
- * - [HIGH] FUNC-008: Write-queue mutex serialises all RMW operations; idempotency guards
- * - [HIGH] PERF-005: In-memory steps cache; updateSession accepts optional { stepCount } hint
- * - [MED]  PERF-012: _retryOperation skips retries for deterministic quota errors
- * - [MED]  PERF-013+FUNC-019: clearSession deletes data keys BEFORE session index entry
- * - [MED]  FUNC-010: _readMeta returns { version: 1 } when key absent for migration trigger
+ * Key architectural features:
+ * - Quota monitoring with warnings at 80%, errors at 95%
+ * - Image compression using canvas API
+ * - Schema versioning with migration support
+ * - Split storage into multiple keys to avoid 10MB per-key limit
+ * - Orphaned asset cleanup
+ * - Export/import for backup
+ * - Batch operations for better performance
+ * - GZIP compression for step data
+ * - Per-asset O(1) storage with index key
+ * - _readSteps handles PLAIN:: prefix from compression fallback
+ * - Write-queue mutex serialises all RMW operations; idempotency guards
+ * - In-memory steps cache; updateSession accepts optional { stepCount } hint
+ * - _retryOperation skips retries for deterministic quota errors
+ * - clearSession deletes data keys BEFORE session index entry
+ * - _readMeta returns { version: 1 } when key absent for migration trigger
  *
  * Data layout (split across keys for scalability):
  *   testsnapper_meta              → { version, sessionCount, lastCleanup }
@@ -37,12 +37,23 @@ import { compress, decompress, isCompressed, isPlainFallback } from './compressi
 import { QuotaMonitor } from './quota-monitor.js';
 import { SchemaMigrator } from './schema-migrator.js';
 import { OrphanCleaner } from './orphan-cleaner.js';
+import { Logger } from './logger.js';
 
 const META_KEY = 'testsnapper_meta';
 const SESSIONS_KEY = 'testsnapper_sessions';
 const MAX_IMAGE_WIDTH = 1920;
 const MAX_IMAGE_HEIGHT = 1080;
 const IMAGE_QUALITY = 0.95;
+
+// Safe ceiling for a single exportAllData() payload held in memory (mirrors fs-storage guard).
+const MAX_EXPORT_BYTES = 50 * 1024 * 1024; // 50MB
+
+// Defensive caps for imported (potentially hostile) string fields.
+const MAX_SESSION_NAME_LEN = 500;
+const MAX_FIELD_NAME_LEN = 500;
+
+// In-memory steps cache size cap (PERF-005). Oldest entry evicted on overflow.
+const MAX_STEPS_CACHE_ENTRIES = 25;
 
 // Error types that must NOT be retried (deterministic failures)
 const NON_RETRYABLE = ['QuotaExceededError', 'StorageQuotaExceeded'];
@@ -57,16 +68,34 @@ class StorageManager {
     this.quotaMonitor = new QuotaMonitor();
     this.orphanCleaner = new OrphanCleaner(this);
 
-    // FIX: FUNC-008 — Async write-queue mutex serialises all read-modify-write operations.
+    // Async write-queue mutex serialises all read-modify-write operations.
     this._writeQueue = Promise.resolve();
 
-    // FIX: PERF-005 — In-memory steps cache: Map<sessionId, steps[]>
+    // In-memory steps cache: Map<sessionId, steps[]>
     this._stepsCache = new Map();
   }
 
   // ════════════════════════════════════════════════════════════════
   // Internal helpers
   // ════════════════════════════════════════════════════════════════
+
+  /**
+   * Insert/refresh a steps-cache entry while bounding the cache size (PERF-005).
+   * Map preserves insertion order, so when the cache exceeds MAX_STEPS_CACHE_ENTRIES
+   * we evict the oldest (first) key. Re-setting an existing key keeps its position,
+   * which is acceptable for this lightweight LRU-ish bound.
+   * @private
+   * @param {string} sessionId
+   * @param {Array} steps
+   */
+  _cacheSteps(sessionId, steps) {
+    this._stepsCache.set(sessionId, steps);
+    while (this._stepsCache.size > MAX_STEPS_CACHE_ENTRIES) {
+      const oldestKey = this._stepsCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this._stepsCache.delete(oldestKey);
+    }
+  }
 
   /**
    * Read metadata (version, counts, etc.)
@@ -153,8 +182,8 @@ class StorageManager {
       steps = [];
     }
 
-    // FIX: PERF-005 — populate cache
-    this._stepsCache.set(sessionId, steps);
+    // FIX: PERF-005 — populate cache (size-bounded)
+    this._cacheSteps(sessionId, steps);
     return steps;
   }
 
@@ -172,8 +201,8 @@ class StorageManager {
     const key = `testsnapper_steps_${sessionId}`;
     const compressed = await compress(steps);
     await chrome.storage.local.set({ [key]: compressed });
-    // FIX: PERF-005 — keep cache in sync
-    this._stepsCache.set(sessionId, steps);
+    // FIX: PERF-005 — keep cache in sync (size-bounded)
+    this._cacheSteps(sessionId, steps);
   }
 
   // ──── Asset helpers (PERF-002 per-asset-key architecture) ──────────────
@@ -330,15 +359,15 @@ class StorageManager {
           NON_RETRYABLE.includes(error.name) ||
           (error.message && error.message.includes('quota'));
         if (isQuotaError) {
-          console.error(`${operationName} quota error (non-retryable):`, error.message);
+          Logger.error(`${operationName} quota error (non-retryable):`, error.message);
           throw error;
         }
 
         if (attempt === retries) {
-          console.error(`${operationName} failed after ${retries} attempts:`, error);
+          Logger.error(`${operationName} failed after ${retries} attempts:`, error);
           throw error;
         }
-        console.warn(`${operationName} attempt ${attempt} failed, retrying...`);
+        Logger.warn(`${operationName} attempt ${attempt} failed, retrying...`);
         await new Promise(resolve => setTimeout(resolve, this.retryDelay * attempt));
       }
     }
@@ -372,7 +401,7 @@ class StorageManager {
   }
 
   // ════════════════════════════════════════════════════════════════
-  // BUG-004: Storage Quota Monitoring (delegated to QuotaMonitor)
+  // Storage quota monitoring (delegated to QuotaMonitor)
   // ════════════════════════════════════════════════════════════════
 
   /**
@@ -423,7 +452,7 @@ class StorageManager {
   }
 
   // ════════════════════════════════════════════════════════════════
-  // STR-004: Orphaned Asset Cleanup (delegated to OrphanCleaner)
+  // Orphaned asset cleanup (delegated to OrphanCleaner)
   // ════════════════════════════════════════════════════════════════
 
   /**
@@ -455,7 +484,7 @@ class StorageManager {
   }
 
   // ════════════════════════════════════════════════════════════════
-  // STR-005: Export/Import for Backup
+  // Export/import for backup
   // ════════════════════════════════════════════════════════════════
 
   /**
@@ -471,16 +500,24 @@ class StorageManager {
       sessions: []
     };
 
-    // Load full session data including steps and assets
+    // Load full session data including steps and assets.
+    // Guard the in-memory payload size: a full chrome.storage export (with base64
+    // screenshots) can blow up RAM. Mirror the fs-storage 50MB safe limit.
+    let accumulatedBytes = JSON.stringify({ meta, sessions: [] }).length;
     for (const session of sessions) {
       const steps = await this._readSteps(session.sessionId);
       const assets = await this._readAssets(session.sessionId);
 
-      data.sessions.push({
-        ...session,
-        steps,
-        assets
-      });
+      const entry = { ...session, steps, assets };
+      accumulatedBytes += JSON.stringify(entry).length;
+      if (accumulatedBytes > MAX_EXPORT_BYTES) {
+        throw new Error(
+          'Export aborted: dataset exceeds the 50MB safe limit for chrome.storage export. ' +
+          'Use File System storage mode for large datasets.'
+        );
+      }
+
+      data.sessions.push(entry);
     }
 
     return data;
@@ -500,7 +537,7 @@ class StorageManager {
       throw new Error('Invalid backup data structure');
     }
 
-    // SEC-001: allowlists for imported content
+    // Allowlists for imported content
     const SAFE_ID_RE = /^[0-9a-f-]{8,64}$/i;
     const SAFE_DATA_URL_RE = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
 
@@ -514,11 +551,29 @@ class StorageManager {
       if (s.assets !== undefined && !Array.isArray(s.assets)) {
         throw new Error(`Invalid session ${s.sessionId}: assets must be an array`);
       }
-      // Validate step IDs are safe identifiers
+      // Defense-in-depth: type/length-validate the human-supplied sessionName.
+      // Non-string → coerce to empty string; over-long → truncate. (No HTML-escaping
+      // here — escaping belongs at render time.)
+      if (s.sessionName !== undefined) {
+        if (typeof s.sessionName !== 'string') {
+          s.sessionName = '';
+        } else if (s.sessionName.length > MAX_SESSION_NAME_LEN) {
+          s.sessionName = s.sessionName.slice(0, MAX_SESSION_NAME_LEN);
+        }
+      }
+      // Validate step IDs are safe identifiers + normalize fieldName
       if (Array.isArray(s.steps)) {
         for (const [j, step] of s.steps.entries()) {
           if (step && typeof step.id === 'string' && !SAFE_ID_RE.test(step.id)) {
             throw new Error(`Invalid step id at session ${s.sessionId} step ${j}`);
+          }
+          // Defense-in-depth: type/length-validate fieldName when present.
+          if (step && step.fieldName !== undefined) {
+            if (typeof step.fieldName !== 'string') {
+              step.fieldName = '';
+            } else if (step.fieldName.length > MAX_FIELD_NAME_LEN) {
+              step.fieldName = step.fieldName.slice(0, MAX_FIELD_NAME_LEN);
+            }
           }
         }
       }
@@ -551,7 +606,7 @@ class StorageManager {
       await this._writeAssetsFromArray(session.sessionId, session.assets || []);
     }
 
-    console.log('Data imported successfully');
+    Logger.info('Data imported successfully');
     return true;
   }
 
@@ -559,7 +614,7 @@ class StorageManager {
   async importAllData(data) { return this.importData(data); }
 
   // ════════════════════════════════════════════════════════════════
-  // STR-006: Batch Operations
+  // Batch operations
   // ════════════════════════════════════════════════════════════════
 
   /**
@@ -758,7 +813,13 @@ class StorageManager {
         }
       }
 
-      sessions[idx] = { ...sessionData, stepCount: count };
+      // FIX: strip heavy hydrated fields before writing the lightweight session index.
+      // Callers sometimes pass a fully-hydrated session (e.g. from getSession(), or
+      // markSessionIncomplete) that carries steps/assets arrays; embedding those into the
+      // `testsnapper_sessions` metadata row bloats every getAllSessions() read. Only
+      // metadata belongs here — drop steps/assets explicitly.
+      const { steps: _steps, assets: _assets, ...meta } = sessionData;
+      sessions[idx] = { ...meta, stepCount: count };
       await this._writeSessions(sessions);
       return sessions[idx];
     }, 'updateSession'));
@@ -938,7 +999,7 @@ class StorageManager {
       sessions[idx].stepCount = steps.length;
       await this._writeSessions(sessions);
 
-      console.log('All steps updated successfully');
+      Logger.info('All steps updated successfully');
       return true;
     }, 'updateAllSteps'));
   }
@@ -986,7 +1047,7 @@ class StorageManager {
         try {
           const usage = await this.getStorageUsage();
           if (usage.percentage > 0.60) {
-            console.warn('PNG storage is consuming significant space (' +
+            Logger.warn('PNG storage is consuming significant space (' +
               Math.round(usage.percentage * 100) + '%). Consider switching to JPEG-high in settings.');
           }
         } catch (e) { /* non-critical */ }
@@ -1114,7 +1175,7 @@ class StorageManager {
       meta.sessionCount = sessions.length;
       await this._writeMeta(meta);
 
-      console.log(`Session ${sessionId} cleared`);
+      Logger.info(`Session ${sessionId} cleared`);
       return true;
     }, 'clearSession'));
   }

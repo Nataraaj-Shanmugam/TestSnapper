@@ -1,22 +1,14 @@
 /**
  * OrphanCleaner — removes storage keys that belong to deleted/missing sessions.
  *
- * FIX: PERF-013 + FUNC-019
+ * Performs a two-phase cleanup:
+ * 1. Within-session orphan sweep: removes assets whose stepId no longer exists
+ * 2. Full key sweep: finds storage keys whose embedded sessionId is not in the live session set
  *
- * Problem: clearSession removes the session index entry first then data keys.
- * A SW kill between those two writes leaves testsnapper_steps_{id} /
- * testsnapper_assets_{id} / testsnapper_asset_{id}_{assetId} /
- * testsnapper_assetIndex_{id} keys orphaned forever.
- * OrphanCleaner previously only iterated existing sessions so it never
- * discovered keys whose session was already removed from the index.
- *
- * Fix: after the normal within-session orphan sweep (assets whose stepId no
- * longer exists), perform a full key sweep: enumerate all storage keys, find
- * any testsnapper_(steps|assets|asset|assetIndex)_* key whose embedded
- * sessionId is NOT in the live session set, and remove them.
- *
- * The weekly-gate is preserved so this extra sweep does not run unconditionally.
+ * The weekly gate prevents unconditional runs and ensures adequate time between cleanups.
  */
+
+import { Logger } from './logger.js';
 
 const META_KEY = 'testsnapper_meta';
 const SESSIONS_KEY = 'testsnapper_sessions';
@@ -104,12 +96,12 @@ export class OrphanCleaner {
         }
 
         // ── Phase 2: key sweep for fully-orphaned sessions ───────────────────
-        // FIX: PERF-013 / FUNC-019 — detect keys whose session was deleted
+        // Detect keys whose session was deleted
         let allStorage;
         try {
             allStorage = await chrome.storage.local.get(null);
         } catch (err) {
-            console.warn('OrphanCleaner: could not enumerate all keys:', err);
+            Logger.warn('OrphanCleaner: could not enumerate all keys:', err);
             allStorage = {};
         }
 
@@ -129,7 +121,7 @@ export class OrphanCleaner {
             for (let i = 0; i < keysToRemove.length; i += BATCH) {
                 await chrome.storage.local.remove(keysToRemove.slice(i, i + BATCH));
             }
-            console.log(`OrphanCleaner: removed ${keysToRemove.length} orphaned storage keys`);
+            Logger.info(`OrphanCleaner: removed ${keysToRemove.length} orphaned storage keys`);
             totalRemoved += keysToRemove.length;
         }
 
@@ -137,7 +129,7 @@ export class OrphanCleaner {
         meta.lastCleanup = Date.now();
         await chrome.storage.local.set({ [META_KEY]: meta });
 
-        console.log(`OrphanCleaner: cleanup complete — ${totalRemoved} items removed`);
+        Logger.info(`OrphanCleaner: cleanup complete — ${totalRemoved} items removed`);
         return totalRemoved;
     }
 }

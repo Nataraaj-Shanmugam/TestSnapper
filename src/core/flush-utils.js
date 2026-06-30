@@ -3,14 +3,30 @@
  * Used by both background.js (service worker) and FSStorageManager (window context)
  * to track which sessions need to be flushed from chrome.storage to the filesystem.
  *
- * PERF-004 FIX: Each pending sessionId is stored as its own chrome.storage key
- * (`testsnapper_pending_{sessionId}`) instead of a shared array to eliminate
- * read-modify-write races when multiple operations complete concurrently.
+ * SINGLE-INDEX APPROACH: Pending session IDs are stored in ONE chrome.storage key
+ * (`testsnapper_pending_index`) holding an array of sessionIds, rather than one key
+ * per session (`testsnapper_pending_{sessionId}`).
+ *
+ * The single-index scheme provides a small RMW window in add/remove, but eliminates
+ * the far more expensive O(all-keys) scan in getPendingFlush() — which would call
+ * chrome.storage.local.get(null), pulling EVERY key into memory just to find a
+ * handful of flag keys. For TestSnapper's normal single-actor flush cadence the RMW
+ * window is acceptable; the memory/perf win is significant.
  */
 
-/** @param {string} sessionId */
-function _pendingKey(sessionId) {
-  return `testsnapper_pending_${sessionId}`;
+import { Logger } from './logger.js';
+
+const PENDING_INDEX_KEY = 'testsnapper_pending_index';
+
+/**
+ * Read the pending-index array from storage.
+ * @private
+ * @returns {Promise<string[]>}
+ */
+async function _readIndex() {
+  const result = await chrome.storage.local.get(PENDING_INDEX_KEY);
+  const arr = result[PENDING_INDEX_KEY];
+  return Array.isArray(arr) ? arr : [];
 }
 
 /**
@@ -18,30 +34,33 @@ function _pendingKey(sessionId) {
  * @returns {Promise<string[]>}
  */
 export async function getPendingFlush() {
-  // Enumerate all testsnapper_pending_* keys to collect pending sessions
-  const allData = await chrome.storage.local.get(null);
-  const prefix = 'testsnapper_pending_';
-  return Object.keys(allData)
-    .filter(k => k.startsWith(prefix) && allData[k] === true)
-    .map(k => k.slice(prefix.length));
+  return _readIndex();
 }
 
 /**
  * Mark a sessionId as needing a filesystem flush.
- * Race-safe: each sessionId writes its own independent key.
+ * No-op on a falsy id. Deduplicates: an id already present is not added again.
  * @param {string} sessionId
+ * @returns {Promise<void>}
  */
 export async function addPendingFlush(sessionId) {
   if (!sessionId) return;
-  await chrome.storage.local.set({ [_pendingKey(sessionId)]: true });
+  const index = await _readIndex();
+  if (index.includes(sessionId)) return;
+  index.push(sessionId);
+  await chrome.storage.local.set({ [PENDING_INDEX_KEY]: index });
 }
 
 /**
  * Remove a sessionId from the pending-flush set after a successful flush.
- * Race-safe: operates only on the single key for this session.
+ * No-op on a falsy id.
  * @param {string} sessionId
+ * @returns {Promise<void>}
  */
 export async function removePendingFlush(sessionId) {
   if (!sessionId) return;
-  await chrome.storage.local.remove(_pendingKey(sessionId));
+  const index = await _readIndex();
+  const next = index.filter(id => id !== sessionId);
+  if (next.length === index.length) return; // nothing to remove
+  await chrome.storage.local.set({ [PENDING_INDEX_KEY]: next });
 }

@@ -10,7 +10,7 @@
  * page reloads (though a browser restart may require re-authorization via
  * a user gesture).
  *
- * Folder structure on disk (PERF-007 split format):
+ * Folder structure on disk:
  *   <chosen-folder>/
  *     .TestSnapper/
  *       sessions.json                         — lightweight index of all sessions
@@ -23,10 +23,11 @@
  * small and step edits / drag-and-drop reordering only read/write the compact
  * metadata file rather than a potentially 100MB+ combined file.
  *
- * FUNC-015 fix: step fields (targetLabel, isManual, hasScreenshot, sessionId,
- * etc.) are preserved using a spread when serializing to disk, rather than an
- * explicit allowlist that previously dropped these fields.
+ * Step fields (targetLabel, isManual, hasScreenshot, sessionId, etc.) are
+ * preserved using a spread when serializing to disk.
  */
+
+import { Logger } from './logger.js';
 
 const DB_NAME = 'testsnapper_filesync';
 const STORE_NAME = 'handles';
@@ -438,7 +439,7 @@ export class FileSync {
       await dirHandle.removeEntry(fileName);
     } catch (err) {
       if (err.name !== 'NotFoundError') {
-        console.warn(`[FileSync] _deleteFile failed for ${fileName}:`, err);
+        Logger.warn(`[FileSync] _deleteFile failed for ${fileName}:`, err);
       }
     }
   }
@@ -749,7 +750,7 @@ export class FileSync {
       const asset = assetMap.get(step.id);
       const dataUrl = asset ? (asset.dataUrl || asset.data || null) : null;
 
-      // FUNC-015: preserve all step fields via spread.
+      // Preserve all step fields via spread.
       // Strip the raw dataUrl / screenshot fields from on-disk representation.
       // Add screenshotFile reference if we have screenshot data.
       const { dataUrl: _du, screenshot: _sc, ...stepFields } = step;
@@ -767,7 +768,7 @@ export class FileSync {
       serializedSteps.push(serializedStep);
     }
 
-    // PERF-007: compact JSON (no pretty-printing) to reduce file size and write time
+    // Compact JSON (no pretty-printing) to reduce file size and write time
     const sessionData = {
       version: 2,
       savedAt: new Date().toISOString(),
@@ -787,7 +788,7 @@ export class FileSync {
     // Update the sessions.json index
     await this._updateIndexForSession(handle, sessionData.session);
 
-    console.log(`[FileSync] Wrote session ${newFolderName}`);
+    Logger.info(`[FileSync] Wrote session ${newFolderName}`);
   }
 
   /**
@@ -812,7 +813,7 @@ export class FileSync {
     const idx = data.steps.findIndex(s => s.id === stepId);
     if (idx === -1) return null;
 
-    // FUNC-015: spread preserves all existing step fields
+    // Spread preserves all existing step fields
     const { dataUrl: _du, screenshot: _sc, ...safeChanges } = changes;
     data.steps[idx] = { ...data.steps[idx], ...safeChanges };
 
@@ -903,7 +904,7 @@ export class FileSync {
       const folder = await this._findSessionFolder(handle, sessionId);
       if (folder) {
         await handle.removeEntry(folder.name, { recursive: true });
-        console.log(`[FileSync] Deleted session folder: ${folder.name}`);
+        Logger.info(`[FileSync] Deleted session folder: ${folder.name}`);
       }
 
       // Update index
@@ -912,7 +913,7 @@ export class FileSync {
       await this._writeFile(handle, 'sessions.json', JSON.stringify(updated));
     } catch (error) {
       if (error.name !== 'NotFoundError') {
-        console.warn('[FileSync] Failed to delete session:', error);
+        Logger.warn('[FileSync] Failed to delete session:', error);
       }
     }
   }
@@ -935,10 +936,10 @@ export class FileSync {
         sessionName: sessionName || 'Session'
       });
       await handle.removeEntry(folderName, { recursive: true });
-      console.log(`[FileSync] Deleted session folder: ${folderName}`);
+      Logger.info(`[FileSync] Deleted session folder: ${folderName}`);
     } catch (error) {
       if (error.name !== 'NotFoundError') {
-        console.warn('[FileSync] Failed to delete session folder:', error);
+        Logger.warn('[FileSync] Failed to delete session folder:', error);
       }
     }
   }
@@ -975,7 +976,7 @@ export class FileSync {
     for (const session of sessions) {
       await this.syncSession(session.sessionId, storage);
     }
-    console.log(`[FileSync] Full sync complete: ${sessions.length} sessions`);
+    Logger.info(`[FileSync] Full sync complete: ${sessions.length} sessions`);
   }
 
   // ─────────────────────────────────────────────
@@ -1004,14 +1005,14 @@ export class FileSync {
         await this.writeSession(session, steps, assets);
         migrated++;
       } catch (error) {
-        console.warn(`[FileSync] Migration failed for session ${session.sessionId}:`, error);
+        Logger.warn(`[FileSync] Migration failed for session ${session.sessionId}:`, error);
       }
     }
 
     // Mark migration complete
     await this.setMigrated();
 
-    console.log(`[FileSync] Migration complete: ${migrated}/${sessions.length} sessions`);
+    Logger.info(`[FileSync] Migration complete: ${migrated}/${sessions.length} sessions`);
     return { migrated };
   }
 }

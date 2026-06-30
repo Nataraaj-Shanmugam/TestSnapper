@@ -16,30 +16,30 @@
  *   Fall back to `asset.data`, then to `asset.blob` (live-session only)
  *   so every possible write-path is covered.
  *
- * PERF-003: Export memory fix — process screenshots one at a time, null
- *   out references immediately, use URL.createObjectURL for downloads.
+ * Export memory optimization: process screenshots one at a time, null
+ * out references immediately, use URL.createObjectURL for downloads.
  *
- * FUNC-005/PERF-011: PDF fix — load jsPDF from local lib via chrome.runtime.getURL
- *   instead of CDN (blocked by extension CSP). DOCX fix — detect lib availability
- *   before the image pipeline to avoid wasted CPU+memory.
+ * PDF fix — load jsPDF from local lib via chrome.runtime.getURL
+ * instead of CDN (blocked by extension CSP). DOCX fix — detect lib availability
+ * before the image pipeline to avoid wasted CPU+memory.
  *
- * SEC-003: URL sanitization at export time — strips sensitive query params
- *   from step.url and navigate step.value in all export formats.
+ * URL sanitization at export time — strips sensitive query params
+ * from step.url and navigate step.value in all export formats.
  *
- * EXP-IMG-001/002/003/004: image export quality — DOCX and PDF route every
- *   screenshot through ImageProcessor.processForExport (content-aware PNG/JPEG,
- *   lossless for text-heavy UI) instead of the old forced JPEG-0.85 downscale.
- *   PDF now embeds screenshots via jsPDF addImage; DOCX sizes images with a
- *   single unit and avoids page splits.
+ * Image export quality — DOCX and PDF route every screenshot through
+ * ImageProcessor.processForExport (content-aware PNG/JPEG, lossless for text-heavy UI)
+ * instead of the old forced JPEG-0.85 downscale. PDF now embeds screenshots via
+ * jsPDF addImage; DOCX sizes images with a single unit and avoids page splits.
  */
 
 import { ImageProcessor } from './image-processor.js';
+import { Logger } from './logger.js';
 
 export class ExportService {
   constructor(storage) {
     this.storage = storage;
     this.cancelledExports = new Set(); // Track cancelled exports
-    console.log('ExportService initialized');
+    Logger.debug('ExportService initialized');
   }
 
   /**
@@ -47,7 +47,7 @@ export class ExportService {
    */
   cancelExport(sessionId) {
     this.cancelledExports.add(sessionId);
-    console.log('Export cancelled for session:', sessionId);
+    Logger.debug('Export cancelled for session:', sessionId);
   }
 
   /**
@@ -101,7 +101,7 @@ export class ExportService {
     // Resolve the user's export image-quality preference once per export.
     this._imgOpts = await this._resolveExportImageOpts();
 
-    console.log('Starting export:', format, 'for session:', sessionId);
+    Logger.info('Starting export:', format, 'for session:', sessionId);
 
     // Check cancellation
     if (this._isCancelled(sessionId)) {
@@ -168,6 +168,11 @@ export class ExportService {
         pref = r?.settings?.exportImageQuality || 'auto';
       }
     } catch (_) { /* default */ }
+
+    // Validate against the known set; fall back to 'auto' for unknown/invalid
+    // values so a corrupted setting can't diverge into an invalid state.
+    const ALLOWED = ['auto', 'high', 'standard'];
+    if (!ALLOWED.includes(pref)) pref = 'auto';
 
     switch (pref) {
       case 'high': return { format: 'auto', quality: 0.95 };
@@ -273,7 +278,7 @@ export class ExportService {
                 quality
               );
             } catch (err) {
-              console.warn('Canvas compression failed:', err);
+              Logger.warn('Canvas compression failed:', err);
               img.src = '';
               resolve(blob);
             }
@@ -286,7 +291,7 @@ export class ExportService {
         });
       }
     } catch (err) {
-      console.warn('Image compression failed, using original:', err);
+      Logger.warn('Image compression failed, using original:', err);
       return blob;
     }
   }
@@ -318,7 +323,7 @@ export class ExportService {
       try {
         return await this._blobToDataURL(asset.blob);
       } catch (err) {
-        console.warn('blobToDataURL failed for asset', asset.id, err);
+        Logger.warn('blobToDataURL failed for asset', asset.id, err);
       }
     }
 
@@ -365,14 +370,31 @@ export class ExportService {
   }
 
   /**
-   * Export to CSV. Sanitizes URLs for SEC-003.
+   * Neutralize CSV formula injection. A cell whose first character is one of
+   * `= + - @` (or a leading tab/CR) is interpreted as a formula by Excel /
+   * Google Sheets. Prefixing it with a single apostrophe defuses execution
+   * while keeping the visible value intact. (CSV Injection / CWE-1236)
+   * @private
+   * @param {*} value - raw cell value
+   * @returns {string}
+   */
+  _csvSafeCell(value) {
+    const str = String(value);
+    if (/^[=+\-@\t\r]/.test(str)) {
+      return `'${str}`;
+    }
+    return str;
+  }
+
+  /**
+   * Export to CSV. Sanitizes URLs for SEC-003 and defuses formula injection.
    */
   _exportCSV(exportData, sessionId) {
     const headers = ['Step', 'Action', 'Field Name', 'Selector (CSS)', 'Value', 'URL'];
     const rows = exportData.steps
       .filter(s => s.action !== 'screenshot')
       .map((step, index) => {
-        // SEC-003: sanitize URL and navigate value
+        // Sanitize URL and navigate value
         const safeUrl = this._sanitizeUrl(step.url);
         const safeValue = (step.action === 'navigate' && step.value)
           ? this._sanitizeUrl(step.value)
@@ -389,7 +411,7 @@ export class ExportService {
       });
 
     const content = [headers, ...rows]
-      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .map(row => row.map(cell => `"${this._csvSafeCell(cell).replace(/"/g, '""')}"`).join(','))
       .join('\n');
 
     const filename = `testsnapper_${sessionId.substring(0, 8)}_${Date.now()}.csv`;
@@ -421,7 +443,7 @@ export class ExportService {
         script.src = localUrl;
         script.onload = () => resolve(true);
         script.onerror = () => {
-          console.warn('[ExportService] Failed to load local jsPDF lib');
+          Logger.warn('[ExportService] Failed to load local jsPDF lib');
           resolve(false);
         };
         document.head.appendChild(script);
@@ -450,7 +472,7 @@ export class ExportService {
         return await this._buildDocxBlob(exportData, sessionId, notify);
       } catch (err) {
         if (err && /cancelled/i.test(err.message || '')) throw err;
-        console.warn('[ExportService] docx-library build failed, falling back to HTML .doc:', err);
+        Logger.warn('[ExportService] docx-library build failed, falling back to HTML .doc:', err);
       }
     }
     return this._exportDOCXHtml(exportData, sessionId, notify);
@@ -473,7 +495,7 @@ export class ExportService {
       script.src = chrome.runtime.getURL('libs/docx.min.js');
       script.onload = () => resolve(!!(window.docx && window.docx.Packer));
       script.onerror = () => {
-        console.warn('[ExportService] Failed to load local docx lib');
+        Logger.warn('[ExportService] Failed to load local docx lib');
         resolve(false);
       };
       document.head.appendChild(script);
@@ -594,7 +616,7 @@ export class ExportService {
         spacing: { after: 200 }
       });
     } catch (err) {
-      console.warn('[ExportService] docx image embed failed:', err);
+      Logger.warn('[ExportService] docx image embed failed:', err);
       return null;
     }
   }
@@ -663,7 +685,7 @@ export class ExportService {
 
     // ------------------------------------------------------------------
     // Build a lookup: stepId -> asset (reference only, don't load yet)
-    // PERF-003: We load images one at a time as we encounter each step
+    // Load images one at a time as we encounter each step
     // ------------------------------------------------------------------
     const screenshotAssets = await this.storage.getAllAssets(session.id);
     // Build a stepId → asset index (not the data URLs themselves)
@@ -712,7 +734,7 @@ export class ExportService {
           oneliner = 'Manual screenshot captured';
           html += `<li>${oneliner}`;
 
-          // PERF-003: load + process this one asset, then null it out
+          // Load + process this one asset, then null it out
           const asset = assetIndex.get(step.id);
           if (asset) {
             const rawUrl = await this._resolveAssetUrl(asset);
@@ -815,7 +837,7 @@ export class ExportService {
 </body>
 </html>`;
 
-    // PERF-003: clear the asset index map
+    // Clear the asset index map
     assetIndex.clear();
 
     notify({ percent: 90, status: 'Finalizing DOCX content...' });
@@ -857,10 +879,10 @@ export class ExportService {
   async _exportPDF(exportData, sessionId) {
     const { session, steps } = exportData;
 
-    // FUNC-005: load local jsPDF, NOT CDN
+    // Load local jsPDF, NOT CDN
     const loaded = await this._loadJsPDF();
     if (!loaded || typeof window === 'undefined' || !window.jspdf || !window.jspdf.jsPDF) {
-      console.error('[ExportService] jsPDF library not available. Ensure libs/jspdf.umd.min.js is present.');
+      Logger.error('[ExportService] jsPDF library not available. Ensure libs/jspdf.umd.min.js is present.');
       // Return a user-friendly error text file rather than a junk "null" PDF
       const errorMsg = 'PDF export failed: jsPDF library not found.\n\nPlease run "npm run setup-libs" to download the required library, then reload the extension.';
       const sessionName = (session.name || 'Session').replace(/[^a-z0-9]/gi, '_');
@@ -947,7 +969,7 @@ export class ExportService {
           yPosition += 4;
         }
 
-        // SEC-003: sanitize URL shown in PDF
+        // Sanitize URL shown in PDF
         if (step.url) {
           const safeUrl = this._sanitizeUrl(step.url);
           const urlLines = doc.splitTextToSize(`URL: ${safeUrl}`, contentWidth - 5);
@@ -987,7 +1009,7 @@ export class ExportService {
             doc.addImage(result.dataUrl, fmt, margin, yPosition, imgW, imgH, undefined, 'SLOW');
             yPosition += imgH + 6;
           } catch (err) {
-            console.warn('PDF addImage failed for step', step.id, err);
+            Logger.warn('PDF addImage failed for step', step.id, err);
           }
           result.dataUrl = null;
         }
