@@ -90,7 +90,7 @@ var FieldNameResolver = (function () {
       this._fromFormGroup,
       this._fromMeaningfulAttributes,
       this._fromButtonContext,
-      this._fromElementText,         // Generic: title attr + innerText for ANY element
+      this._fromElementText,
       this._fromProximityText,
       this._fromShadowDOMLabels,
       this._fromFrameContext
@@ -141,10 +141,6 @@ var FieldNameResolver = (function () {
       window.Logger?.debug('Frame context initialization note:', e);
     }
   };
-
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 1: Explicit Label
-  // ══════════════════════════════════════════════════════════════════
 
   /**
    * Try to get label from explicit <label> element
@@ -197,10 +193,6 @@ var FieldNameResolver = (function () {
     return null;
   };
 
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 2: ARIA Attributes
-  // ══════════════════════════════════════════════════════════════════
-
   /**
    * Try to get label from ARIA attributes
    * Checks: aria-label, aria-labelledby, aria-describedby
@@ -231,10 +223,6 @@ var FieldNameResolver = (function () {
     return null;
   };
 
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 3: Placeholder
-  // ══════════════════════════════════════════════════════════════════
-
   /**
    * Try to get label from placeholder attribute
    * @private
@@ -245,10 +233,6 @@ var FieldNameResolver = (function () {
     var ph = element.placeholder || element.getAttribute('placeholder');
     return ph && ph.trim() ? ph.trim() : null;
   };
-
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 4: Form Group
-  // ══════════════════════════════════════════════════════════════════
 
   /**
    * Try to get label from form group context
@@ -277,10 +261,6 @@ var FieldNameResolver = (function () {
     return null;
   };
 
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 5: Meaningful Attributes
-  // ══════════════════════════════════════════════════════════════════
-
   /**
    * Try to get label from name or id attributes (skip auto-generated)
    * @private
@@ -298,10 +278,6 @@ var FieldNameResolver = (function () {
 
     return null;
   };
-
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 6: Button Context
-  // ══════════════════════════════════════════════════════════════════
 
   /**
    * Try to get label from button context (for buttons, links, etc)
@@ -330,10 +306,6 @@ var FieldNameResolver = (function () {
     return null;
   };
 
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 7: Element Text
-  // ══════════════════════════════════════════════════════════════════
-
   /**
    * Try to get label from element text content (fallback for any element)
    * @private
@@ -352,10 +324,6 @@ var FieldNameResolver = (function () {
 
     return null;
   };
-
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 8: Proximity Text
-  // ══════════════════════════════════════════════════════════════════
 
   /**
    * Try to get label from nearby text (proximity scoring)
@@ -399,10 +367,6 @@ var FieldNameResolver = (function () {
     return null;
   };
 
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 9: Shadow DOM
-  // ══════════════════════════════════════════════════════════════════
-
   /**
    * Try to get label from Shadow DOM boundaries
    * Walks shadow roots for labels
@@ -423,10 +387,6 @@ var FieldNameResolver = (function () {
     return null;
   };
 
-  // ══════════════════════════════════════════════════════════════════
-  //  STRATEGY 10: Frame Context
-  // ══════════════════════════════════════════════════════════════════
-
   /**
    * Try to get label from cached iframe context
    * @private
@@ -436,10 +396,6 @@ var FieldNameResolver = (function () {
   FieldNameResolver.prototype._fromFrameContext = function (element) {
     return this._cachedFrameLabel || null;
   };
-
-  // ══════════════════════════════════════════════════════════════════
-  //  HELPERS
-  // ══════════════════════════════════════════════════════════════════
 
   /**
    * Safe querySelector wrapper (handles errors gracefully)
