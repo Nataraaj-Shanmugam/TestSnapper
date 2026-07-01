@@ -29,7 +29,8 @@ const exportService = new ExportService(fsStorage);
 
 document.addEventListener("DOMContentLoaded", async () => {
   await init();
-  // POP-MED-002: Reduced from 2s to 3s for better performance
+  // Poll background state only while recording/paused; started after init() so
+  // currentState is already populated from the background response (LOW-024).
   setInterval(() => {
     if (currentState === "recording" || currentState === "paused") {
       updateState();
@@ -104,6 +105,11 @@ async function init() {
   await loadExportFormat(); // POP-MED-003: Load saved export format
   await updateStorageUsage(); // BUG FIX: POP-003
   setupKeyboardShortcuts(); // BUG FIX: POP-006
+  const versionFooter = document.getElementById('versionFooter');
+  if (versionFooter) {
+    const { version } = chrome.runtime.getManifest();
+    versionFooter.textContent = `TestSnapper v${version}`;
+  }
 }
 
 // setupTheme / applyTheme imported from ../theme.js
@@ -208,8 +214,8 @@ function setupTabs() {
         return;
       }
 
+      // Per ARIA APG: arrow keys only move focus; Enter/Space activate (HIGH-027)
       tabs[nextIndex].focus();
-      activateTab(tabs[nextIndex]);
     });
   }
 }
@@ -295,29 +301,15 @@ function setupKeyboardNavigation() {
       }
     }
 
-    // Tab navigation enhancement - ensure focusable elements
-    if (e.key === 'Tab') {
-      // Let browser handle default tab behavior
-      // Just ensure our buttons are focusable
-    }
   });
 
-  // Make all buttons keyboard accessible
+  // Make all buttons keyboard accessible — native <button> already handles Enter/Space,
+  // so no keydown listener is needed (LOW-021 / LOW-022: removed dead Tab block and double-fire listener).
   const makeButtonAccessible = (button) => {
     if (!button) return;
-
-    // Ensure button has tabindex
     if (!button.hasAttribute('tabindex')) {
       button.setAttribute('tabindex', '0');
     }
-
-    // Add Enter/Space key support if not already present
-    button.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        button.click();
-      }
-    });
   };
 
   // Make all control buttons accessible
@@ -337,9 +329,23 @@ function setupKeyboardNavigation() {
 // =====================
 // Storage Usage Indicator
 // =====================
-// Storage usage bar removed — filesystem storage has no quota limits.
-// This function is kept as a no-op so existing callers don't break.
-async function updateStorageUsage() { }
+async function updateStorageUsage() {
+  const bar = document.getElementById('storageUsageBar');
+  const text = document.getElementById('storageUsageText');
+  if (!bar || !text) return;
+  try {
+    const used = await new Promise(resolve => chrome.storage.local.getBytesInUse(null, resolve));
+    // unlimitedStorage — use 1 GB as a soft reference ceiling for display
+    const maxBytes = 1024 * 1024 * 1024;
+    const pct = Math.min((used / maxBytes) * 100, 100);
+    bar.style.width = pct + '%';
+    bar.className = 'storage-usage-bar ' + (pct > 95 ? 'storage-critical' : pct > 80 ? 'storage-warn' : 'storage-ok');
+    const mb = (used / (1024 * 1024)).toFixed(1);
+    text.textContent = `${mb} MB used`;
+  } catch {
+    text.textContent = 'Storage unavailable';
+  }
+}
 
 // =====================
 // Chrome Messaging Logic

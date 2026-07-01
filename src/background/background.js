@@ -10,7 +10,7 @@ import { ExportService } from '../core/export-service.js';
 import { Utils } from '../core/utils.js';
 import { addPendingFlush, removePendingFlush, getPendingFlush } from '../core/flush-utils.js';
 import { Logger } from '../core/logger.js';
-import { _isConsecutiveDuplicate, shouldRecordRequest, validateSettings } from '../core/recorder-utils.js';
+import { _isConsecutiveDuplicate, shouldRecordRequest } from '../core/recorder-utils.js';
 
 // ==================== Broadcast Helpers ====================
 
@@ -36,6 +36,7 @@ class RecordingStateManager {
     this.sequenceLock = Promise.resolve();
     this.lastScreenshotTime = 0;
     this.screenshotDebounceMs = 1000; // 1 second minimum between screenshots
+    this.screenshotCount = 0;
   }
 
   startRecording(session) {
@@ -43,6 +44,7 @@ class RecordingStateManager {
     this.session = session;
     this.stepSequence = 0;
     this.lastScreenshotTime = 0;
+    this.screenshotCount = 0;
   }
 
   pauseRecording() {
@@ -70,7 +72,8 @@ class RecordingStateManager {
     return {
       state: this.state,
       session: this.session,
-      stepCount: this.session?.stepCount || 0
+      stepCount: this.session?.stepCount || 0,
+      screenshotCount: this.screenshotCount
     };
   }
 
@@ -210,15 +213,15 @@ class SettingsManager {
     // Validate settings
     const validated = { ...settings };
 
-    if (validated.screenshotSeconds) {
+    if (validated.screenshotSeconds !== undefined) {
       validated.screenshotSeconds = Math.max(1, Math.min(60, parseInt(validated.screenshotSeconds)));
     }
 
-    if (validated.maxSessions) {
+    if (validated.maxSessions !== undefined) {
       validated.maxSessions = Math.max(1, Math.min(100, parseInt(validated.maxSessions)));
     }
 
-    if (validated.imageQuality) {
+    if (validated.imageQuality !== undefined) {
       validated.imageQuality = Math.max(0.1, Math.min(1.0, parseFloat(validated.imageQuality)));
     }
 
@@ -614,6 +617,7 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
     }
 
     stateManager.markScreenshotTaken();
+    stateManager.screenshotCount++;
 
     const sequence = await stateManager.incrementStepCount();
 
@@ -721,11 +725,7 @@ const ApiCapture = {
   },
 
   _shouldRecord(ok) {
-    const s = this._settings;
-    if (!s || !s.captureApiCalls) return false;
-    const failedOnly = s.captureFailedCalls && !s.captureAllCalls;
-    if (failedOnly) return !ok;
-    return true; // captureAllCalls, or master-on default → all
+    return shouldRecordRequest(null, this._settings, ok);
   },
 
   async _maybeRecord(details, status, ok) {
@@ -966,6 +966,11 @@ async function stopRecording(tabId) {
 let _lastAddedStep = null;
 
 async function addStep(stepData, senderTabId) {
+  // Reject steps when not actively recording (e.g. paused) — MED-001
+  if (stateManager.state !== 'recording') {
+    return { success: false, error: 'Not recording' };
+  }
+
   // [FUNC-002]: Only accept steps from the recorded tab
   if (senderTabId && stateManager.session?.tabId && senderTabId !== stateManager.session.tabId) {
     Logger.warn(`addStep: ignored step from tab ${senderTabId}, recorded tab is ${stateManager.session.tabId}`);
@@ -1305,19 +1310,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
 
         case 'exportSession': {
-          const session = await storage.getSession(message.sessionId);
-          if (!session) {
-            response = { success: false, error: 'Session not found' };
-            break;
+          const result = await exportService.exportSession(message.sessionId, message.format || 'json');
+          let dataUrl;
+          if (result.blob) {
+            // FileReader not available in SW — convert via arrayBuffer
+            const buffer = await result.blob.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i += 0x8000) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            }
+            dataUrl = `data:${result.blob.type};base64,${btoa(binary)}`;
           }
-          const steps = await storage.getSteps(message.sessionId);
-          const blob = await exportService.exportToFormat(
-            session,
-            steps,
-            message.format || 'json'
-          );
-          const dataUrl = await Utils.blobToDataURL(blob);
-          response = { success: true, dataUrl, mimeType: blob.type };
+          response = { success: true, dataUrl, content: result.content, filename: result.filename, mimeType: result.mimeType };
           break;
         }
 

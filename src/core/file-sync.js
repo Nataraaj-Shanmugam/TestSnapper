@@ -519,11 +519,11 @@ export class FileSync {
       if (!buf) return null;
       const ext = fileName.split('.').pop().toLowerCase();
       const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-      // Convert ArrayBuffer to base64 data URL
+      // Convert ArrayBuffer to base64 data URL; chunk to avoid O(n²) allocations (LOW-003)
       const bytes = new Uint8Array(buf);
       let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
       }
       return `data:${mime};base64,${btoa(binary)}`;
     } catch {
@@ -733,16 +733,33 @@ export class FileSync {
       }
     }
 
-    // Find and remove old folder if session was renamed
+    // Find old folder; if renamed, copy screenshots to new folder before deleting old
     const existingFolder = await this._findSessionFolder(handle, session.sessionId);
     const newFolderName = this._sessionFolderName(session);
+    const sessionDir = await handle.getDirectoryHandle(newFolderName, { create: true });
+
     if (existingFolder && existingFolder.name !== newFolderName) {
       try {
+        // Copy all screenshot files from old → new before deleting old folder
+        const oldScreenshotsDir = await existingFolder.getDirectoryHandle('screenshots').catch(() => null);
+        if (oldScreenshotsDir) {
+          const newScreenshotsDir = await sessionDir.getDirectoryHandle('screenshots', { create: true });
+          for await (const [fileName, fileEntry] of oldScreenshotsDir.entries()) {
+            if (fileEntry.kind === 'file') {
+              try {
+                const file = await fileEntry.getFile();
+                const buf = await file.arrayBuffer();
+                const writable = await newScreenshotsDir.getFileHandle(fileName, { create: true })
+                  .then(h => h.createWritable());
+                await writable.write(buf);
+                await writable.close();
+              } catch { /* skip unreadable files */ }
+            }
+          }
+        }
         await handle.removeEntry(existingFolder.name, { recursive: true });
       } catch { /* ignore if not found */ }
     }
-
-    const sessionDir = await handle.getDirectoryHandle(newFolderName, { create: true });
 
     // Write screenshots as separate binary files (PERF-007)
     const serializedSteps = [];

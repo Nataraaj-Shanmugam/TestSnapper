@@ -40,6 +40,9 @@ var modalQueue;
 var isProcessingModal;
 var currentModalId;
 var modalStates;
+var lastNavigationUrl;
+var isInitialNavigation;
+var sessionSettings;
 
 if (!window.__testSnapperInitialized) {
   window.__testSnapperInitialized = true;
@@ -201,7 +204,9 @@ function findNearbyText(element) {
       return textNodes[0].textContent.trim();
     }
 
-    const labelCandidates = parent.querySelectorAll('span, div:not(:has(*)), p');
+    // Use filter instead of :has() — requires Chrome 105+ which exceeds minimum_chrome_version (LOW-011)
+    const labelCandidates = Array.from(parent.querySelectorAll('span, div, p'))
+      .filter(el => el.tagName !== 'DIV' || el.children.length === 0);
     for (const candidate of labelCandidates) {
       const text = candidate.textContent.trim();
       if (text && text.length < 50 && !candidate.contains(element)) {
@@ -370,8 +375,9 @@ async function processModalQueue() {
 
   currentModalId = null;
 
-  // Process next in queue
-  setTimeout(() => processModalQueue(), 100);
+  // Process next item directly; no setTimeout needed since processModalQueue
+  // is async and each modal awaits the previous one before returning.
+  processModalQueue();
 }
 
 function closeModalById(modalId, result) {
@@ -485,15 +491,39 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     modalDiv.setAttribute('aria-modal', 'true');
     modalDiv.setAttribute('aria-labelledby', headingId);
 
-    modalDiv.innerHTML = [
-      '<h3 id="' + headingId + '" class="ts-heading">Enter Field Name</h3>',
-      '<p class="ts-desc">TestSnapper couldn\'t automatically detect the field name for this <strong>' + action + '</strong> action. Please provide a descriptive name.</p>',
-      '<input id="' + inputId + '" class="ts-input" type="text" placeholder="e.g., Username, Email Address, Submit Button..." aria-label="Field name">',
-      '<div class="ts-actions">',
-      '  <button id="' + cancelId + '" class="ts-btn ts-btn-cancel">Skip</button>',
-      '  <button id="' + confirmId + '" class="ts-btn ts-btn-confirm">Confirm</button>',
-      '</div>'
-    ].join('');
+    var h3 = document.createElement('h3');
+    h3.id = headingId;
+    h3.className = 'ts-heading';
+    h3.textContent = 'Enter Field Name';
+    var p = document.createElement('p');
+    p.className = 'ts-desc';
+    p.textContent = 'TestSnapper couldn\'t automatically detect the field name for this ';
+    var strong = document.createElement('strong');
+    strong.textContent = action;
+    p.appendChild(strong);
+    p.appendChild(document.createTextNode(' action. Please provide a descriptive name.'));
+    var inp = document.createElement('input');
+    inp.id = inputId;
+    inp.className = 'ts-input';
+    inp.type = 'text';
+    inp.placeholder = 'e.g., Username, Email Address, Submit Button...';
+    inp.setAttribute('aria-label', 'Field name');
+    var actions = document.createElement('div');
+    actions.className = 'ts-actions';
+    var skipBtn = document.createElement('button');
+    skipBtn.id = cancelId;
+    skipBtn.className = 'ts-btn ts-btn-cancel';
+    skipBtn.textContent = 'Skip';
+    var okBtn = document.createElement('button');
+    okBtn.id = confirmId;
+    okBtn.className = 'ts-btn ts-btn-confirm';
+    okBtn.textContent = 'Confirm';
+    actions.appendChild(skipBtn);
+    actions.appendChild(okBtn);
+    modalDiv.appendChild(h3);
+    modalDiv.appendChild(p);
+    modalDiv.appendChild(inp);
+    modalDiv.appendChild(actions);
 
     overlayDiv.appendChild(modalDiv);
     shadow.appendChild(style);
@@ -583,18 +613,17 @@ async function processStepWithManualEntry(element, action, stepData) {
   if (!fieldName || fieldName === 'Unknown Field' || fieldName.trim() === '') {
     window.Logger?.debug('⚠️ Field name not detected, requesting manual entry...');
 
-    const wasRecording = isRecording;
-    isRecording = false;
+    isModalOpen = true;
     updateRecordingIndicator('PAUSED');
 
     fieldName = await showManualEntryModal(element, action, stepData);
 
+    isModalOpen = false;
     // Only resume if still valid
-    if (wasRecording && currentSessionId) {
+    if (isRecording && currentSessionId) {
       // Validate session still exists
       const valid = await validateSession();
       if (valid) {
-        isRecording = true;
         updateRecordingIndicator('RECORDING');
       } else {
         window.Logger?.error('❌ Session invalidated during modal - stopping recording');
@@ -984,15 +1013,9 @@ function handleSubmit(event) {
     sendStepToBackground(stepData);
     window.Logger?.info('Submit captured:', fieldName);
   } catch (error) {
-    window.Logger?.error('❌ Error capturing click:', error);
-    // showErrorNotification('Failed to capture click: ' + error.message);
-    // Don't stop recording, just log and continue
+    window.Logger?.error('❌ Error capturing submit:', error);
   }
 }
-
-// Initialized in the __testSnapperInitialized guard block above (FUNC-001)
-var lastNavigationUrl;
-var isInitialNavigation;
 
 function captureNavigation() {
   if (!isRecording || isModalOpen) return;
@@ -1083,10 +1106,6 @@ function sendStepToBackground(stepData, isRetry) {
   });
 }
 
-// Store session settings so auto-screenshot continues after navigation
-// (Initialized in __testSnapperInitialized guard; declared here for hoisting)
-var sessionSettings;
-
 /**
  * Shared setup helper — called from both normal start and the async
  * session-fetch path to avoid the previously broken recursive startRecording call.
@@ -1122,6 +1141,11 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
   document.addEventListener('input', handleInput, { capture: true, signal: signal });
   document.addEventListener('change', handleChange, { capture: true, signal: signal });
   document.addEventListener('submit', handleSubmit, { capture: true, signal: signal });
+
+  // Pre-fetch iframe label context for cross-frame field name resolution (MED-010)
+  if (fieldNameResolver && typeof fieldNameResolver.initFrameContext === 'function') {
+    fieldNameResolver.initFrameContext();
+  }
 
   window.Logger?.debug('Starting timer with:', { startTime: startTime, now: Date.now() });
   addRecordingIndicator(startTime);
@@ -1230,6 +1254,8 @@ function stopRecording() {
   if (!isRecording && !currentSessionId) return;
 
   isRecording = false;
+  isPaused = false;
+  isModalOpen = false;
   currentSessionId = null;
 
   // Clear validation interval
@@ -1443,8 +1469,9 @@ function addRecordingIndicator(startTime = Date.now()) {
     initialX = e.clientX - rect.left;
     initialY = e.clientY - rect.top;
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    const dragSignal = eventListenerController ? { signal: eventListenerController.signal } : {};
+    document.addEventListener('mousemove', handleMouseMove, dragSignal);
+    document.addEventListener('mouseup', handleMouseUp, dragSignal);
   };
 
   const handleMouseMove = (e) => {
@@ -1585,18 +1612,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
     }
 
-    case 'beforeScreenshot':
-      if (floatingPanelContainer) floatingPanelContainer.style.display = 'none';
-      document.querySelectorAll('[id^="testsnapper-"]').forEach(el => {
+    case 'beforeScreenshot': {
+      var hiddenEls = [];
+      document.querySelectorAll('[id^="testsnapper-"]').forEach(function(el) {
+        hiddenEls.push({ el: el, display: el.style.display });
         el.style.display = 'none';
       });
+      window.__testSnapperHiddenEls = hiddenEls;
       sendResponse({ success: true });
       break;
+    }
 
-    case 'afterScreenshot':
-      if (floatingPanelContainer) floatingPanelContainer.style.display = 'block';
+    case 'afterScreenshot': {
+      var toRestore = window.__testSnapperHiddenEls || [];
+      toRestore.forEach(function(entry) {
+        entry.el.style.display = entry.display;
+      });
+      window.__testSnapperHiddenEls = [];
       sendResponse({ success: true });
       break;
+    }
 
     // Visual feedback when rate limited
     case 'screenshotRateLimited':
@@ -1632,21 +1667,6 @@ if (window !== window.top) {
     }
 
     if (response && response.session) {
-      // Only restore in the tab that owns the session.
-      // background.js includes tabId in the response; compare here.
-      // If tabId is not yet returned by the background, we allow restore (safe degradation).
-      if (response.tabId) {
-        // We can't call chrome.tabs.getCurrent() in a content script, but we can
-        // compare with the tabId stored in the response since the background includes it.
-        // The background validates sender.tab.id === session.tabId in addStep too.
-        // We use location to detect if we're truly in the recorded tab's top frame:
-        // If the response contains a different tabId, skip restore.
-        // Note: content scripts don't have direct access to their own tabId without
-        // messaging. We use a heuristic: if response.tabId is provided and the
-        // document URL doesn't match the session's expected URL, skip.
-        // Full fix requires background to send tabId — for now we trust the background.
-      }
-
       window.Logger?.info('Restoring session state:', response.state, response.session);
       // Pass settings so auto-screenshot continues after page load.
       var settings = response.settings || response.session?.settings || {};

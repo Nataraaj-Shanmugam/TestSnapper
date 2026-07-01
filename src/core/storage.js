@@ -532,6 +532,10 @@ class StorageManager {
    * @throws {Error} If backup data structure is invalid
    */
   async importData(data) {
+    return this._enqueue(() => this._importDataLocked(data));
+  }
+
+  async _importDataLocked(data) {
     // Validate data structure
     if (!data || !data.meta || !Array.isArray(data.sessions)) {
       throw new Error('Invalid backup data structure');
@@ -611,7 +615,7 @@ class StorageManager {
   }
 
   // Alias used by background.js
-  async importAllData(data) { return this.importData(data); }
+  async importAllData(data) { return this._enqueue(() => this._importDataLocked(data)); }
 
   // ════════════════════════════════════════════════════════════════
   // Batch operations
@@ -991,9 +995,8 @@ class StorageManager {
 
       if (idx === -1) throw new Error(`Session ${sessionId} not found`);
 
+      // _writeSteps already calls _cacheSteps internally — no separate delete needed (LOW-006)
       await this._writeSteps(sessionId, steps);
-      // FIX: PERF-005 — invalidate cache on bulk replace
-      this._stepsCache.delete(sessionId);
 
       // Update session step count
       sessions[idx].stepCount = steps.length;

@@ -51,6 +51,9 @@ export function _isConsecutiveDuplicate(stepData, lastStep) {
     return false;
   }
 
+  // For apicall steps, different status codes (200 vs 500) are distinct events (LOW-007)
+  if (stepData.action === 'apicall' && stepData.apiStatus !== lastStep.apiStatus) return false;
+
   // Compare selector CSS if both have one
   const prevCss = lastStep.selector?.css || '';
   const currCss = stepData.selector?.css || '';

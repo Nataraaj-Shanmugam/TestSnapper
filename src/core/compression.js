@@ -135,7 +135,7 @@ export async function decompress(compressedString) {
         const jsonString = decoder.decode(decompressed);
         return JSON.parse(jsonString);
     } catch (error) {
-        console.error('Decompression failed:', error);
+        Logger.error('Decompression failed:', error);
         // Try to return original if decompression fails
         if (typeof compressedString === 'string') {
             try {

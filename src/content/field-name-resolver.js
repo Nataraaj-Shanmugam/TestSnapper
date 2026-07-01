@@ -176,8 +176,18 @@ var FieldNameResolver = (function () {
     // 1e. Adjacent label in parent/sibling structure (Bootstrap, Tailwind)
     var parent = element.parentElement;
     if (parent) {
-      var siblingLabel = parent.querySelector('label');
-      if (siblingLabel && !siblingLabel.contains(element)) {
+      // Only return a label that is explicitly associated with this element
+      var siblingLabel = element.id
+        ? parent.querySelector('label[for="' + element.id + '"]')
+        : null;
+      if (!siblingLabel) {
+        // Fall back to first label whose .control points here
+        var allLabels = parent.querySelectorAll('label');
+        for (var li = 0; li < allLabels.length; li++) {
+          if (allLabels[li].control === element) { siblingLabel = allLabels[li]; break; }
+        }
+      }
+      if (siblingLabel) {
         return this._extractLabelText(siblingLabel);
       }
 
@@ -206,18 +216,11 @@ var FieldNameResolver = (function () {
 
     var ariaLabelledBy = element.getAttribute('aria-labelledby');
     if (ariaLabelledBy) {
-      var labelElement = document.getElementById(ariaLabelledBy);
-      if (labelElement) {
-        return labelElement.innerText || labelElement.textContent;
-      }
-    }
-
-    var ariaDescribedBy = element.getAttribute('aria-describedby');
-    if (ariaDescribedBy) {
-      var descElement = document.getElementById(ariaDescribedBy);
-      if (descElement) {
-        return descElement.innerText || descElement.textContent;
-      }
+      var labelText = ariaLabelledBy.trim().split(/\s+/).map(function(id) {
+        var el = document.getElementById(id);
+        return el ? (el.innerText || el.textContent || '').trim() : '';
+      }).filter(Boolean).join(' ');
+      if (labelText) return labelText;
     }
 
     return null;
@@ -251,11 +254,19 @@ var FieldNameResolver = (function () {
       }
     }
 
-    // role="group" with aria-label
+    // role="group" with aria-label or aria-labelledby (LOW-013)
     var groupRole = element.closest('[role="group"]');
     if (groupRole) {
       var groupLabel = groupRole.getAttribute('aria-label');
       if (groupLabel) return groupLabel;
+      var groupLabelledBy = groupRole.getAttribute('aria-labelledby');
+      if (groupLabelledBy) {
+        var groupLabelText = groupLabelledBy.trim().split(/\s+/).map(function(id) {
+          var el = document.getElementById(id);
+          return el ? (el.innerText || el.textContent || '').trim() : '';
+        }).filter(Boolean).join(' ');
+        if (groupLabelText) return groupLabelText;
+      }
     }
 
     return null;
@@ -289,7 +300,10 @@ var FieldNameResolver = (function () {
     var tag = element.tagName.toLowerCase();
 
     if (tag === 'button' || tag === 'a') {
-      return element.innerText || element.textContent;
+      var raw = element.innerText || element.textContent || '';
+      // Strip PUA characters used by icon fonts (FontAwesome, Material Icons, etc.) (MED-009)
+      var cleaned = raw.replace(/[-]/g, '').trim();
+      return cleaned.length > 0 ? cleaned : null;
     }
 
     // SVG icon label from title
@@ -319,7 +333,7 @@ var FieldNameResolver = (function () {
     var text = element.innerText || element.textContent;
     if (text && text.trim()) {
       var trimmed = text.trim();
-      if (trimmed.length < 100) return trimmed;
+      if (trimmed.length < 50) return trimmed; // 50-char cap prevents paragraph-length labels (LOW-014)
     }
 
     return null;
@@ -336,9 +350,16 @@ var FieldNameResolver = (function () {
     var rect = element.getBoundingClientRect();
     var candidates = [];
 
-    // Walk through all text nodes in parent container
+    // Limit root to closest form/fieldset/section ancestor (max 3 levels) to avoid
+    // walking large subtrees on complex pages (MED-007).
+    var root = element.parentElement;
+    for (var lvl = 0; lvl < 3 && root && root.parentElement; lvl++) {
+      if (/^(form|fieldset|section|article|aside|main|header|footer|li)$/i.test(root.tagName)) break;
+      root = root.parentElement;
+    }
+
     var walker = document.createTreeWalker(
-      element.parentElement || document.body,
+      root || document.body,
       NodeFilter.SHOW_TEXT,
       null,
       false
@@ -346,9 +367,10 @@ var FieldNameResolver = (function () {
 
     var node;
     while (node = walker.nextNode()) {
+      // Skip text nodes that belong to the element itself (MED-032)
+      if (element.contains(node.parentElement)) continue;
       var text = node.textContent.trim();
       if (text && text.length > 2 && text.length < 100 && !GENERIC_NAMES.has(text.toLowerCase())) {
-        // Calculate distance to element
         var nodeRect = node.parentElement.getBoundingClientRect();
         var distance = Math.hypot(
           nodeRect.left - rect.left,

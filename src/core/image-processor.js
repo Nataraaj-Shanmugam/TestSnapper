@@ -150,8 +150,8 @@ export const ImageProcessor = {
 
     if (useOffscreen) {
       try {
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
+        // Decode data URL directly to avoid fetch() memory double (HIGH-017)
+        const blob = ImageProcessor._dataUrlToBlob(dataUrl);
         const bitmap = await createImageBitmap(blob);
 
         let { width, height } = bitmap;
@@ -164,17 +164,19 @@ export const ImageProcessor = {
         }
 
         const canvas = new OffscreenCanvas(width, height);
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d'); // alpha:false removed — blackens transparent pixels
         ctx.drawImage(bitmap, 0, 0, width, height);
 
         const compressedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
 
-        // Convert blob to dataUrl
-        const reader = new FileReader();
-        const compressedDataUrl = await new Promise((resolve) => {
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(compressedBlob);
-        });
+        // Convert blob to dataUrl without FileReader (unavailable in SW)
+        const buf = await compressedBlob.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        const compressedDataUrl = `data:image/jpeg;base64,${btoa(binary)}`;
 
         bitmap.close();
         Logger.debug(`🗜️ Image compressed (Offscreen): ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
@@ -234,8 +236,8 @@ export const ImageProcessor = {
 
   async _processImageOffscreen(dataUrl, maxWidth, maxHeight, quality, format) {
     try {
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
+      // Decode data URL directly to avoid fetch() memory double (HIGH-017)
+      const blob = ImageProcessor._dataUrlToBlob(dataUrl);
       const bitmap = await createImageBitmap(blob);
 
       const { width: imgWidth, height: imgHeight } = bitmap;
@@ -245,7 +247,8 @@ export const ImageProcessor = {
       const canvasHeight = Math.floor(imgHeight * scale);
 
       const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
-      const ctx = canvas.getContext('2d', { alpha: false });
+      // alpha:false removed — it blackens transparent pixels (HIGH-018)
+      const ctx = canvas.getContext('2d', { willReadFrequently: format === 'auto' });
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(bitmap, 0, 0, canvasWidth, canvasHeight);
@@ -259,18 +262,17 @@ export const ImageProcessor = {
       let outputBlob;
       if (outputFormat === 'png') {
         outputBlob = await canvas.convertToBlob({ type: 'image/png' });
+        // Safety: if auto-selected PNG is >3x larger than JPEG, use JPEG (MED-017: only encode JPEG when needed)
+        if (format === 'auto') {
+          const jpegBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+          if (outputBlob.size > jpegBlob.size * 3) {
+            outputBlob = jpegBlob;
+            outputFormat = 'jpeg';
+          }
+        }
       } else {
         outputBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
         outputFormat = 'jpeg';
-      }
-
-      // Safety: if auto-selected PNG is >3x larger than JPEG, use JPEG
-      if (format === 'auto' && outputFormat === 'png') {
-        const jpegBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
-        if (outputBlob.size > jpegBlob.size * 3) {
-          outputBlob = jpegBlob;
-          outputFormat = 'jpeg';
-        }
       }
 
       bitmap.close();
@@ -295,23 +297,25 @@ export const ImageProcessor = {
 
       img.onload = () => {
         try {
-          const scale = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
-          const canvasWidth = Math.floor(img.width * scale);
-          const canvasHeight = Math.floor(img.height * scale);
+          const imgWidth = img.width;   // LOW-028: capture before img.src = '' clears them
+          const imgHeight = img.height;
+          const scale = Math.min(maxWidth / imgWidth, maxHeight / imgHeight, 1);
+          const canvasWidth = Math.floor(imgWidth * scale);
+          const canvasHeight = Math.floor(imgHeight * scale);
 
           const canvas = document.createElement('canvas');
           canvas.width = canvasWidth;
           canvas.height = canvasHeight;
 
-          const ctx = canvas.getContext('2d', { alpha: false });
+          const ctx = canvas.getContext('2d'); // alpha:false removed — blackens transparent pixels
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
 
           // Step-down scaling for large reductions (better quality)
-          if (canvasWidth < img.width * 0.5) {
+          if (canvasWidth < imgWidth * 0.5) {
             const tempCanvas = document.createElement('canvas');
-            const intermediateWidth = Math.floor(img.width * 0.7);
-            const intermediateHeight = Math.floor(img.height * 0.7);
+            const intermediateWidth = Math.floor(imgWidth * 0.7);
+            const intermediateHeight = Math.floor(imgHeight * 0.7);
             tempCanvas.width = intermediateWidth;
             tempCanvas.height = intermediateHeight;
             const tempCtx = tempCanvas.getContext('2d');
@@ -354,7 +358,7 @@ export const ImageProcessor = {
             canvas.width = 0;
             canvas.height = 0;
             img.src = '';
-            Logger.debug(`📐 Export image: ${img.width || canvasWidth}x${img.height || canvasHeight} → ${canvasWidth}x${canvasHeight} [jpeg]`);
+            Logger.debug(`📐 Export image: ${imgWidth}x${imgHeight} → ${canvasWidth}x${canvasHeight} [jpeg]`);
             resolve({ dataUrl: jpegDataUrl, width: canvasWidth, height: canvasHeight, format: 'jpeg' });
           }
         } catch (error) {
@@ -373,4 +377,20 @@ export const ImageProcessor = {
     });
   }
 
+};
+
+/**
+ * Decode a data URL directly to a Blob without a fetch() round-trip.
+ * Avoids holding both the base64 string and the decoded byte array in memory
+ * simultaneously (HIGH-017).
+ * @param {string} dataUrl
+ * @returns {Blob}
+ */
+ImageProcessor._dataUrlToBlob = function(dataUrl) {
+  const commaIdx = dataUrl.indexOf(',');
+  const header = dataUrl.substring(0, commaIdx);
+  const mime = header.split(':')[1].split(';')[0];
+  const b64 = dataUrl.substring(commaIdx + 1);
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  return new Blob([bytes], { type: mime });
 };

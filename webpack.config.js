@@ -58,21 +58,18 @@ module.exports = {
           }
         },
 
-        // Source files (non-bundled)
+        // Source files (non-bundled, loaded as ES modules by the browser).
+        // Chrome 91+ natively supports all syntax used; minimum_chrome_version
+        // in manifest.json enforces this (MED-025).
         { from: 'src/content', to: 'src/content' },
         { from: 'src/ui', to: 'src/ui' },
         { from: 'src/core', to: 'src/core' },
-        // storage.js moved to src/core/storage.js (covered by src/core copy above)
-        // export.js removed (dead code — superseded by ExportService)
 
         // Assets
         { from: 'src/assets', to: 'src/assets', noErrorOnMissing: true },
 
         // Libraries
         { from: 'libs', to: 'libs', noErrorOnMissing: true },
-
-        // Documentation
-        { from: 'docs', to: 'docs', noErrorOnMissing: true },
       ]
     })
   ],

@@ -18,6 +18,15 @@ import { Logger } from './logger.js';
 
 const PENDING_INDEX_KEY = 'testsnapper_pending_index';
 
+// In-process mutex: serializes RMW operations within a single context (MED-002).
+// Cross-context races (SW + window) are inherently improbable given single-actor
+// flush cadence; within-context races (concurrent addPendingFlush calls) are covered.
+let _mutex = Promise.resolve();
+function _withMutex(fn) {
+  _mutex = _mutex.then(fn, fn);
+  return _mutex;
+}
+
 /**
  * Read the pending-index array from storage.
  * @private
@@ -40,27 +49,32 @@ export async function getPendingFlush() {
 /**
  * Mark a sessionId as needing a filesystem flush.
  * No-op on a falsy id. Deduplicates: an id already present is not added again.
+ * Serialized through the in-process mutex to prevent RMW races (MED-002).
  * @param {string} sessionId
  * @returns {Promise<void>}
  */
-export async function addPendingFlush(sessionId) {
-  if (!sessionId) return;
-  const index = await _readIndex();
-  if (index.includes(sessionId)) return;
-  index.push(sessionId);
-  await chrome.storage.local.set({ [PENDING_INDEX_KEY]: index });
+export function addPendingFlush(sessionId) {
+  if (!sessionId) return Promise.resolve();
+  return _withMutex(async () => {
+    const index = await _readIndex();
+    if (index.includes(sessionId)) return;
+    index.push(sessionId);
+    await chrome.storage.local.set({ [PENDING_INDEX_KEY]: index });
+  });
 }
 
 /**
  * Remove a sessionId from the pending-flush set after a successful flush.
- * No-op on a falsy id.
+ * No-op on a falsy id. Serialized through the in-process mutex (MED-002).
  * @param {string} sessionId
  * @returns {Promise<void>}
  */
-export async function removePendingFlush(sessionId) {
-  if (!sessionId) return;
-  const index = await _readIndex();
-  const next = index.filter(id => id !== sessionId);
-  if (next.length === index.length) return; // nothing to remove
-  await chrome.storage.local.set({ [PENDING_INDEX_KEY]: next });
+export function removePendingFlush(sessionId) {
+  if (!sessionId) return Promise.resolve();
+  return _withMutex(async () => {
+    const index = await _readIndex();
+    const next = index.filter(id => id !== sessionId);
+    if (next.length === index.length) return;
+    await chrome.storage.local.set({ [PENDING_INDEX_KEY]: next });
+  });
 }

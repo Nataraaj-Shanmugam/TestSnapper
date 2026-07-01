@@ -12,12 +12,15 @@
  *     stay pinned to the top of the card regardless of screenshot height.
  */
 
-import { StorageManager } from '../../core/storage.js';
+import { FSStorageManager } from '../../core/fs-storage.js';
+import { ExportService } from '../../core/export-service.js';
 import { Utils } from '../../core/utils.js';
+import { setupTheme, applyTheme } from '../theme.js';
 
 // ==================== Initialize Services ====================
 
-const storage = new StorageManager();
+const storage = new FSStorageManager();
+const exportService = new ExportService(storage);
 
 let sessionId = null;
 let sessionData = null;
@@ -114,40 +117,6 @@ async function init() {
   } catch (error) {
     console.error('Initialization failed:', error);
     showMessage('Failed to initialize: ' + error.message, 'error');
-  }
-}
-
-function setupTheme() {
-  // UX-006: Apply theme immediately to prevent flash; localStorage is the fast mirror
-  const savedTheme = localStorage.getItem('theme');
-  const initialTheme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  applyTheme(initialTheme);
-
-  const themeToggle = document.getElementById('themeToggle');
-  if (!themeToggle) return;
-
-  themeToggle.addEventListener('click', () => {
-    const currentTheme = document.body.dataset.theme || 'light';
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    applyTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
-    // Also persist to chrome.storage as secondary mirror
-    try {
-      chrome.storage.local.set({ theme: newTheme });
-    } catch (e) { /* non-critical */ }
-  });
-}
-
-function applyTheme(theme) {
-  const iconEl = document.querySelector('#themeToggle .icon');
-  document.body.dataset.theme = theme;
-
-  if (iconEl) {
-    if (theme === 'light') {
-      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
-    } else {
-      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
-    }
   }
 }
 
@@ -351,6 +320,7 @@ async function loadSession() {
     history = [];
     historyIndex = -1;
     if (stepsData.length > 0) {
+      sessionData.stepCount = stepsData.length; // LOW-027: sync stepCount before initial snapshot
       saveToHistory('initial');
     } else {
       updateHistoryButtons();
@@ -427,19 +397,11 @@ function filterSteps() {
 function saveToHistory(actionLabel) {
   // PERF-018: structuredClone is faster and handles more types than JSON round-trip
   const snapshot = structuredClone(stepsData);
-
-  // Truncate future if we are in the middle
-  if (historyIndex < history.length - 1) {
-    history = history.slice(0, historyIndex + 1);
-  }
-
   history.push({ action: actionLabel, steps: snapshot });
 
   // Adaptive cap: keep fewer snapshots for large sessions
   const cap = stepsData.length > 200 ? 20 : MAX_HISTORY;
-  if (history.length > cap) {
-    history.shift();
-  }
+  if (history.length > cap) history.shift();
 
   historyIndex = history.length - 1;
   updateHistoryButtons();
@@ -794,18 +756,13 @@ function handleScreenshotUpload(event) {
 }
 
 function processScreenshotFile(file) {
+  // Store the File directly so handleConfirmAddStep doesn't race on an async fetch (LOW-025)
+  newStepScreenshotBlob = file;
   const reader = new FileReader();
   reader.onload = (e) => {
     screenshotPreview.src = e.target.result;
     screenshotPreview.style.display = 'block';
     screenshotUpload.classList.add('has-image');
-
-    // Convert to blob
-    fetch(e.target.result)
-      .then(res => res.blob())
-      .then(blob => {
-        newStepScreenshotBlob = blob;
-      });
   };
   reader.readAsDataURL(file);
 }
@@ -1080,7 +1037,6 @@ function handleExportProgress(message) {
 }
 
 async function handleSaveAndExport() {
-  showProgressModal();
   try {
     showMessage('Saving changes...', 'info');
     await saveSessionName();
@@ -1088,22 +1044,31 @@ async function handleSaveAndExport() {
     const format = exportFormatSelect.value;
     showMessage(`Exporting as ${format.toUpperCase()}...`, 'info');
 
-    const response = await chrome.runtime.sendMessage({
-      action: 'exportSession',
-      sessionId: sessionId,
-      format: format
+    const result = await exportService.exportSession(sessionId, format, (progress) => {
+      if (progress.status) showMessage(progress.status, 'info');
     });
 
-    if (response && response.success) {
-      showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
-    } else if (response && !response.success) {
-      throw new Error(response.error || 'Export failed');
+    let downloadUrl;
+    const filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+
+    if (result.blob) {
+      downloadUrl = URL.createObjectURL(result.blob);
+    } else {
+      const utf8Bytes = new TextEncoder().encode(result.content);
+      let binary = '';
+      for (let i = 0; i < utf8Bytes.length; i += 0x8000) {
+        binary += String.fromCharCode.apply(null, utf8Bytes.subarray(i, i + 0x8000));
+      }
+      downloadUrl = `data:${result.mimeType};charset=utf-8;base64,${btoa(binary)}`;
     }
+
+    await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
+    if (result.blob) URL.revokeObjectURL(downloadUrl);
+
+    showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
   } catch (error) {
     console.error('Save and export failed:', error);
     showMessage('Failed: ' + error.message, 'error');
-  } finally {
-    hideProgressModal();
   }
 }
 

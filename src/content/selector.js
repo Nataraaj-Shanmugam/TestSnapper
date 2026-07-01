@@ -236,11 +236,12 @@ class SelectorEngine {
       }
 
       // XPath version
+      const xpathId = `//*[@id=${this._escapeXPathValue(element.id)}]`;
       candidates.push({
-        selector: `//*[@id="${element.id}"]`,
+        selector: xpathId,
         type: 'xpath-id',
         strategy: 'ID (XPath)',
-        isUnique: true,
+        isUnique: this._isUniqueXPath(xpathId, element), // verify — pages may have duplicate IDs (LOW-017)
         length: 8 + element.id.length,
         penalty: this._isGeneratedId(element.id) ? 30 : 0
       });
@@ -279,25 +280,31 @@ class SelectorEngine {
   }
 
   _addTestIdSelectors(element, candidates) {
-    const testId = element.dataset.testid || element.getAttribute('data-test-id') ||
-      element.getAttribute('data-cy') || element.getAttribute('data-testid');
+    const attrs = [
+      ['data-testid', element.getAttribute('data-testid') || element.dataset.testid],
+      ['data-test-id', element.getAttribute('data-test-id')],
+      ['data-cy', element.getAttribute('data-cy')],
+    ];
 
-    if (testId) {
+    for (const [attrName, testId] of attrs) {
+      if (!testId) continue;
+      const cssSelector = `[${attrName}="${testId}"]`;
+      const xpathSelector = `//*[@${attrName}=${this._escapeXPathValue(testId)}]`;
       candidates.push({
-        selector: `[data-testid="${testId}"]`,
+        selector: cssSelector,
         type: 'css-testid',
-        strategy: 'data-testid',
-        isUnique: this._isUnique(`[data-testid="${testId}"]`, element),
-        length: 17 + testId.length
+        strategy: attrName,
+        isUnique: this._isUnique(cssSelector, element),
+        length: cssSelector.length
       });
-
       candidates.push({
-        selector: `//*[@data-testid="${testId}"]`,
+        selector: xpathSelector,
         type: 'xpath-testid',
-        strategy: 'data-testid (XPath)',
-        isUnique: true,
-        length: 20 + testId.length
+        strategy: `${attrName} (XPath)`,
+        isUnique: this._isUniqueXPath(xpathSelector, element),
+        length: xpathSelector.length
       });
+      break; // use the first matched attribute
     }
   }
 
@@ -314,7 +321,7 @@ class SelectorEngine {
       });
 
       candidates.push({
-        selector: `//${tag}[@name="${element.name}"]`,
+        selector: `//${tag}[@name=${this._escapeXPathValue(element.name)}]`,
         type: 'xpath-name',
         strategy: 'name (XPath)',
         isUnique: this._isUnique(selector, element),
@@ -381,18 +388,8 @@ class SelectorEngine {
     // React detection
     const hasReactProps = Object.keys(element).some(k => k.startsWith('__react'));
     if (hasReactProps) {
-      // Check for React-specific attributes
-      ['data-reactid', 'data-react-checksum', 'data-reactroot'].forEach(attr => {
-        if (element.hasAttribute(attr)) {
-          candidates.push({
-            selector: `[${attr}="${element.getAttribute(attr)}"]`,
-            type: 'react-attr',
-            strategy: 'React',
-            isUnique: this._isUnique(`[${attr}="${element.getAttribute(attr)}"]`, element),
-            length: attr.length + element.getAttribute(attr).length + 4
-          });
-        }
-      });
+      // React 15 attributes (data-reactid, data-reactroot) are obsolete since React 16 (2017).
+      // Modern React uses __reactFiber — detected above; no attribute candidates needed (LOW-012).
     }
 
     // Vue detection
@@ -411,15 +408,16 @@ class SelectorEngine {
         });
       }
 
-      // Other v- attributes
+      // Other v- attributes (skip `:` shorthand — colon is invalid in CSS selectors)
       Array.from(element.attributes).forEach(attr => {
-        if (attr.name.startsWith('v-') || attr.name.startsWith(':')) {
+        if (attr.name.startsWith('v-') && !attr.name.startsWith(':')) {
+          const sel = `[${attr.name}="${attr.value}"]`;
           candidates.push({
-            selector: `[${attr.name}="${attr.value}"]`,
+            selector: sel,
             type: 'vue-attr',
             strategy: 'Vue',
-            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
-            length: attr.name.length + attr.value.length + 4
+            isUnique: this._isUnique(sel, element),
+            length: sel.length
           });
         }
       });
@@ -431,67 +429,75 @@ class SelectorEngine {
       element.hasAttribute('ng-click') ||
       element.hasAttribute('(click)');
     if (hasAngular) {
-      // ng-model / [ngModel] is most stable
+      // ng-model / [ngModel] is most stable — escape brackets for valid CSS
       const ngModel = element.getAttribute('ng-model') || element.getAttribute('[ngModel]');
       if (ngModel) {
+        const sel = `[ng-model="${ngModel}"]`;
         candidates.push({
-          selector: `[ng-model="${ngModel}"], [[ngModel]="${ngModel}"]`,
+          selector: sel,
           type: 'angular-model',
           strategy: 'Angular',
-          isUnique: true, // ng-model is usually unique
-          length: ngModel.length + 14
+          isUnique: this._isUnique(sel, element),
+          length: sel.length
         });
       }
 
-      // Other ng- attributes
+      // Other ng- attributes (escape special chars using CSS.escape)
+      const cssEscape = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape.bind(CSS) : (s) => s;
       Array.from(element.attributes).forEach(attr => {
-        if (attr.name.startsWith('ng-') || attr.name.startsWith('[ng') ||
-          attr.name.startsWith('(') || attr.name.startsWith('*ng')) {
+        // Skip bracket-syntax (e.g. [ngModel]) and event-binding (e.g. (click)) —
+        // these contain [ ] ( ) which produce invalid CSS selectors.
+        if (attr.name.startsWith('ng-') || attr.name.startsWith('*ng')) {
+          const sel = `[${cssEscape(attr.name)}="${attr.value}"]`;
           candidates.push({
-            selector: `[${attr.name}="${attr.value}"]`,
+            selector: sel,
             type: 'angular-attr',
             strategy: 'Angular',
-            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
-            length: attr.name.length + attr.value.length + 4
+            isUnique: this._isUnique(sel, element),
+            length: sel.length
           });
         }
       });
     }
 
-    // Svelte detection
+    // Svelte detection — escape colon in attribute names for valid CSS
     const hasSvelte = element.__svelte_meta ||
       element.hasAttribute('bind:value') ||
       element.hasAttribute('on:click') ||
       element.hasAttribute('use:');
     if (hasSvelte) {
+      const cssEscSvelte = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape.bind(CSS) : (s) => s;
       Array.from(element.attributes).forEach(attr => {
         if (attr.name.startsWith('bind:') || attr.name.startsWith('on:') ||
             attr.name.startsWith('use:') || attr.name.startsWith('class:')) {
+          const sel = `[${cssEscSvelte(attr.name)}="${attr.value}"]`;
           candidates.push({
-            selector: `[${attr.name}="${attr.value}"]`,
+            selector: sel,
             type: 'svelte-attr',
             strategy: 'Svelte',
-            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
-            length: attr.name.length + attr.value.length + 4
+            isUnique: this._isUnique(sel, element),
+            length: sel.length
           });
         }
       });
     }
 
-    // Solid.js detection
+    // Solid.js detection — escape colon in attribute names for valid CSS
     const hasSolid = element._$owner || // Solid's internal marker
       element.hasAttribute('use:') ||
       Array.from(element.attributes).some(attr => attr.name.startsWith('prop:'));
     if (hasSolid) {
+      const cssEscSolid = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape.bind(CSS) : (s) => s;
       Array.from(element.attributes).forEach(attr => {
         if (attr.name.startsWith('use:') || attr.name.startsWith('prop:') ||
             attr.name.startsWith('on:') || attr.name.startsWith('attr:')) {
+          const sel = `[${cssEscSolid(attr.name)}="${attr.value}"]`;
           candidates.push({
-            selector: `[${attr.name}="${attr.value}"]`,
+            selector: sel,
             type: 'solid-attr',
             strategy: 'Solid',
-            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
-            length: attr.name.length + attr.value.length + 4
+            isUnique: this._isUnique(sel, element),
+            length: sel.length
           });
         }
       });
@@ -510,8 +516,10 @@ class SelectorEngine {
 
     if (!className) return;
 
+    // Case-insensitive, unanchored filter to catch state classes in compound names (LOW-018)
+    const STATE_CLASS_RE = /(ng-|is-|has-|active|selected|focus|hover|disabled)/i;
     const classes = className.trim().split(/\s+/)
-      .filter(c => c && !c.match(/^(ng-|is-|has-|active|selected|focus|hover|disabled)/));
+      .filter(c => c && !STATE_CLASS_RE.test(c));
 
     if (classes.length === 0) return;
 
@@ -549,9 +557,10 @@ class SelectorEngine {
 
     if (!text || text.length > 50) return;
 
-    if (['button', 'a', 'span', 'div'].includes(tag)) {
+    // Broadened tag list: rely on 50-char limit for quality control (LOW-019)
+    if (['button', 'a', 'span', 'div', 'li', 'td', 'th', 'label', 'p', 'h1', 'h2', 'h3'].includes(tag)) {
       // CSS with :contains-like approach (not standard, but documented)
-      const xpathText = `//${tag}[contains(text(), "${text.substring(0, 30)}")]`;
+      const xpathText = `//${tag}[contains(text(), ${this._escapeXPathValue(text.substring(0, 30))})]`;
       candidates.push({
         selector: xpathText,
         type: 'xpath-text',
@@ -561,7 +570,7 @@ class SelectorEngine {
       });
 
       // Exact text match
-      const xpathExact = `//${tag}[text()="${text}"]`;
+      const xpathExact = `//${tag}[text()=${this._escapeXPathValue(text)}]`;
       candidates.push({
         selector: xpathExact,
         type: 'xpath-text-exact',
@@ -627,11 +636,14 @@ class SelectorEngine {
 
   _addXPathAbsolute(element, candidates) {
     const xpath = this._generateAbsoluteXPath(element);
+    // CAUTION (LOW-020): positional indexes ([2]) break when siblings are added/removed.
+    // Presented as last-resort fallback only — use attribute-based selectors when available.
     candidates.push({
       selector: xpath,
       type: 'xpath-absolute',
       strategy: 'absolute-xpath',
       isUnique: true,
+      isStable: false, // positional XPath is fragile
       length: xpath.length
     });
   }
@@ -722,11 +734,26 @@ class SelectorEngine {
   }
 
   /**
-   * Check if class looks generated/dynamic
+   * Safely wrap a value for use in an XPath string literal (MED-011).
+   * Handles values containing single quotes, double quotes, or both.
+   */
+  _escapeXPathValue(str) {
+    if (!str.includes("'")) return `'${str}'`;
+    if (!str.includes('"')) return `"${str}"`;
+    return "concat('" + str.split("'").join("',\"'\",'") + "')";
+  }
+
+  /**
+   * Check if class looks generated/dynamic (MED-012).
+   * Checks each class individually; catches CSS Modules, emotion, styled-components,
+   * MUI, Ant Design, and hash-suffixed class names.
    */
   _isGeneratedClass(className) {
-    // Check for CSS modules, emotion, styled-components patterns
-    return /^(_|css-|sc-|makeStyles|jss\d)/.test(className);
+    const clsStr = typeof className === 'string' ? className : (className.baseVal || '');
+    return clsStr.trim().split(/\s+/).some(cls =>
+      /^(_|css-|sc-|makeStyles|jss\d|emotion-|chakra-|ant-|Mui[A-Z])/.test(cls) ||
+      /^[a-zA-Z][a-zA-Z0-9_-]*_[a-zA-Z0-9]{5,}$/.test(cls) // CSS Modules: Name_class__hash
+    );
   }
 
   _addNthSelectors(element, candidates) {

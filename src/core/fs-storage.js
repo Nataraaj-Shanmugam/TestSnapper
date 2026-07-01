@@ -224,8 +224,12 @@ export class FSStorageManager {
    */
   async createSession(sessionData) {
     if (this._isServiceWorker) {
+      // createSession must succeed before we mark pending flush — if it throws,
+      // no stale entry is added (MED-003).
       const session = await this._buffer.createSession(sessionData);
-      await addPendingFlush(sessionData.sessionId);
+      await addPendingFlush(sessionData.sessionId).catch(e =>
+        Logger.warn('Failed to mark pending flush for session:', sessionData.sessionId, e)
+      );
       return session;
     }
 

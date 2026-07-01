@@ -37,18 +37,19 @@ class Redactor {
       /date[_-]?of[_-]?birth/i,
       /birthdate/i,
       /tax[_-]?id/i,
-      /ein/i,
+      /\bein\b/i,
       /driver[_-]?license/i,
       /passport/i
     ];
 
     // PII detection patterns — stored WITHOUT /g to avoid lastIndex state.
     // /g is added inline only where .replace() needs global replacement.
-    this.emailPattern = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
+    // Negative lookbehind: skip emails in URLs (//user@host) and templates ({{email@…}})
+    this.emailPattern = /(?<![/:{])\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
     this.phonePattern = /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/;
     this.creditCardPattern = /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/;
     this.ssnPattern = /\b\d{3}-\d{2}-\d{4}\b/;
-    this.routingPattern = /\b\d{9}\b/; // 9 digit routing numbers
+    this._routingPattern = /\b\d{9}\b/; // private — only valid in financial field context (LOW-016)
     this.dobPattern = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/; // MM/DD/YYYY or MM-DD-YY
 
     // Pre-compile /g variants once to avoid per-call RegExp construction.
@@ -56,7 +57,7 @@ class Redactor {
     this._phonePatternG = new RegExp(this.phonePattern.source, 'g');
     this._creditCardPatternG = new RegExp(this.creditCardPattern.source, 'g');
     this._ssnPatternG = new RegExp(this.ssnPattern.source, 'g');
-    this._routingPatternG = new RegExp(this.routingPattern.source, 'g');
+    this._routingPatternG = new RegExp(this._routingPattern.source, 'g');
     this._dobPatternG = new RegExp(this.dobPattern.source, 'g');
   }
 
@@ -70,13 +71,13 @@ class Redactor {
 
     if (element.dataset.sensitive === 'true' || element.dataset.sensitive === '') return true;
 
-    // Concatenate all labeling attributes and test against sensitive keywords
+    // Concatenate labeling attributes only — class names excluded to avoid
+    // false positives on utility classes like "auth-button" or "token-input-wrapper"
     const attributes = [
       element.name,
       element.id,
       element.placeholder,
-      element.getAttribute('aria-label'),
-      element.className
+      element.getAttribute('aria-label')
     ].filter(Boolean).join(' ');
 
     return this.sensitivePatterns.some(pattern => pattern.test(attributes));
@@ -126,7 +127,7 @@ class Redactor {
       }
     );
 
-    // Mask phone numbers
+    // Mask phone numbers unconditionally — same policy as SSN and credit card
     this._phonePatternG.lastIndex = 0;
     result = result.replace(this._phonePatternG, '***-***-****');
 
@@ -154,9 +155,10 @@ class Redactor {
       result = result.replace(this._routingPatternG, '*********');
     }
 
-    // Mask dates of birth
+    // Mask dates of birth with length-accurate year mask (LOW-015)
     this._dobPatternG.lastIndex = 0;
-    result = result.replace(this._dobPatternG, '**/**/****');
+    result = result.replace(this._dobPatternG, (match, month, day, year) =>
+      `**/**/${'*'.repeat(year.length)}`);
 
     return result;
   }
@@ -169,8 +171,12 @@ class Redactor {
 
     const redacted = { ...step };
 
-    if (redacted.value && redacted.isSensitive) {
-      redacted.value = '\u2022'.repeat(8); // ••••••••
+    if (redacted.value) {
+      if (redacted.isSensitive) {
+        redacted.value = '•'.repeat(8);
+      } else {
+        redacted.value = this.maskValue(redacted.value, null);
+      }
     }
 
     return redacted;

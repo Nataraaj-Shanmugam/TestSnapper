@@ -63,21 +63,6 @@ export const Utils = {
   },
 
   /**
-   * Download file in browser
-   */
-  downloadFile(content, filename, mimeType) {
-    const base64Content = btoa(unescape(encodeURIComponent(content)));
-    const dataUrl = `data:${mimeType};base64,${base64Content}`;
-
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  },
-
-  /**
    * Show toast message (for use in HTML pages)
    * UX-015: auto-dismiss all types; clear any stale timer to prevent race conditions
    */

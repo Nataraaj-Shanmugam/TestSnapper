@@ -96,10 +96,15 @@ export class QuotaMonitor {
 
   /**
    * Get current storage usage against the self-imposed budget.
+   * When unlimitedStorage is granted, uses 1 GB cap so percentages remain
+   * meaningful while not triggering spurious warnings (LOW-004).
    * @returns {Promise<{used: number, total: number, percentage: number, warning: boolean, error: boolean}>}
    */
   async getStorageUsage() {
     try {
+      const unlimited = await this._checkUnlimited();
+      const total = unlimited ? 1024 * 1024 * 1024 : this.maxBytes; // 1 GB cap for unlimited
+
       const bytesInUse = await new Promise((resolve, reject) =>
         chrome.storage.local.getBytesInUse(null, (bytes) => {
           if (chrome.runtime.lastError) return reject(chrome.runtime.lastError);
@@ -107,7 +112,6 @@ export class QuotaMonitor {
         })
       );
 
-      const total      = this.maxBytes;
       const used       = bytesInUse;
       const percentage = used / total;
 
@@ -121,35 +125,6 @@ export class QuotaMonitor {
     } catch (err) {
       Logger.error('[QuotaMonitor] Failed to get storage usage:', err);
       return { used: 0, total: this.maxBytes, percentage: 0, warning: false, error: false };
-    }
-  }
-
-  /**
-   * Check quota and send a warning notification if thresholds are exceeded.
-   * @returns {Promise<void>}
-   */
-  async checkAndNotify() {
-    const usage = await this.getStorageUsage();
-
-    if (usage.error) {
-      Logger.warn(`[QuotaMonitor] CRITICAL: ${(usage.percentage * 100).toFixed(1)}% of budget used.`);
-      // Broadcast to any open popup/review pages
-      try {
-        chrome.runtime.sendMessage({
-          action: 'storageQuotaWarning',
-          level: 'critical',
-          usage,
-        });
-      } catch { /* no listeners */ }
-    } else if (usage.warning) {
-      Logger.warn(`[QuotaMonitor] WARNING: ${(usage.percentage * 100).toFixed(1)}% of budget used.`);
-      try {
-        chrome.runtime.sendMessage({
-          action: 'storageQuotaWarning',
-          level: 'warning',
-          usage,
-        });
-      } catch { /* no listeners */ }
     }
   }
 }

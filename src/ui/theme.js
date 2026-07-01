@@ -8,7 +8,11 @@ const MOON_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" s
 
 export function applyTheme(theme) {
   const iconEl = document.querySelector('#themeToggle .icon');
+  // Sync both <html> and <body> so theme-init.js and theme.js stay consistent
+  document.documentElement.dataset.theme = theme;
   document.body.dataset.theme = theme;
+  document.documentElement.classList.toggle('dark-mode', theme === 'dark');
+  document.documentElement.classList.toggle('light-mode', theme !== 'dark');
   if (iconEl) {
     iconEl.innerHTML = theme === 'light' ? SUN_ICON : MOON_ICON;
   }

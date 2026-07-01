@@ -38,7 +38,8 @@ import { Logger } from './logger.js';
 export class ExportService {
   constructor(storage) {
     this.storage = storage;
-    this.cancelledExports = new Set(); // Track cancelled exports
+    this.cancelledExports = new Set();
+    this._imgOptsMap = new Map(); // per-session imgOpts, prevents cross-export races (MED-020)
     Logger.debug('ExportService initialized');
   }
 
@@ -95,16 +96,15 @@ export class ExportService {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
 
-    // Clear any previous cancellation
-    this._clearCancellation(sessionId);
-
-    // Resolve the user's export image-quality preference once per export.
-    this._imgOpts = await this._resolveExportImageOpts();
+    // Resolve per-session so concurrent exports don't share state (MED-020).
+    this._imgOptsMap.set(sessionId, await this._resolveExportImageOpts());
 
     Logger.info('Starting export:', format, 'for session:', sessionId);
 
-    // Check cancellation
+    // Check pre-cancellation (must come before _clearCancellation so
+    // cancelExport() called before exportSession() is actually honoured).
     if (this._isCancelled(sessionId)) {
+      this._clearCancellation(sessionId);
       throw new Error('Export cancelled');
     }
 
@@ -127,24 +127,33 @@ export class ExportService {
       steps: steps
     };
 
-    switch (format.toLowerCase()) {
-      case 'json':
-        notify({ percent: 90, status: 'Preparing JSON export...' });
-        return this._exportJSON(exportData, sessionId);
+    try {
+      switch (format.toLowerCase()) {
+        case 'json':
+          notify({ percent: 90, status: 'Preparing JSON export...' });
+          return this._exportJSON(exportData, sessionId);
 
-      case 'csv':
-        notify({ percent: 90, status: 'Preparing CSV export...' });
-        return this._exportCSV(exportData, sessionId);
+        case 'csv':
+          notify({ percent: 90, status: 'Preparing CSV export...' });
+          return this._exportCSV(exportData, sessionId);
 
-      case 'docx':
-        return await this._exportDOCX(exportData, sessionId, notify);
+        case 'docx':
+          return await this._exportDOCX(exportData, sessionId, notify);
 
-      case 'pdf':
-        notify({ percent: 90, status: 'Preparing PDF export...' });
-        return await this._exportPDF(exportData, sessionId);
+        case 'pdf':
+          notify({ percent: 90, status: 'Preparing PDF export...' });
+          return await this._exportPDF(exportData, sessionId, notify);
 
-      default:
-        throw new Error(`Unsupported format: ${format}`);
+        case 'markdown':
+          notify({ percent: 90, status: 'Preparing Markdown export...' });
+          return this._exportMarkdown(exportData, sessionId);
+
+        default:
+          throw new Error(`Unsupported format: ${format}`);
+      }
+    } finally {
+      this._clearCancellation(sessionId);
+      this._imgOptsMap.delete(sessionId);
     }
   }
 
@@ -206,94 +215,6 @@ export class ExportService {
       };
       reader.readAsDataURL(blob);
     });
-  }
-
-  async _compressImage(blob, maxWidth = 600, quality = 0.95) {
-    try {
-      const useOffscreen = typeof OffscreenCanvas !== 'undefined';
-
-      if (useOffscreen) {
-        const imageBitmap = await createImageBitmap(blob);
-        const scale = Math.min(maxWidth / imageBitmap.width, 1);
-        const width = Math.floor(imageBitmap.width * scale);
-        const height = Math.floor(imageBitmap.height * scale);
-
-        const canvas = new OffscreenCanvas(width, height);
-        const ctx = canvas.getContext('2d', { alpha: false });
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(imageBitmap, 0, 0, width, height);
-
-        const compressed = await canvas.convertToBlob({
-          type: 'image/jpeg',
-          quality
-        });
-
-        imageBitmap.close();
-        return compressed;
-      } else {
-        const dataUrl = await this._blobToDataURL(blob);
-
-        return await new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            try {
-              const scale = Math.min(maxWidth / img.width, 1);
-              const canvas = document.createElement('canvas');
-              const width = Math.floor(img.width * scale);
-              const height = Math.floor(img.height * scale);
-              canvas.width = width;
-              canvas.height = height;
-
-              const ctx = canvas.getContext('2d', { alpha: false });
-              ctx.imageSmoothingEnabled = true;
-              ctx.imageSmoothingQuality = 'high';
-
-              if (width < img.width * 0.5) {
-                const tempCanvas = document.createElement('canvas');
-                const intermediateWidth = Math.floor(img.width * 0.7);
-                const intermediateHeight = Math.floor(img.height * 0.7);
-                tempCanvas.width = intermediateWidth;
-                tempCanvas.height = intermediateHeight;
-
-                const tempCtx = tempCanvas.getContext('2d');
-                tempCtx.imageSmoothingEnabled = true;
-                tempCtx.imageSmoothingQuality = 'high';
-                tempCtx.drawImage(img, 0, 0, intermediateWidth, intermediateHeight);
-                ctx.drawImage(tempCanvas, 0, 0, width, height);
-                tempCanvas.width = 0;
-                tempCanvas.height = 0;
-              } else {
-                ctx.drawImage(img, 0, 0, width, height);
-              }
-
-              canvas.toBlob(
-                (compressedBlob) => {
-                  canvas.width = 0;
-                  canvas.height = 0;
-                  img.src = '';
-                  resolve(compressedBlob || blob);
-                },
-                'image/jpeg',
-                quality
-              );
-            } catch (err) {
-              Logger.warn('Canvas compression failed:', err);
-              img.src = '';
-              resolve(blob);
-            }
-          };
-          img.onerror = () => {
-            img.src = '';
-            resolve(blob);
-          };
-          img.src = dataUrl;
-        });
-      }
-    } catch (err) {
-      Logger.warn('Image compression failed, using original:', err);
-      return blob;
-    }
   }
 
   /**
@@ -379,7 +300,7 @@ export class ExportService {
    * @returns {string}
    */
   _csvSafeCell(value) {
-    const str = String(value);
+    const str = String(value).replace(/[\r\n]+/g, ' ');
     if (/^[=+\-@\t\r]/.test(str)) {
       return `'${str}`;
     }
@@ -421,6 +342,38 @@ export class ExportService {
       filename,
       mimeType: 'text/csv'
     };
+  }
+
+  /**
+   * Export to Markdown.
+   */
+  _exportMarkdown(exportData, sessionId) {
+    const { session, steps } = exportData;
+    const sessionName = session.name || 'Untitled Session';
+    const lines = [
+      `# ${this._escapeHtml(sessionName)}`,
+      '',
+      `**Recorded:** ${session.startTime || ''}  `,
+      `**Steps:** ${steps.length}`,
+      '',
+      '---',
+      ''
+    ];
+
+    steps.forEach((step, i) => {
+      const safeUrl = this._sanitizeUrl(step.url);
+      lines.push(`### Step ${i + 1}: ${step.action}`);
+      if (step.fieldName) lines.push(`- **Field:** ${step.fieldName}`);
+      if (step.value)     lines.push(`- **Value:** \`${step.value}\``);
+      if (step.selector?.css) lines.push(`- **Selector:** \`${step.selector.css}\``);
+      if (safeUrl)        lines.push(`- **URL:** ${safeUrl}`);
+      lines.push('');
+    });
+
+    const content = lines.join('\n');
+    const filename = `${sessionName.replace(/[^a-z0-9]/gi, '_')}_${Date.now()}.md`;
+
+    return { content, filename, mimeType: 'text/markdown' };
   }
 
   /**
@@ -555,7 +508,7 @@ export class ExportService {
       }
       children.push(new Paragraph({ children: [new TextRun(text)], spacing: { before: 120 } }));
 
-      const imgPara = await this._docxImageParagraph(assetIndex.get(step.id));
+      const imgPara = await this._docxImageParagraph(assetIndex.get(step.id), this._imgOptsMap.get(sessionId));
       if (imgPara) children.push(imgPara);
       assetIndex.delete(step.id);
 
@@ -570,7 +523,7 @@ export class ExportService {
         if (this._isCancelled(session.id)) { this._clearCancellation(session.id); throw new Error('Export cancelled by user'); }
         const shot = automatedScreenshots[i];
         children.push(new Paragraph({ children: [new TextRun({ text: `Auto Screenshot ${i + 1}`, bold: true }), new TextRun(` - ${new Date(shot.timestamp).toLocaleTimeString()}`)] }));
-        const imgPara = await this._docxImageParagraph(assetIndex.get(shot.id));
+        const imgPara = await this._docxImageParagraph(assetIndex.get(shot.id), this._imgOptsMap.get(sessionId));
         if (imgPara) children.push(imgPara);
         assetIndex.delete(shot.id);
       }
@@ -598,7 +551,7 @@ export class ExportService {
    * directly. Display size is in pixels (docx converts px → EMU).
    * @private
    */
-  async _docxImageParagraph(asset) {
+  async _docxImageParagraph(asset, imgOpts) {
     if (!asset) return null;
     const rawUrl = await this._resolveAssetUrl(asset);
     if (!rawUrl) return null;
@@ -606,7 +559,7 @@ export class ExportService {
       const { Paragraph, ImageRun } = window.docx;
       const imgObj = await ImageProcessor.processForExport(rawUrl, {
         maxWidth: 1920, maxHeight: 1080, displayWidth: 600, displayHeight: 450,
-        ...(this._imgOpts || { format: 'auto', quality: 0.92 })
+        ...(imgOpts || { format: 'auto', quality: 0.92 })
       });
       const bytes = new Uint8Array(await (await fetch(imgObj.dataUrl)).arrayBuffer());
       const type = /^data:image\/png/i.test(imgObj.dataUrl) ? 'png' : 'jpg';
@@ -743,7 +696,7 @@ export class ExportService {
               // EXP-IMG-004: single unit — set display width only, omit height (aspect follows).
               const imgObj = await ImageProcessor.processForExport(rawUrl, {
                 maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525,
-                ...(this._imgOpts || { format: 'auto', quality: 0.92 })
+                ...(this._imgOptsMap.get(sessionId) || { format: 'auto', quality: 0.92 })
               });
               html += `<br><img src="${imgObj.dataUrl}" width="${imgObj.width}" class="screenshot-img" alt="Manual Screenshot"/>`;
               // Null out immediately after use
@@ -817,7 +770,7 @@ export class ExportService {
             // EXP-IMG-002/003/004: lossless-for-text pipeline, display-width only.
             const imgObj = await ImageProcessor.processForExport(rawUrl, {
               maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525,
-              ...(this._imgOpts || { format: 'auto', quality: 0.92 })
+              ...(this._imgOptsMap.get(sessionId) || { format: 'auto', quality: 0.92 })
             });
             html += `
     <div class='auto-screenshot'>
@@ -991,7 +944,7 @@ export class ExportService {
           // Content-aware, lossless-for-text pipeline (PNG stays PNG)
           const result = await ImageProcessor.processForExport(rawUrl, {
             maxWidth: 1920, maxHeight: 1080,
-            ...(this._imgOpts || { format: 'auto', quality: 0.92 })
+            ...(this._imgOptsMap.get(sessionId) || { format: 'auto', quality: 0.92 })
           });
           // jsPDF needs 'PNG' or 'JPEG'; derive from the actual mime type
           const fmt = /^data:image\/png/i.test(result.dataUrl) ? 'PNG' : 'JPEG';
