@@ -41,7 +41,6 @@ var isProcessingModal;
 var currentModalId;
 var modalStates;
 var lastNavigationUrl;
-var isInitialNavigation;
 var sessionSettings;
 
 if (!window.__testSnapperInitialized) {
@@ -69,7 +68,6 @@ if (!window.__testSnapperInitialized) {
   currentModalId = null;
   modalStates = new Map();
   lastNavigationUrl = '';
-  isInitialNavigation = true;
   sessionSettings = {};
 }
 
@@ -1022,13 +1020,9 @@ function captureNavigation() {
 
   const currentUrl = window.location.href;
 
-  if (isInitialNavigation) {
-    isInitialNavigation = false;
-    lastNavigationUrl = currentUrl;
-    window.Logger?.debug('Skipping initial navigation');
-    return;
-  }
-
+  // P0-5: captureNavigation owns lastNavigationUrl. Callers must NOT pre-set it,
+  // otherwise this guard makes every navigation a no-op (the old interval did
+  // exactly that, which killed SPA navigation capture entirely).
   if (currentUrl === lastNavigationUrl) {
     return;
   }
@@ -1037,8 +1031,7 @@ function captureNavigation() {
 
   // If a sensitive field (password, CC, SSN, etc.) is active when the
   // navigation fires, suppress the automatic screenshot so PII isn't captured.
-  // Also honor the "Screenshot Before Navigation" setting (captureOnNavigation):
-  // the navigation step is still recorded, but no screenshot is attached when off.
+  // Also honor the "Screenshot on Navigation" setting (captureOnNavigation).
   const activeEl = document.activeElement;
   const navScreenshotEnabled = !sessionSettings || sessionSettings.captureOnNavigation !== false;
   const suppressScreenshot = !navScreenshotEnabled || (activeEl && redactor && redactor.shouldIgnoreField(activeEl));
@@ -1051,7 +1044,9 @@ function captureNavigation() {
     url: currentUrl,
     value: currentUrl,
     isSensitive: false,
-    hasScreenshot: !suppressScreenshot,
+    // Screenshots are separate steps with their own assets — a navigate step
+    // never carries one itself.
+    hasScreenshot: false,
     // Explicitly mark as non-manual so the background applies
     // rate limiting and does NOT call tabs.update({active:true}) (which yanked
     // focus back to the recorded tab on every SPA navigation).
@@ -1059,7 +1054,17 @@ function captureNavigation() {
   };
 
   sendStepToBackground(stepData);
-  window.Logger?.info('Navigation captured:', currentUrl, suppressScreenshot ? '(screenshot suppressed — sensitive field active)' : '');
+
+  // P0-5: actually take the navigation screenshot (previously only a flag was
+  // set and no capture ever happened). Background applies rate limiting and
+  // the recorded-tab/visibility checks.
+  if (!suppressScreenshot) {
+    chrome.runtime.sendMessage({ action: 'captureScreenshot', isManual: false }, function () {
+      void chrome.runtime.lastError; // capture may be rate-limited/skipped — fine
+    });
+  }
+
+  window.Logger?.info('Navigation captured:', currentUrl, suppressScreenshot ? '(screenshot suppressed)' : '');
 }
 
 /**
@@ -1147,6 +1152,16 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
     fieldNameResolver.initFrameContext();
   }
 
+  // FD-2: event capture must run in every frame (clicks inside iframes are only
+  // visible to the iframe's own listeners), but the floating panel, heartbeat,
+  // navigation polling, and auto-screenshot interval belong to the TOP frame
+  // only. Without this gate, every ad/embed iframe added its own panel and
+  // generated junk navigate steps for iframe-internal URL changes.
+  if (window !== window.top) {
+    window.Logger?.debug('Content script: sub-frame recording (event capture only)');
+    return;
+  }
+
   window.Logger?.debug('Starting timer with:', { startTime: startTime, now: Date.now() });
   addRecordingIndicator(startTime);
 
@@ -1163,11 +1178,12 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
     captureNavigation();
   }
 
-  // Start navigation monitoring (uses lastNavigationUrl — declared at module level)
+  // Start navigation monitoring. captureNavigation() itself checks and updates
+  // lastNavigationUrl — do NOT pre-set it here (P0-5: pre-setting it made the
+  // equality guard inside captureNavigation skip every SPA navigation).
   lastNavigationUrl = window.location.href;
   navigationCheckInterval = setInterval(function() {
-    if (isRecording && window.location.href !== lastNavigationUrl) {
-      lastNavigationUrl = window.location.href;
+    if (isRecording && !isModalOpen && window.location.href !== lastNavigationUrl) {
       captureNavigation();
     }
   }, 1000);
@@ -1179,7 +1195,9 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
     var autoSecs = Math.max(1, Math.min(60, parseInt(sessionSettings.screenshotSeconds) || 5));
     autoScreenshotInterval = setInterval(function() {
       if (isRecording && !isModalOpen) {
-        chrome.runtime.sendMessage({ action: 'captureScreenshot', isManual: false });
+        chrome.runtime.sendMessage({ action: 'captureScreenshot', isManual: false }, function () {
+          void chrome.runtime.lastError; // rate-limited/skipped is fine
+        });
       }
     }, autoSecs * 1000);
     window.Logger?.info('Auto-screenshot enabled: every ' + autoSecs + 's');
@@ -1204,10 +1222,10 @@ function startRecording(sessionId, isRestoring, startTimeStr, settings) {
   sessionSettings = settings || {};
 
   if (isRestoring) {
-    isInitialNavigation = false;
+    // Empty lastNavigationUrl lets the restore-path captureNavigation() record
+    // the freshly loaded page as a navigate step.
     lastNavigationUrl = '';
   } else {
-    isInitialNavigation = true;
     lastNavigationUrl = window.location.href;
   }
 
@@ -1589,6 +1607,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
+    // Sent by background session recovery after a service-worker restart.
+    // Previously unhandled ("Unknown action") — recovery only worked by luck
+    // via the load-time getState path.
+    case 'restoreRecording':
+      if (!selectorEngine || !redactor) {
+        sendResponse({ success: false, error: 'modules not loaded' });
+        break;
+      }
+      startRecording(message.sessionId, true, message.session?.createdAt, message.settings);
+      if (message.state === 'paused') {
+        pauseRecording();
+      }
+      sendResponse({ success: true });
+      break;
+
     case 'pauseRecording':
       pauseRecording();
       sendResponse({ success: true });
@@ -1638,6 +1671,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       showRateLimitFeedback();
       sendResponse({ success: true });
       break;
+
+    // Cross-frame label resolution: an iframe's FieldNameResolver asks the
+    // background, which relays here (frame 0). Find the <iframe> whose src
+    // matches and return a human label for it. Previously unhandled — the
+    // whole cross-frame label feature was dead (MED-010).
+    case 'getIframeLabel': {
+      var frameLabel = null;
+      try {
+        var frames = document.querySelectorAll('iframe');
+        for (var fi = 0; fi < frames.length; fi++) {
+          if (frames[fi].src && frames[fi].src === message.frameUrl) {
+            var f = frames[fi];
+            frameLabel = f.title || f.getAttribute('aria-label') || f.name || null;
+            break;
+          }
+        }
+      } catch (e) { /* label stays null */ }
+      sendResponse({ label: frameLabel });
+      break;
+    }
 
     default:
       sendResponse({ success: false, error: 'Unknown action' });

@@ -3,7 +3,8 @@ REM TestSnapper - Create Chrome Web Store Release ZIP
 REM Run this after npm run build
 
 echo ========================================
-echo TestSnapper v1.1.4 - Release Packager
+for /f "usebackq delims=" %%v in (`node -p "require('./package.json').version"`) do set "PKG_VERSION=%%v"
+echo TestSnapper v%PKG_VERSION% - Release Packager
 echo ========================================
 echo.
 
@@ -43,6 +44,13 @@ if not exist "dist\src\background\background.js" (
     echo   [OK] src/background/background.js
 )
 
+if not exist "dist\libs\jspdf.umd.min.js" (
+    echo   [MISSING] libs/jspdf.umd.min.js
+    set MISSING=1
+) else (
+    echo   [OK] libs/jspdf.umd.min.js
+)
+
 if not exist "dist\libs\docx.min.js" (
     echo   [MISSING] libs/docx.min.js
     set "MISSING=1"
@@ -73,7 +81,7 @@ REM Create release folder name with timestamp
 for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set "dt=%%a"
 set "YMD=%dt:~0,8%"
 set "HMS=%dt:~8,6%"
-set "RELEASE_NAME=testsnapper-v1.1.4-%YMD%-%HMS%"
+set "RELEASE_NAME=testsnapper-v%PKG_VERSION%-%YMD%-%HMS%"
 set "RELEASE_ZIP=%RELEASE_NAME%.zip"
 
 echo Creating ZIP: %RELEASE_ZIP%

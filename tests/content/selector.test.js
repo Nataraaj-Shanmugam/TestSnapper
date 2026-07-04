@@ -148,10 +148,30 @@ describe('SelectorEngine.getElementText', () => {
     expect(engine.getElementText(null)).toBe('');
   });
 
-  it('returns value for input elements', () => {
+  it('never returns the typed value for data-entry inputs (P0-4 privacy)', () => {
+    // getElementText feeds step.targetLabel and step.selector.text UNREDACTED —
+    // returning element.value here leaked passwords/PII past the redactor.
     const input = document.createElement('input');
     input.value = 'hello@example.com';
-    expect(engine.getElementText(input)).toBe('hello@example.com');
+    expect(engine.getElementText(input)).toBe('');
+
+    const password = document.createElement('input');
+    password.type = 'password';
+    password.value = 'hunter2';
+    password.placeholder = 'Password';
+    expect(engine.getElementText(password)).toBe('Password');
+
+    const textarea = document.createElement('textarea');
+    textarea.value = 'my SSN is 123-45-6789';
+    textarea.placeholder = 'Notes';
+    expect(engine.getElementText(textarea)).toBe('Notes');
+  });
+
+  it('returns the value for button-like inputs (author label, not user data)', () => {
+    const submit = document.createElement('input');
+    submit.type = 'submit';
+    submit.value = 'Send Message';
+    expect(engine.getElementText(submit)).toBe('Send Message');
   });
 
   it('returns placeholder when input has no value', () => {

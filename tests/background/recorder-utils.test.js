@@ -444,9 +444,21 @@ describe('validateSettings', () => {
   });
 
   it('preserves valid exportImageQuality enum values', () => {
-    const raw = { exportImageQuality: 'jpeg-standard' };
-    const result = validateSettings(raw, defaults);
-    expect(result.exportImageQuality).toBe('jpeg-standard');
+    // P1-19: valid enum is auto|high|standard (must match popup.html options
+    // and ExportService._resolveExportImageOpts ALLOWED list)
+    for (const value of ['auto', 'high', 'standard']) {
+      const result = validateSettings({ exportImageQuality: value }, defaults);
+      expect(result.exportImageQuality).toBe(value);
+    }
+  });
+
+  it('replaces legacy exportImageQuality values with the default', () => {
+    // 'png' / 'jpeg-high' / 'jpeg-standard' were a stale enum the UI never
+    // offered — stored copies must fall back to the default
+    for (const value of ['png', 'jpeg-high', 'jpeg-standard']) {
+      const result = validateSettings({ exportImageQuality: value }, defaults);
+      expect(result.exportImageQuality).toBe(defaults.exportImageQuality);
+    }
   });
 
   it('handles null raw settings', () => {

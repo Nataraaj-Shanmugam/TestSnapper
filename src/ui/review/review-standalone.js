@@ -468,7 +468,20 @@ async function buildAssetCache() {
 const SAFE_DATA_URL_RE = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
 
 async function resolveScreenshotUrl(asset) {
-  // 1. If .blob is a real Blob, convert it (live-session fast path)
+  // 1. asset.dataUrl — what background.js writes for EVERY captured screenshot
+  //    and what FileSync.readAssets() returns (P0-3: this field was never
+  //    checked, so recorded screenshots never rendered in the review page).
+  // SEC-001: only accept well-formed image data URLs to prevent HTML injection
+  if (typeof asset.dataUrl === 'string' && SAFE_DATA_URL_RE.test(asset.dataUrl)) {
+    return asset.dataUrl;
+  }
+
+  // 2. asset.data — manually-added screenshots from this review page
+  if (typeof asset.data === 'string' && SAFE_DATA_URL_RE.test(asset.data)) {
+    return asset.data;
+  }
+
+  // 3. Live Blob (only valid in the same session before a storage round-trip)
   if (asset.blob && asset.blob instanceof Blob && asset.blob.size > 0) {
     try {
       const url = await Utils.blobToDataURL(asset.blob);
@@ -476,14 +489,8 @@ async function resolveScreenshotUrl(asset) {
       if (!SAFE_DATA_URL_RE.test(url)) return null;
       return url;
     } catch (err) {
-      console.warn('blobToDataURL failed, falling back to asset.data:', err);
+      console.warn('blobToDataURL failed:', err);
     }
-  }
-
-  // 2. Fall back to the persisted base64 data-URL string
-  // SEC-001: only accept well-formed image data URLs to prevent HTML injection
-  if (typeof asset.data === 'string' && SAFE_DATA_URL_RE.test(asset.data)) {
-    return asset.data;
   }
 
   return null; // nothing usable or failed validation

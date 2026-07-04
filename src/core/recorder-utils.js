@@ -187,7 +187,7 @@ export function validateSettings(raw, defaults) {
 
   // Validate exportImageQuality (enum)
   if (raw.exportImageQuality !== undefined) {
-    const validExportQualities = ['auto', 'png', 'jpeg-high', 'jpeg-standard'];
+    const validExportQualities = ['auto', 'high', 'standard']; // P1-19: must match popup.html options and ExportService ALLOWED list
     validated.exportImageQuality = validExportQualities.includes(raw.exportImageQuality)
       ? raw.exportImageQuality : defaults.exportImageQuality;
   }

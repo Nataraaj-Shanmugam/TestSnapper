@@ -1037,11 +1037,16 @@ test('content script captures click and type interactions during recording', asy
 
   console.log(`Steps captured for click+type+select test: ${stepCount}`);
 
-  // We performed at minimum 4 distinct interactions — some steps must be captured
   const stepCountText = await reviewPage.locator('#sessionStepCount').textContent().catch(() => '');
   console.log('Step count text:', stepCountText);
 
   await reviewPage.close().catch(() => {});
+
+  // We performed 4 distinct interactions (type ×2, click, select). The button
+  // click and the select change are captured synchronously; the two typed
+  // fields land via the 800ms input debounce. Require at least the two
+  // synchronous captures — 0 here means interaction capture is broken.
+  expect(stepCount).toBeGreaterThanOrEqual(2);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

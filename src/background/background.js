@@ -11,6 +11,26 @@ import { Utils } from '../core/utils.js';
 import { addPendingFlush, removePendingFlush, getPendingFlush } from '../core/flush-utils.js';
 import { Logger } from '../core/logger.js';
 import { _isConsecutiveDuplicate, shouldRecordRequest } from '../core/recorder-utils.js';
+import { sanitizeUrl, maskGenericPII } from '../core/privacy-utils.js';
+
+/**
+ * SEC-1/SEC-2: server-side privacy pass applied to every step before it is
+ * persisted. Strips sensitive query params from URLs at capture time (so tokens
+ * never reach storage/backups) and runs a generic PII backstop over free-text
+ * fields. Mutates and returns the step.
+ */
+function sanitizeStepForStorage(step) {
+  if (!step || typeof step !== 'object') return step;
+  if (typeof step.url === 'string') step.url = sanitizeUrl(step.url);
+  if (step.action === 'navigate' && typeof step.value === 'string') {
+    step.value = sanitizeUrl(step.value);
+  } else if (step.action !== 'apicall' && typeof step.value === 'string') {
+    // navigate handled above; apicall value is an HTTP method, not free text.
+    step.value = maskGenericPII(step.value);
+  }
+  if (typeof step.targetLabel === 'string') step.targetLabel = maskGenericPII(step.targetLabel);
+  return step;
+}
 
 // ==================== Broadcast Helpers ====================
 
@@ -197,7 +217,7 @@ class SettingsManager {
 
     // Validate exportImageQuality
     if (loadedSettings.exportImageQuality !== undefined) {
-      const validExportQualities = ['auto', 'png', 'jpeg-high', 'jpeg-standard'];
+      const validExportQualities = ['auto', 'high', 'standard']; // P1-19: must match popup.html options and ExportService ALLOWED list
       validated.exportImageQuality = validExportQualities.includes(loadedSettings.exportImageQuality)
         ? loadedSettings.exportImageQuality : this.defaults.exportImageQuality;
     }
@@ -233,7 +253,7 @@ class SettingsManager {
     }
 
     if (validated.exportImageQuality !== undefined) {
-      const validExportQualities = ['auto', 'png', 'jpeg-high', 'jpeg-standard'];
+      const validExportQualities = ['auto', 'high', 'standard']; // P1-19: must match popup.html options and ExportService ALLOWED list
       if (!validExportQualities.includes(validated.exportImageQuality)) {
         validated.exportImageQuality = this.defaults.exportImageQuality;
       }
@@ -262,6 +282,7 @@ const settingsManager = new SettingsManager();
 // Shared content-script file list — both injection sites use this constant so they never drift.
 // Note: field-name-resolver.js must be injected before content.js which depends on window.FieldNameResolver
 const CONTENT_SCRIPT_FILES = [
+  'src/content/logger.js',
   'src/content/selector.js',
   'src/content/field-name-resolver.js',
   'src/content/redactor.js',
@@ -585,6 +606,12 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
     if (isManual) {
       await chrome.tabs.update(tab.id, { active: true });
       await chrome.windows.update(tab.windowId, { focused: true });
+    } else if (!tab.active) {
+      // FD-1: captureVisibleTab captures whatever tab is VISIBLE in the window.
+      // If the recorded tab is backgrounded, an auto capture would photograph an
+      // unrelated tab (mail, banking, …) into the session. Skip instead.
+      Logger.debug('⏸️ Auto-screenshot skipped — recorded tab is not the active tab');
+      return { success: false, error: 'Recorded tab not visible' };
     }
 
     await chrome.tabs.sendMessage(tabId, { action: 'beforeScreenshot' }).catch(() => { });
@@ -628,7 +655,7 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
       action: 'screenshot',
       fieldName: 'Screenshot',
       targetLabel: isManual ? 'Manual Screenshot' : 'Auto Screenshot',
-      url: tab.url,
+      url: sanitizeUrl(tab.url), // SEC-1: strip tokens from the captured tab URL
       value: null,
       isSensitive: false,
       isManual: isManual,
@@ -742,7 +769,7 @@ const ApiCapture = {
         action: 'apicall',
         fieldName: 'API Call',
         targetLabel: method,
-        url: details.url,
+        url: sanitizeUrl(details.url), // SEC-6: strip tokens from captured request URLs
         value: method,
         apiStatus: ok ? status : (status || 'failed'),
         isSensitive: false,
@@ -1003,6 +1030,9 @@ async function addStep(stepData, senderTabId) {
       step.timestamp = new Date().toISOString();
     }
 
+    // SEC-1/SEC-2: sanitize URLs + PII backstop before the step touches storage.
+    sanitizeStepForStorage(step);
+
     _lastAddedStep = stepData;
 
     await storage.addStep(step);
@@ -1131,7 +1161,20 @@ async function exportSession(sessionId, format = 'json') {
  *   recorded tab.
  */
 async function getSenderTabId(sender, message) {
-  // Content script — always trust the sender's own tab
+  // Extension page hosted in a TAB (popup.html or review page opened/pinned as
+  // a tab, or e2e tests): it has sender.tab like a content script, but it is
+  // our own trusted UI — honor its explicit tabId. Without this, its messages
+  // were mis-attributed to its own tab (recording would target the popup tab
+  // and capture zero steps). Content scripts can never match this check:
+  // their sender.url is the web page URL, not chrome-extension://.
+  const extensionOrigin = chrome.runtime.getURL('');
+  if (sender?.tab?.id && message?.tabId &&
+      sender?.id === chrome.runtime.id &&
+      sender?.url?.startsWith(extensionOrigin)) {
+    return message.tabId;
+  }
+
+  // Content script — always trust the sender's own tab (never message.tabId — SEC-005)
   if (sender?.tab?.id) return sender.tab.id;
 
   // Popup or review page from the same extension
@@ -1186,9 +1229,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = await addStep(message.stepData, sender?.tab?.id);
           break;
 
-        case 'getState':
-          response = stateManager.getState();
+        case 'getState': {
+          // Include settings so content scripts can re-arm auto-screenshot and
+          // navigation options after a page load (P0-6: settings were lost on
+          // every navigation because getState never carried them).
+          let stateSettings = {};
+          try {
+            stateSettings = await settingsManager.get();
+          } catch (_) { /* defaults */ }
+          response = { ...stateManager.getState(), settings: stateSettings };
           break;
+        }
 
         case 'captureScreenshot':
           if (!tabId) throw new Error('No tab context for screenshot');

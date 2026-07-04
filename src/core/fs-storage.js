@@ -25,6 +25,19 @@ import { FileSync } from './file-sync.js';
 import { StorageManager } from './storage.js';
 import { getPendingFlush, addPendingFlush, removePendingFlush } from './flush-utils.js';
 import { Logger } from './logger.js';
+import { sanitizeUrl } from './privacy-utils.js';
+
+/**
+ * SEC-1 backstop: strip sensitive query params from a step's URLs in
+ * exported/backed-up data (covers sessions recorded before capture-time
+ * sanitization existed).
+ */
+function sanitizeStepUrlsForExport(step) {
+  const out = { ...step };
+  if (typeof out.url === 'string') out.url = sanitizeUrl(out.url);
+  if (out.action === 'navigate' && typeof out.value === 'string') out.value = sanitizeUrl(out.value);
+  return out;
+}
 
 // Abort threshold for chrome.storage bulk export (bytes)
 const EXPORT_SIZE_LIMIT_BYTES = 50 * 1024 * 1024; // 50 MB
@@ -708,16 +721,20 @@ export class FSStorageManager {
     if (fsReady) {
       const data = await this._fileSync.readSession(asset.sessionId);
       if (data) {
+        // FD-3: accept both field spellings — background writes `dataUrl`,
+        // the review page's Add Step writes `data`. Requiring only dataUrl
+        // silently discarded manually-uploaded screenshots in FS mode.
+        const assetUrl = asset.dataUrl || asset.data || null;
         // Write screenshot to binary file and update the step's screenshotFile field
         const steps = [...(data.steps || [])];
         let updated = false;
         for (let i = 0; i < steps.length; i++) {
-          if (steps[i].id === asset.stepId && asset.dataUrl) {
+          if (steps[i].id === asset.stepId && assetUrl) {
             const handle = await this._fileSync.getHandle();
             if (handle) {
               const sessionDir = await this._fileSync._findSessionFolder(handle, asset.sessionId);
               if (sessionDir) {
-                const screenshotFile = await this._fileSync._writeScreenshot(sessionDir, asset.stepId, asset.dataUrl);
+                const screenshotFile = await this._fileSync._writeScreenshot(sessionDir, asset.stepId, assetUrl);
                 // Preserve all step fields
                 const { screenshot: _sc, ...stepFields } = steps[i];
                 steps[i] = { ...stepFields, screenshotFile };
@@ -887,7 +904,7 @@ export class FSStorageManager {
           steps: (data.steps || []).map(s => {
             // Strip on-disk-only fields from exported data
             const { screenshotFile, screenshot, ...stepData } = s;
-            return stepData;
+            return sanitizeStepUrlsForExport(stepData); // SEC-1
           }),
           assets: [] // Screenshots are stored as binary files; not included in JSON export
         }))
@@ -900,7 +917,7 @@ export class FSStorageManager {
     const sessionPayloads = [];
 
     for (const session of allSessions) {
-      const steps = await this._buffer.getSteps(session.sessionId);
+      const steps = (await this._buffer.getSteps(session.sessionId)).map(sanitizeStepUrlsForExport); // SEC-1
       const assets = await this._buffer.getAllAssets(session.sessionId);
       const payload = { ...session, steps, assets };
       const serialized = JSON.stringify(payload);

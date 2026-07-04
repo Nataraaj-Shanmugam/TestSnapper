@@ -44,10 +44,14 @@ class Redactor {
 
     // PII detection patterns — stored WITHOUT /g to avoid lastIndex state.
     // /g is added inline only where .replace() needs global replacement.
+    // SEC-3: broadened to mirror src/core/privacy-utils.js — keep the two in sync.
     // Negative lookbehind: skip emails in URLs (//user@host) and templates ({{email@…}})
     this.emailPattern = /(?<![/:{])\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
-    this.phonePattern = /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/;
-    this.creditCardPattern = /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/;
+    // Phone: optional +CC, optional (area code), space/dot/hyphen separators.
+    this.phonePattern = /(\+\d{1,3}[\s.-]?)?(\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}\b/;
+    // Card candidate: 13–16 digits, optional space/hyphen grouping (Amex 15 + Visa/MC 16).
+    // Validated with Luhn before masking to avoid corrupting order ids.
+    this.creditCardPattern = /\b(?:\d[ -]?){13,16}\b/;
     this.ssnPattern = /\b\d{3}-\d{2}-\d{4}\b/;
     this._routingPattern = /\b\d{9}\b/; // private — only valid in financial field context (LOW-016)
     this.dobPattern = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/; // MM/DD/YYYY or MM-DD-YY
@@ -59,6 +63,25 @@ class Redactor {
     this._ssnPatternG = new RegExp(this.ssnPattern.source, 'g');
     this._routingPatternG = new RegExp(this._routingPattern.source, 'g');
     this._dobPatternG = new RegExp(this.dobPattern.source, 'g');
+  }
+
+  /**
+   * Luhn checksum — gate for credit-card masking so arbitrary 13–16 digit
+   * strings (order ids, etc.) aren't masked. Mirrors privacy-utils.luhnValid.
+   * @param {string} digits - digits only
+   * @returns {boolean}
+   */
+  _luhnValid(digits) {
+    if (!/^\d{13,16}$/.test(digits)) return false;
+    let sum = 0;
+    let alt = false;
+    for (let i = digits.length - 1; i >= 0; i--) {
+      let d = digits.charCodeAt(i) - 48;
+      if (alt) { d *= 2; if (d > 9) d -= 9; }
+      sum += d;
+      alt = !alt;
+    }
+    return sum % 10 === 0;
   }
 
   /**
@@ -131,9 +154,13 @@ class Redactor {
     this._phonePatternG.lastIndex = 0;
     result = result.replace(this._phonePatternG, '***-***-****');
 
-    // Mask credit card numbers
+    // Mask credit card numbers — only when the digit run passes the Luhn check,
+    // so order ids / long numeric strings aren't corrupted (SEC-3).
     this._creditCardPatternG.lastIndex = 0;
-    result = result.replace(this._creditCardPatternG, '**** **** **** ****');
+    result = result.replace(this._creditCardPatternG, (match) => {
+      const digits = match.replace(/[ -]/g, '');
+      return this._luhnValid(digits) ? '**** **** **** ****' : match;
+    });
 
     // Mask SSN
     this._ssnPatternG.lastIndex = 0;
@@ -163,24 +190,11 @@ class Redactor {
     return result;
   }
 
-  /**
-   * Redact sensitive data from a recorded step object.
-   */
-  redactStep(step) {
-    if (!step) return step;
-
-    const redacted = { ...step };
-
-    if (redacted.value) {
-      if (redacted.isSensitive) {
-        redacted.value = '•'.repeat(8);
-      } else {
-        redacted.value = this.maskValue(redacted.value, null);
-      }
-    }
-
-    return redacted;
-  }
+  // NOTE: the former redactStep() was removed (SEC-2). It was never called, so
+  // it gave a false sense of a "redact stored steps" safety net. The real
+  // server-side backstop now lives in background.js sanitizeStepForStorage()
+  // (via src/core/privacy-utils.js maskGenericPII), which runs on every step
+  // before it is persisted.
 }
 
 if (typeof window !== 'undefined') {

@@ -91,20 +91,29 @@ let currentSessionId = null;
 // =====================
 // Initialization
 // =====================
+// Failure-isolate each init phase: one broken widget must never take down
+// the whole popup (P0-8: a single null-element throw used to abort init()).
+async function safePhase(name, fn) {
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`Popup init phase "${name}" failed:`, err);
+  }
+}
+
 async function init() {
-  setupTabs();
-  setupEventListeners();
-  setupCustomDropdown();
-  setupTheme();
-  await fsStorage.init();
-  await updateState();
-  await checkFileSyncStatus();
-  await flushAllPending(); // Flush any buffered sessions from previous recordings
-  await loadSessions();
-  await loadSettings();
-  await loadExportFormat(); // POP-MED-003: Load saved export format
-  await updateStorageUsage(); // BUG FIX: POP-003
-  setupKeyboardShortcuts(); // BUG FIX: POP-006
+  await safePhase('setupTabs', () => setupTabs());
+  await safePhase('setupEventListeners', () => setupEventListeners());
+  await safePhase('setupTheme', () => setupTheme());
+  await safePhase('storageInit', () => fsStorage.init());
+  await safePhase('updateState', () => updateState());
+  await safePhase('checkFileSyncStatus', () => checkFileSyncStatus());
+  await safePhase('flushAllPending', () => flushAllPending()); // Flush buffered sessions from previous recordings
+  await safePhase('loadSessions', () => loadSessions());
+  await safePhase('loadSettings', () => loadSettings());
+  await safePhase('loadExportFormat', () => loadExportFormat()); // POP-MED-003
+  await safePhase('updateStorageUsage', () => updateStorageUsage()); // POP-003
+  await safePhase('setupKeyboardShortcuts', () => setupKeyboardShortcuts()); // POP-006
   const versionFooter = document.getElementById('versionFooter');
   if (versionFooter) {
     const { version } = chrome.runtime.getManifest();
@@ -699,7 +708,8 @@ async function loadSessions() {
     if (!fsReady && await fileSync.isConfigured()) {
       // Folder is configured but permission isn't granted — sessions are on disk
       // but inaccessible until the user clicks Re-authorize
-      renderCustomDropdown([], true);
+      sessionDropdown.innerHTML = '<option value="">Re-authorize to view sessions...</option>';
+      handleSessionSelect();
       return;
     }
 
@@ -707,7 +717,6 @@ async function loadSessions() {
     const sessions = await fsStorage.getAllSessions();
     sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    // Update hidden native select for compatibility
     sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
     sessions.forEach((s) => {
       const opt = document.createElement("option");
@@ -717,216 +726,13 @@ async function loadSessions() {
       sessionDropdown.appendChild(opt);
     });
 
-    // Update custom dropdown
-    renderCustomDropdown(sessions);
-
     if (currentSessionId) {
       sessionDropdown.value = currentSessionId;
-      selectCustomDropdownItem(currentSessionId);
     }
     handleSessionSelect();
   } catch (e) {
     console.error("Load sessions failed:", e);
   }
-}
-
-function renderCustomDropdown(sessions, needsReauth = false) {
-  const list = document.getElementById("sessionDropdownList");
-  const trigger = document.getElementById("sessionSelectTrigger");
-
-  if (needsReauth) {
-    list.innerHTML = `
-      <div class="empty-state" style="padding: 20px 16px;">
-        <svg class="empty-state-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        <span class="empty-state-title">Re-authorization needed</span>
-        <span class="empty-state-desc">Click <strong>Re-authorize</strong> in the Folder & Sessions section to access your saved sessions</span>
-      </div>`;
-    trigger.innerHTML = `<span class="session-placeholder">Re-authorize to view sessions</span>
-      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
-    return;
-  }
-
-  if (!sessions.length) {
-    list.innerHTML = `
-      <div class="empty-state" style="padding: 20px 16px;">
-        <svg class="empty-state-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-        <span class="empty-state-title">No sessions yet</span>
-        <span class="empty-state-desc">Start recording to create your first test session</span>
-      </div>`;
-    trigger.innerHTML = `<span class="session-placeholder">No sessions available</span>
-      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
-    return;
-  }
-
-  list.innerHTML = sessions.map((s) => {
-    const name = Utils.escapeHtml(s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`);
-    const date = new Date(s.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const steps = s.stepCount || 0;
-    // UX-004: Give each option a stable id for aria-activedescendant tracking
-    const optionId = `session-opt-${s.sessionId}`;
-    return `
-      <div class="session-dropdown-item" id="${optionId}" data-value="${s.sessionId}" role="option" aria-selected="false" tabindex="-1">
-        <span class="item-name">${name}</span>
-        <span class="item-meta">
-          <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> ${steps} steps</span>
-          <span class="meta-badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${date}</span>
-        </span>
-      </div>`;
-  }).join("");
-}
-
-function selectCustomDropdownItem(value) {
-  const wrapper = document.getElementById("sessionSelectWrapper");
-  const trigger = document.getElementById("sessionSelectTrigger");
-  const items = wrapper.querySelectorAll(".session-dropdown-item");
-  let found = false;
-
-  items.forEach((item) => {
-    const isMatch = item.dataset.value === value;
-    item.classList.toggle("selected", isMatch);
-    // UX-004: aria-selected tracks the currently selected option
-    item.setAttribute('aria-selected', isMatch ? 'true' : 'false');
-    if (isMatch) {
-      found = true;
-      const name = item.querySelector(".item-name")?.textContent || "";
-      const meta = item.querySelector(".item-meta")?.innerHTML || "";
-      trigger.innerHTML = `
-        <span class="session-info">
-          <span class="session-name">${Utils.escapeHtml(name)}</span>
-          <span class="session-meta">${meta}</span>
-        </span>
-        <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
-    }
-  });
-
-  if (!found) {
-    trigger.innerHTML = `<span class="session-placeholder">Select a session...</span>
-      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
-  }
-}
-
-function setupCustomDropdown() {
-  const wrapper = document.getElementById("sessionSelectWrapper");
-  const trigger = document.getElementById("sessionSelectTrigger");
-  const list = document.getElementById("sessionDropdownList");
-
-  // UX-004: Set up ARIA combobox role attributes
-  trigger.setAttribute('role', 'combobox');
-  trigger.setAttribute('aria-haspopup', 'listbox');
-  trigger.setAttribute('aria-expanded', 'false');
-  list.setAttribute('role', 'listbox');
-
-  function openDropdown() {
-    wrapper.classList.add("open");
-    trigger.setAttribute("aria-expanded", "true");
-    // Focus the currently selected item, or the first item
-    const selected = list.querySelector('.session-dropdown-item[aria-selected="true"]') ||
-                     list.querySelector('.session-dropdown-item');
-    if (selected) {
-      trigger.setAttribute('aria-activedescendant', selected.id || '');
-      selected.classList.add('keyboard-focus');
-    }
-  }
-
-  function closeDropdown() {
-    wrapper.classList.remove("open");
-    trigger.setAttribute("aria-expanded", "false");
-    trigger.removeAttribute('aria-activedescendant');
-    list.querySelectorAll('.session-dropdown-item').forEach(i => i.classList.remove('keyboard-focus'));
-  }
-
-  function selectItem(item) {
-    if (!item) return;
-    const value = item.dataset.value;
-    sessionDropdown.value = value;
-    selectCustomDropdownItem(value);
-    closeDropdown();
-    handleSessionSelect();
-  }
-
-  trigger.addEventListener("click", () => {
-    if (wrapper.classList.contains("open")) {
-      closeDropdown();
-    } else {
-      openDropdown();
-    }
-  });
-
-  list.addEventListener("click", (e) => {
-    const item = e.target.closest(".session-dropdown-item");
-    if (!item) return;
-    selectItem(item);
-  });
-
-  // Close on outside click
-  document.addEventListener("click", (e) => {
-    if (!wrapper.contains(e.target)) {
-      closeDropdown();
-    }
-  });
-
-  // UX-004: Full keyboard navigation on trigger
-  trigger.addEventListener("keydown", (e) => {
-    const isOpen = wrapper.classList.contains("open");
-    const items = Array.from(list.querySelectorAll(".session-dropdown-item"));
-    if (!items.length) return;
-
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      if (!isOpen) {
-        openDropdown();
-      } else {
-        // Select the keyboard-focused item
-        const focused = list.querySelector('.session-dropdown-item.keyboard-focus');
-        if (focused) selectItem(focused);
-      }
-      return;
-    }
-
-    if (e.key === "Escape") {
-      e.preventDefault();
-      closeDropdown();
-      trigger.focus();
-      return;
-    }
-
-    if (!isOpen) {
-      // ArrowDown/Up opens the list when closed
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        e.preventDefault();
-        openDropdown();
-      }
-      return;
-    }
-
-    // Navigate within open list
-    const focused = list.querySelector('.session-dropdown-item.keyboard-focus');
-    const currentIndex = focused ? items.indexOf(focused) : -1;
-    let nextIndex = currentIndex;
-
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      nextIndex = currentIndex < items.length - 1 ? currentIndex + 1 : 0;
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      nextIndex = currentIndex > 0 ? currentIndex - 1 : items.length - 1;
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      nextIndex = 0;
-    } else if (e.key === "End") {
-      e.preventDefault();
-      nextIndex = items.length - 1;
-    } else {
-      return;
-    }
-
-    // Move keyboard focus highlight
-    items.forEach(i => i.classList.remove('keyboard-focus'));
-    const nextItem = items[nextIndex];
-    nextItem.classList.add('keyboard-focus');
-    nextItem.scrollIntoView({ block: 'nearest' });
-    trigger.setAttribute('aria-activedescendant', nextItem.id || '');
-  });
 }
 
 function handleSessionSelect() {

@@ -38,6 +38,7 @@ import { QuotaMonitor } from './quota-monitor.js';
 import { SchemaMigrator } from './schema-migrator.js';
 import { OrphanCleaner } from './orphan-cleaner.js';
 import { Logger } from './logger.js';
+import { sanitizeUrl } from './privacy-utils.js';
 
 const META_KEY = 'testsnapper_meta';
 const SESSIONS_KEY = 'testsnapper_sessions';
@@ -508,7 +509,16 @@ class StorageManager {
       const steps = await this._readSteps(session.sessionId);
       const assets = await this._readAssets(session.sessionId);
 
-      const entry = { ...session, steps, assets };
+      // SEC-1: backstop for data recorded before capture-time sanitization —
+      // strip sensitive query params from URLs in the exported/backed-up copy.
+      const safeSteps = steps.map((s) => {
+        const out = { ...s };
+        if (typeof out.url === 'string') out.url = sanitizeUrl(out.url);
+        if (out.action === 'navigate' && typeof out.value === 'string') out.value = sanitizeUrl(out.value);
+        return out;
+      });
+
+      const entry = { ...session, steps: safeSteps, assets };
       accumulatedBytes += JSON.stringify(entry).length;
       if (accumulatedBytes > MAX_EXPORT_BYTES) {
         throw new Error(

@@ -5,7 +5,7 @@
   "version": "0.0.0",
   "author": "TestSnapper Team",
   "offline_enabled": true,
-  "minimum_chrome_version": "91",
+  "minimum_chrome_version": "98",
 
   "permissions": [
     "tabs",
@@ -37,7 +37,7 @@
         "file:///*"
       ],
       "js": [
-        "src/core/logger.js",
+        "src/content/logger.js",
         "src/content/selector.js",
         "src/content/field-name-resolver.js",
         "src/content/redactor.js",

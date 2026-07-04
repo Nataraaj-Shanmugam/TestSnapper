@@ -1011,11 +1011,27 @@ class SelectorEngine {
   getElementText(element) {
     if (!element) return '';
 
-    if (element.tagName.toLowerCase() === 'input') {
-      return element.value || element.placeholder || '';
+    const tag = element.tagName.toLowerCase();
+
+    if (tag === 'input') {
+      const type = (element.type || '').toLowerCase();
+      // Button-like inputs: value is an author-provided label, not user data.
+      if (type === 'button' || type === 'submit' || type === 'reset') {
+        return element.value || '';
+      }
+      // PRIVACY (P0-4): never return element.value for data-entry inputs —
+      // this string flows into step.targetLabel and step.selector.text
+      // UNREDACTED (passwords, SSNs, emails). Use author-provided text only.
+      return element.placeholder || element.getAttribute('aria-label') || '';
     }
 
-    if (element.tagName.toLowerCase() === 'button') {
+    if (tag === 'textarea') {
+      // textContent of a textarea is its (possibly user-edited) value — same
+      // privacy rule as inputs: author-provided text only.
+      return element.placeholder || element.getAttribute('aria-label') || '';
+    }
+
+    if (tag === 'button') {
       return (element.innerText || element.textContent || '').trim();
     }
 

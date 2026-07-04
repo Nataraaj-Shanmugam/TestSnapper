@@ -34,6 +34,7 @@
 
 import { ImageProcessor } from './image-processor.js';
 import { Logger } from './logger.js';
+import { sanitizeUrl } from './privacy-utils.js';
 
 export class ExportService {
   constructor(storage) {
@@ -73,20 +74,9 @@ export class ExportService {
    * @returns {string} URL with sensitive params removed, or original on parse error
    */
   _sanitizeUrl(url) {
-    if (!url || typeof url !== 'string') return url || '';
-    try {
-      const parsed = new URL(url);
-      const sensitiveKeys = /^(token|access_token|code|key|api_key|password|secret|sig|signature|auth|session|jwt|otp|reset|magic|verify)$/i;
-      const toDelete = [];
-      parsed.searchParams.forEach((_, key) => {
-        if (sensitiveKeys.test(key)) toDelete.push(key);
-      });
-      toDelete.forEach(k => parsed.searchParams.delete(k));
-      return parsed.toString();
-    } catch {
-      // Relative URL or non-parseable — return as-is
-      return url;
-    }
+    // Delegate to the canonical implementation (privacy-utils) so capture-time
+    // and export-time sanitization can never diverge (SEC-1).
+    return sanitizeUrl(url);
   }
 
   /**

@@ -3,7 +3,8 @@
 # Run this after npm run build
 
 echo "========================================"
-echo "TestSnapper v1.1.3 - Release Packager"
+VERSION=$(node -p "require('./package.json').version")
+echo "TestSnapper v${VERSION} - Release Packager"
 echo "========================================"
 echo ""
 
@@ -15,7 +16,7 @@ if [ ! -d "dist" ]; then
 fi
 
 # Check if libs are downloaded
-if [ ! -f "dist/libs/docx.min.js" ]; then
+if [ ! -f "dist/libs/docx.min.js" ] || [ ! -f "dist/libs/jspdf.umd.min.js" ]; then
     echo "ERROR: Libraries not found in dist/libs/"
     echo "Please run: npm run setup-libs"
     exit 1
@@ -39,6 +40,7 @@ check_file() {
 check_file "dist/manifest.json" "manifest.json"
 check_file "dist/src/background/background.js" "src/background/background.js"
 check_file "dist/libs/docx.min.js" "libs/docx.min.js"
+check_file "dist/libs/jspdf.umd.min.js" "libs/jspdf.umd.min.js"
 check_file "dist/libs/html2pdf.bundle.min.js" "libs/html2pdf.bundle.min.js"
 
 if [ $MISSING -eq 1 ]; then
@@ -54,7 +56,7 @@ echo ""
 
 # Create release ZIP with timestamp
 TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
-RELEASE_ZIP="testsnapper-v1.1.3-${TIMESTAMP}.zip"
+RELEASE_ZIP="testsnapper-v${VERSION}-${TIMESTAMP}.zip"
 
 echo "Creating ZIP: ${RELEASE_ZIP}"
 echo ""

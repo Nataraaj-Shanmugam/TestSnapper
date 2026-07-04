@@ -116,9 +116,31 @@ describe('Redactor.maskValue', () => {
 
   it('masks credit card numbers', () => {
     const el = makeInput({ name: 'payment' });
-    const result = redactor.maskValue('4532 1234 5678 9010', el);
-    expect(result).not.toContain('4532');
+    const result = redactor.maskValue('4111 1111 1111 1111', el);
+    expect(result).not.toContain('4111');
     expect(result).toContain('**** **** **** ****');
+  });
+
+  // SEC-3: broadened patterns
+  it('masks a 15-digit Amex card (Luhn-valid)', () => {
+    const el = makeInput({ name: 'payment' });
+    // 378282246310005 is the canonical Amex test number (passes Luhn)
+    const result = redactor.maskValue('card 378282246310005 exp', el);
+    expect(result).not.toContain('378282246310005');
+    expect(result).toContain('****');
+  });
+
+  it('does NOT mask a 16-digit non-card number (fails Luhn)', () => {
+    const el = makeInput({ name: 'notes' });
+    const result = redactor.maskValue('order 1234567890123456', el);
+    expect(result).toContain('1234567890123456'); // preserved — not a real card
+  });
+
+  it('masks a parenthesized / spaced phone number', () => {
+    const el = makeInput({ name: 'notes' });
+    const result = redactor.maskValue('call (555) 123 4567 please', el);
+    expect(result).not.toContain('123 4567');
+    expect(result).toContain('***-***-****');
   });
 
   it('masks date of birth pattern', () => {
@@ -143,41 +165,23 @@ describe('Redactor.maskValue', () => {
 });
 
 // ──────────────────────────────────────────────
-// redactStep
+// Luhn gate (SEC-3)
 // ──────────────────────────────────────────────
 
-describe('Redactor.redactStep', () => {
+describe('Redactor._luhnValid', () => {
   let redactor;
   beforeEach(() => { redactor = new Redactor(); });
 
-  it('returns null/undefined as-is', () => {
-    expect(redactor.redactStep(null)).toBeNull();
-    expect(redactor.redactStep(undefined)).toBeUndefined();
+  it('accepts known-valid card numbers', () => {
+    expect(redactor._luhnValid('4111111111111111')).toBe(true); // Visa test
+    expect(redactor._luhnValid('378282246310005')).toBe(true);  // Amex test
   });
 
-  it('replaces value with bullet dots when isSensitive is true', () => {
-    const step = { action: 'type', fieldName: 'Password', value: 'hunter2', isSensitive: true };
-    const result = redactor.redactStep(step);
-    expect(result.value).toBe('••••••••');
-  });
-
-  it('preserves value when isSensitive is false', () => {
-    const step = { action: 'type', fieldName: 'Name', value: 'Alice', isSensitive: false };
-    const result = redactor.redactStep(step);
-    expect(result.value).toBe('Alice');
-  });
-
-  it('does not mutate the original step', () => {
-    const step = { action: 'type', fieldName: 'Password', value: 'hunter2', isSensitive: true };
-    redactor.redactStep(step);
-    expect(step.value).toBe('hunter2');
-  });
-
-  it('preserves non-sensitive fields unchanged', () => {
-    const step = { action: 'click', fieldName: 'Submit', value: '', isSensitive: false, url: 'https://example.com' };
-    const result = redactor.redactStep(step);
-    expect(result.action).toBe('click');
-    expect(result.fieldName).toBe('Submit');
-    expect(result.url).toBe('https://example.com');
+  it('rejects non-Luhn digit runs and wrong lengths', () => {
+    expect(redactor._luhnValid('1234567890123456')).toBe(false);
+    expect(redactor._luhnValid('123456789')).toBe(false); // too short
   });
 });
+
+// NOTE: redactStep() was removed (SEC-2). The server-side backstop is now
+// covered by tests/core/privacy-utils.test.js (maskGenericPII).

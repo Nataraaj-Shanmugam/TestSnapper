@@ -29,26 +29,25 @@ const LIBRARIES = [
   {
     name: 'docx.min.js',
     url: 'https://unpkg.com/docx@7.8.2/build/index.js',
-    // sha384 of docx@7.8.2/build/index.js from unpkg — run setup-libs to
-    // confirm this matches your downloaded copy.
-    knownSha384: null // computed at download time; update after first run
+    // sha384 of the copy currently shipped in libs/ (TOFU-pinned 2026-07-04).
+    knownSha384: 'QxNyiozsFHtk+CF8nwd9MwE50MZuAAGZuwp/tHHW790X9zq+45L4/LS1Yhi+NJRU'
   },
   {
     name: 'html2pdf.bundle.min.js',
     url: 'https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js',
-    knownSha384: null
+    // sha384 of the copy currently shipped in libs/ (TOFU-pinned 2026-07-04).
+    knownSha384: 'x0pf6PlKg8dNEMtgviNo4aEmRQJc11QyHXYibt9al8MH6yWkcffjV4tvwJwti1ed'
   },
   {
     // FUNC-005: jsPDF UMD build for local CSP-safe PDF export.
     // Extension CSP (script-src 'self') blocks CDN scripts; this local copy
     // is loaded via chrome.runtime.getURL in export-service.js.
     //
-    // Known SRI for jspdf@2.5.1 UMD:
-    //   sha384-/5esdnUhQAMaXXTSUSMxlECxJBMJRyWVl5l5Jrt0tMwNzgH7mXEEGWMUKF2HRex
-    // (verify with: openssl dgst -sha384 -binary libs/jspdf.umd.min.js | openssl base64 -A)
+    // sha384 of jspdf@2.5.1 UMD — cross-verified identical from cdnjs,
+    // jsdelivr, and unpkg on 2026-07-04.
     name: 'jspdf.umd.min.js',
     url: 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
-    knownSha384: '/5esdnUhQAMaXXTSUSMxlECxJBMJRyWVl5l5Jrt0tMwNzgH7mXEEGWMUKF2HRex'
+    knownSha384: 'JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk'
   }
 ];
 
