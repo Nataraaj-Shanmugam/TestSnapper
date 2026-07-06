@@ -1,6 +1,6 @@
 {
   "name": "testsnapper-extension",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "TestSnapper Browser Extension - Record UI test sessions with automated field detection and multi-format export",
   "scripts": {
     "build": "cross-env NODE_ENV=production webpack --mode=production",
