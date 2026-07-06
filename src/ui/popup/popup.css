@@ -1713,14 +1713,68 @@ header h1 { position: static !important; transform: none !important; left: auto 
 .btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; transform: none !important; box-shadow: none !important; }
 .btn-small { border-radius: 7px !important; }
 
-/* Inputs / selects — readable in both themes, soft focus ring. */
-input, select, .select, textarea {
+/* Inputs / selects — readable in both themes, soft focus ring.
+   Checkboxes/radios EXCLUDED so their native rendering isn't clobbered. */
+input:not([type="checkbox"]):not([type="radio"]), select, .select, textarea {
   background: var(--bg-primary) !important; border: 1px solid var(--border) !important; border-radius: 9px !important;
   color: var(--text-primary) !important; transition: border-color var(--ts-fast), box-shadow var(--ts-fast);
 }
-[data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] .select, [data-theme="dark"] textarea { background: var(--bg-tertiary) !important; }
-input:focus, select:focus, textarea:focus, .select:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-subtle) !important; outline: none !important; }
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]), [data-theme="dark"] select,
+[data-theme="dark"] .select, [data-theme="dark"] textarea { background: var(--bg-tertiary) !important; }
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus, .select:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-subtle) !important; outline: none !important; }
+
+/* Checkboxes / radios — clean native control tinted with the accent. */
+input[type="checkbox"], input[type="radio"] {
+  appearance: auto !important; -webkit-appearance: auto !important;
+  width: 16px !important; height: 16px !important;
+  accent-color: var(--accent) !important; cursor: pointer !important;
+  background: none !important; border: none !important; border-radius: 0 !important;
+}
 
 /* Tasteful motion: gentle fade-in when switching tabs. */
 .tab-content.active { animation: ts-fade-in 0.22s var(--ts-ease); }
 @keyframes ts-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ==================== EXPORT TAB (Soft cards) ==================== */
+/* Section headers with an accent icon. */
+.export-section h3, .storage-section h3, .steps-viewer h3 {
+  display: flex !important; align-items: center !important; gap: 8px !important;
+  font-size: 13px !important; font-weight: 600 !important; color: var(--text-primary) !important;
+  margin-bottom: 12px !important;
+}
+.export-section h3 svg, .storage-section h3 svg, .steps-viewer h3 svg { color: var(--accent) !important; }
+
+/* Form groups + labels. */
+.form-group { margin-bottom: 14px !important; }
+.form-group > label { display: block !important; font-size: 12px !important; color: var(--text-muted) !important;
+  margin-bottom: 6px !important; font-weight: 500 !important; }
+
+/* Export format — selectable chips instead of raw radios. */
+.format-options { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
+.radio-label {
+  display: inline-flex !important; align-items: center !important; gap: 7px !important;
+  padding: 7px 12px !important; border: 1px solid var(--border) !important; border-radius: 8px !important;
+  background: var(--bg-primary) !important; cursor: pointer !important; font-size: 12px !important;
+  transition: border-color var(--ts-fast), background var(--ts-fast), color var(--ts-fast);
+}
+[data-theme="dark"] .radio-label { background: var(--bg-tertiary) !important; }
+.radio-label:hover { border-color: var(--accent-border) !important; }
+.radio-label input[type="radio"] { width: 14px !important; height: 14px !important; accent-color: var(--accent) !important; margin: 0 !important; }
+.radio-label input:checked + span { color: var(--accent) !important; font-weight: 600 !important; }
+
+/* Export is the primary action of this tab — make it prominent. */
+#exportBtn { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; margin-top: 4px !important; }
+#exportBtn:hover:not(:disabled) { background: var(--accent-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+
+/* Storage usage bar. */
+.storage-usage { margin-bottom: 10px !important; }
+.storage-bar-container { background: var(--bg-tertiary) !important; border-radius: 999px !important; height: 8px !important; overflow: hidden !important; }
+.storage-usage-bar { border-radius: 999px !important; height: 8px !important; transition: width var(--ts) !important; }
+.storage-usage-text { font-size: 11px !important; color: var(--text-muted) !important; display: block !important; margin-top: 6px !important; }
+.storage-actions { display: flex !important; gap: 8px !important; margin-top: 10px !important; }
+.storage-actions .btn { flex: 1 !important; }
+
+/* Selected format chip — highlighted on Chrome 105+ (:has); the visible radio
+   is the fallback indicator on older supported Chrome. */
+.radio-label:has(input:checked) { border-color: var(--accent) !important; background: var(--accent-subtle) !important; }
+.radio-label:has(input:checked) span { color: var(--accent) !important; font-weight: 600 !important; }

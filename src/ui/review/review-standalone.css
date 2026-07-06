@@ -1431,13 +1431,27 @@ body::before, [data-theme="dark"] body::before,
 .icon-btn { color: var(--text-muted) !important; border-radius: 8px !important; transition: background var(--ts-fast), color var(--ts-fast); }
 .icon-btn:hover { color: var(--text-primary) !important; background: var(--bg-hover) !important; }
 
-/* Inputs — readable, soft focus ring. */
-.input-styled, .select-styled, .search-input, textarea, input, select {
+/* Inputs — readable, soft focus ring. Checkboxes/radios EXCLUDED so their
+   native rendering isn't clobbered (that broke the step-select checkmark). */
+.input-styled, .select-styled, .search-input, textarea,
+input:not([type="checkbox"]):not([type="radio"]), select {
   background: var(--bg-primary) !important; border: 1px solid var(--border) !important; border-radius: 9px !important;
   color: var(--text-primary) !important; transition: border-color var(--ts-fast), box-shadow var(--ts-fast);
 }
 [data-theme="dark"] .input-styled, [data-theme="dark"] .select-styled, [data-theme="dark"] .search-input,
-[data-theme="dark"] textarea, [data-theme="dark"] input, [data-theme="dark"] select { background: var(--bg-tertiary) !important; }
+[data-theme="dark"] textarea,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]), [data-theme="dark"] select { background: var(--bg-tertiary) !important; }
+
+/* Checkboxes/radios — clean native control tinted with the accent. The step
+   checkbox previously used an appearance:none design whose white checkmark
+   vanished under the forced white background; use the native check instead. */
+input[type="checkbox"], input[type="radio"], .step-checkbox {
+  appearance: auto !important; -webkit-appearance: auto !important;
+  width: 18px !important; height: 18px !important;
+  accent-color: var(--accent) !important; cursor: pointer !important;
+  background: none !important; border: none !important; border-radius: 0 !important; box-shadow: none !important;
+}
+.step-checkbox::after, .step-checkbox::before { content: none !important; }
 .input-styled:focus, .select-styled:focus, .search-input:focus, textarea:focus, input:focus, select:focus {
   border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-subtle) !important; outline: none !important;
 }
