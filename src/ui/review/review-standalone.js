@@ -624,7 +624,8 @@ function generateStepDescription(step) {
     case 'submit':
       return `Submit the form`;
     case 'screenshot':
-      return step.isManual ? '📸 Manual screenshot' : '📸 Auto screenshot';
+      if (step.isManual) return '📸 Manual screenshot';
+      return step.screenshotTrigger === 'navigation' ? '📸 Navigation screenshot' : '📸 Auto screenshot';
     case 'apicall':
       return step.description ? `🌐 ${Utils.escapeHtml(step.description)}` : `🌐 API ${value}`.trim();
     default:

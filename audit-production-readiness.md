@@ -148,6 +148,21 @@ The popup select and `ExportService._resolveExportImageOpts()` use the values **
 
 ---
 
+## Follow-up: navigation-screenshot conflation (user-reported)
+
+**Symptom:** "Auto-Capture Screenshots" disabled, but automatic screenshots still appear.
+**Cause:** two distinct settings both produced steps labeled "Auto Screenshot":
+`autoScreenshot` (periodic, default off — correctly gated) and `captureOnNavigation`
+("Screenshot Before Navigation", default **on**). The P0-5 fix wired the navigation
+capture to actually fire; it was mislabeled "Auto Screenshot", so a disabled periodic
+setting looked broken.
+**Fix (user chose "one toggle controls all"):** navigation screenshots now require
+`autoScreenshot` to be ON (`recorder-utils.shouldCaptureNavigationScreenshot`, mirrored
+inline in `content.js captureNavigation`), so disabling auto-capture stops ALL automatic
+screenshots. Navigation captures are relabeled "Navigation Screenshot" (+ `screenshotTrigger`
+field; review/utils descriptions updated). Popup greys out "Screenshot Before Navigation"
+when auto-capture is off. +5 unit tests.
+
 ## Feature deep-dive findings (end-to-end flow traces)
 
 ### FD-1 (P0/privacy): Auto-screenshot can capture the WRONG tab's content

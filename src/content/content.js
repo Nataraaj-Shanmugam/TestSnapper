@@ -1029,12 +1029,18 @@ function captureNavigation() {
 
   lastNavigationUrl = currentUrl;
 
-  // If a sensitive field (password, CC, SSN, etc.) is active when the
-  // navigation fires, suppress the automatic screenshot so PII isn't captured.
-  // Also honor the "Screenshot on Navigation" setting (captureOnNavigation).
+  // "Auto-Capture Screenshots" is the master switch for ALL automatic
+  // screenshots. A navigation screenshot is taken only when auto-capture is on
+  // AND "Screenshot Before Navigation" is on. If auto-capture is off, the
+  // navigate STEP is still recorded, but no screenshot is captured — so
+  // disabling auto-capture stops every automatic screenshot.
   const activeEl = document.activeElement;
-  const navScreenshotEnabled = !sessionSettings || sessionSettings.captureOnNavigation !== false;
-  const suppressScreenshot = !navScreenshotEnabled || (activeEl && redactor && redactor.shouldIgnoreField(activeEl));
+  const autoCaptureOn = !!(sessionSettings && sessionSettings.autoScreenshot);
+  const navOptIn = !sessionSettings || sessionSettings.captureOnNavigation !== false;
+  // Suppress when auto-capture is off, the nav sub-option is off, or a sensitive
+  // field is active (avoid capturing PII on screen).
+  const suppressScreenshot = !autoCaptureOn || !navOptIn ||
+    (activeEl && redactor && redactor.shouldIgnoreField(activeEl));
 
   const stepData = {
     action: 'navigate',
@@ -1055,11 +1061,11 @@ function captureNavigation() {
 
   sendStepToBackground(stepData);
 
-  // P0-5: actually take the navigation screenshot (previously only a flag was
-  // set and no capture ever happened). Background applies rate limiting and
-  // the recorded-tab/visibility checks.
+  // Take the navigation screenshot only when not suppressed. `trigger:'navigation'`
+  // lets the background label it "Navigation Screenshot" (distinct from the
+  // periodic "Auto Screenshot"), so the two automatic sources are never conflated.
   if (!suppressScreenshot) {
-    chrome.runtime.sendMessage({ action: 'captureScreenshot', isManual: false }, function () {
+    chrome.runtime.sendMessage({ action: 'captureScreenshot', isManual: false, trigger: 'navigation' }, function () {
       void chrome.runtime.lastError; // capture may be rate-limited/skipped — fine
     });
   }

@@ -106,6 +106,34 @@ export function shouldRecordRequest(details, filter, ok) {
 }
 
 /**
+ * Decide whether a page navigation should trigger an automatic screenshot.
+ *
+ * "Auto-Capture Screenshots" (settings.autoScreenshot) is the MASTER switch for
+ * all automatic screenshots. "Screenshot Before Navigation"
+ * (settings.captureOnNavigation) is a sub-option that only applies when the
+ * master is on. A screenshot is also suppressed when a sensitive field is
+ * focused (avoid capturing on-screen PII).
+ *
+ * NOTE: content.js (a classic script that cannot import ES modules) mirrors this
+ * exact rule inline in captureNavigation(). Keep the two in sync — this copy is
+ * the tested source of truth.
+ *
+ * @param {Object} settings - session settings ({ autoScreenshot, captureOnNavigation })
+ * @param {boolean} sensitiveFieldActive - true if a sensitive field is focused
+ * @returns {boolean} true if a navigation screenshot should be captured
+ *
+ * @example
+ * shouldCaptureNavigationScreenshot({ autoScreenshot: false, captureOnNavigation: true }, false) → false
+ * shouldCaptureNavigationScreenshot({ autoScreenshot: true,  captureOnNavigation: true }, false) → true
+ */
+export function shouldCaptureNavigationScreenshot(settings, sensitiveFieldActive) {
+  const s = settings || {};
+  const autoCaptureOn = !!s.autoScreenshot;                // master OFF by default
+  const navOptIn = s.captureOnNavigation !== false;        // sub-option ON by default
+  return autoCaptureOn && navOptIn && !sensitiveFieldActive;
+}
+
+/**
  * Validates and clamps raw settings to safe ranges.
  *
  * Out-of-range numeric values are clamped to min/max; invalid enum values

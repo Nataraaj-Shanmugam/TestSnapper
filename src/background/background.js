@@ -557,7 +557,7 @@ async function persistActiveRecording() {
  *
  * @note Captures the full visible viewport; redaction applies to recorded values only — on-screen PII in screenshots is not masked.
  */
-async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
+async function captureScreenshot(tabId, isManual = true, forceAnyTab = false, trigger = null) {
   Logger.debug('📸 Screenshot capture requested for tab:', tabId, 'manual:', isManual);
 
   if (!stateManager.isRecording()) {
@@ -654,7 +654,12 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false) {
       sequence: sequence,
       action: 'screenshot',
       fieldName: 'Screenshot',
-      targetLabel: isManual ? 'Manual Screenshot' : 'Auto Screenshot',
+      // Distinguish the automatic sources so a navigation-triggered capture is
+      // never mislabeled "Auto Screenshot" (the periodic auto-capture).
+      targetLabel: isManual
+        ? 'Manual Screenshot'
+        : (trigger === 'navigation' ? 'Navigation Screenshot' : 'Auto Screenshot'),
+      screenshotTrigger: isManual ? 'manual' : (trigger || 'auto'),
       url: sanitizeUrl(tab.url), // SEC-1: strip tokens from the captured tab URL
       value: null,
       isSensitive: false,
@@ -1243,8 +1248,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'captureScreenshot':
           if (!tabId) throw new Error('No tab context for screenshot');
-          // message.isManual is false for auto-screenshot interval, true (default) for manual
-          response = await captureScreenshot(tabId, message.isManual !== false);
+          // message.isManual is false for auto/navigation captures, true (default) for manual.
+          // message.trigger ('navigation') distinguishes the automatic sources for labeling.
+          response = await captureScreenshot(tabId, message.isManual !== false, false, message.trigger || null);
           break;
 
         // Both UIs export locally via their own ExportService instance — there is no

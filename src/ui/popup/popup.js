@@ -267,6 +267,7 @@ function setupEventListeners() {
 
   autoScreenshot?.addEventListener("change", (e) => {
     if (screenshotInterval) screenshotInterval.style.display = e.target.checked ? "block" : "none";
+    syncNavScreenshotDependency();
   });
 
   captureFailedCalls?.addEventListener("change", (e) => {
@@ -287,6 +288,24 @@ function setupEventListeners() {
 
   // POP-MED-001: Keyboard navigation
   setupKeyboardNavigation();
+}
+
+/**
+ * "Auto-Capture Screenshots" is the master switch for all automatic screenshots.
+ * "Screenshot Before Navigation" is a sub-option that only applies when
+ * auto-capture is on, so grey it out (and visually mark the dependency) when
+ * auto-capture is off.
+ */
+function syncNavScreenshotDependency() {
+  const navBox = document.getElementById('captureOnNavigation');
+  if (!navBox) return;
+  const enabled = !!autoScreenshot?.checked;
+  navBox.disabled = !enabled;
+  const label = navBox.closest('.checkbox-label') || navBox.parentElement;
+  if (label) {
+    label.style.opacity = enabled ? '' : '0.5';
+    label.title = enabled ? '' : 'Enable "Auto-Capture Screenshots" to use this';
+  }
 }
 
 // =====================
@@ -774,6 +793,7 @@ async function loadSettings() {
     // Update visibility
     if (apiCallsOptions) apiCallsOptions.style.display = captureApiCalls?.checked ? "block" : "none";
     if (screenshotInterval) screenshotInterval.style.display = autoScreenshot?.checked ? "block" : "none";
+    syncNavScreenshotDependency();
   } catch (err) {
     console.error("Load settings failed:", err);
   }

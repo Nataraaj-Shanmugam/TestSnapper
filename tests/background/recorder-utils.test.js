@@ -1,5 +1,35 @@
 import { describe, it, expect } from 'vitest';
-import { _isConsecutiveDuplicate, shouldRecordRequest, validateSettings } from '../../src/core/recorder-utils.js';
+import { _isConsecutiveDuplicate, shouldRecordRequest, validateSettings, shouldCaptureNavigationScreenshot } from '../../src/core/recorder-utils.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// shouldCaptureNavigationScreenshot — "Auto-Capture Screenshots" is the master
+// switch; navigation screenshots require it ON (bug: nav shots fired while the
+// periodic auto-capture was disabled, mislabeled "Auto Screenshot").
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('shouldCaptureNavigationScreenshot', () => {
+  it('does NOT capture when auto-capture is off (even if captureOnNavigation is on)', () => {
+    expect(shouldCaptureNavigationScreenshot({ autoScreenshot: false, captureOnNavigation: true }, false)).toBe(false);
+  });
+
+  it('captures when auto-capture is on and captureOnNavigation is on (default)', () => {
+    expect(shouldCaptureNavigationScreenshot({ autoScreenshot: true, captureOnNavigation: true }, false)).toBe(true);
+    expect(shouldCaptureNavigationScreenshot({ autoScreenshot: true }, false)).toBe(true); // nav opt-in defaults on
+  });
+
+  it('does NOT capture when captureOnNavigation is explicitly off', () => {
+    expect(shouldCaptureNavigationScreenshot({ autoScreenshot: true, captureOnNavigation: false }, false)).toBe(false);
+  });
+
+  it('suppresses capture when a sensitive field is focused', () => {
+    expect(shouldCaptureNavigationScreenshot({ autoScreenshot: true, captureOnNavigation: true }, true)).toBe(false);
+  });
+
+  it('treats missing settings as no capture (master defaults off)', () => {
+    expect(shouldCaptureNavigationScreenshot(undefined, false)).toBe(false);
+    expect(shouldCaptureNavigationScreenshot({}, false)).toBe(false);
+  });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // _isConsecutiveDuplicate

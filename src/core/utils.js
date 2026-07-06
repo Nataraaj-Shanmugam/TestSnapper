@@ -124,7 +124,7 @@ export const Utils = {
    * Generate a human-readable description for a recorded step.
    */
   generateStepDescription(step) {
-    const { action, fieldName, value, isManual } = step;
+    const { action, fieldName, value, isManual, screenshotTrigger } = step;
     const field = (fieldName || '').trim();
     const val = (value || '').trim();
     switch (action) {
@@ -148,7 +148,8 @@ export const Utils = {
       case 'navigate':
         return val ? `Navigated to ${val}` : 'Navigated to page';
       case 'screenshot':
-        return isManual ? 'Manual screenshot taken' : 'Auto screenshot captured';
+        if (isManual) return 'Manual screenshot taken';
+        return screenshotTrigger === 'navigation' ? 'Navigation screenshot captured' : 'Auto screenshot captured';
       default:
         return field ? `${action} on ${field}` : action;
     }
