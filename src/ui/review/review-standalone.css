@@ -1410,3 +1410,17 @@ header::before,
 .step-card {
   border-radius: 12px;
 }
+
+/* ==================================================================
+   REFRESH v2 — force system sans across the whole review UI; monospace
+   only for genuine code. (Headings/labels/inputs that set --font-mono
+   explicitly kept the monospace "terminal" look otherwise.)
+   ================================================================== */
+body, body * {
+  font-family: var(--font-display) !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+}
+code, pre, kbd, samp, .mono, .code, .step-selector code, [class*="selector"] code {
+  font-family: var(--font-mono) !important;
+}

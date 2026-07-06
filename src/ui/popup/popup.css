@@ -1685,3 +1685,32 @@ header::before,
 [data-theme="dark"] * {
   clip-path: none !important;
 }
+
+/* ==================================================================
+   REFRESH v2 — "simple & professional". The earlier pass missed the many
+   elements that set font-family: var(--font-mono) EXPLICITLY, so headings,
+   labels, inputs, and the footer stayed monospace (the "nerdy" look).
+   This forces a system sans across the whole UI and keeps monospace only
+   for genuine code. Appended last so it wins on source order.
+   ================================================================== */
+body, body * {
+  font-family: var(--font-display) !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+}
+code, pre, kbd, samp, .mono, .code, [class*="selector"] code {
+  font-family: var(--font-mono) !important;
+}
+/* Header was overlapping: absolutely-centered <h1> collided with the help
+   button. Put the title in normal flow beside the icon; group the action
+   buttons on the right. */
+header h1 {
+  position: static !important;
+  transform: none !important;
+  left: auto !important;
+  width: auto !important;
+  font-size: var(--text-lg) !important;
+}
+#keyboardShortcutsHelp {
+  margin-left: auto !important;
+}
