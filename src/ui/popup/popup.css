@@ -1778,3 +1778,34 @@ input[type="checkbox"], input[type="radio"] {
    is the fallback indicator on older supported Chrome. */
 .radio-label:has(input:checked) { border-color: var(--accent) !important; background: var(--accent-subtle) !important; }
 .radio-label:has(input:checked) span { color: var(--accent) !important; font-weight: 600 !important; }
+
+/* ---- Export format: proper segmented chips (hide the raw radio) ----
+   The native radio rendered as an ugly box next to each label. Hide it and
+   make the whole chip the control; selection = highlighted chip (:has,
+   Chrome 105+ — matches minimum_chrome_version). */
+.format-options { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
+.radio-label {
+  position: relative !important;
+  display: inline-flex !important; align-items: center !important; justify-content: center !important;
+  min-width: 62px !important; padding: 9px 14px !important;
+  border: 1px solid var(--border) !important; border-radius: 9px !important;
+  background: var(--bg-primary) !important; color: var(--text-secondary) !important;
+  cursor: pointer !important; font-size: 12px !important; font-weight: 500 !important;
+  transition: border-color var(--ts-fast), background var(--ts-fast), color var(--ts-fast) !important;
+}
+[data-theme="dark"] .radio-label { background: var(--bg-tertiary) !important; }
+.radio-label input[type="radio"] {
+  position: absolute !important; opacity: 0 !important; width: 1px !important; height: 1px !important;
+  margin: 0 !important; pointer-events: none !important;
+}
+.radio-label span { color: inherit !important; font-weight: inherit !important; }
+.radio-label:hover { border-color: var(--accent-border) !important; color: var(--text-primary) !important; }
+.radio-label:has(input:checked) {
+  border-color: var(--accent) !important; background: var(--accent-subtle) !important; color: var(--accent) !important;
+}
+
+/* Remove the leftover terminal "[X]" / "[ ]" bracket decoration on format labels. */
+.radio-label span::before, .radio-label span::after,
+.radio-label input:checked + span::before, .radio-label input:checked + span::after {
+  content: none !important; display: none !important;
+}

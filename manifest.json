@@ -5,8 +5,7 @@
   "version": "0.0.0",
   "author": "TestSnapper Team",
   "offline_enabled": true,
-  "minimum_chrome_version": "98",
-
+  "minimum_chrome_version": "105",
   "permissions": [
     "tabs",
     "activeTab",
@@ -20,16 +19,13 @@
   "host_permissions": [
     "<all_urls>"
   ],
-
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   },
-
   "background": {
     "service_worker": "src/background/background.js",
     "type": "module"
   },
-
   "content_scripts": [
     {
       "matches": [
@@ -47,7 +43,6 @@
       "all_frames": true
     }
   ],
-
   "action": {
     "default_popup": "src/ui/popup/popup.html",
     "default_title": "TestSnapper - Record UI Tests",
@@ -57,13 +52,11 @@
       "128": "src/assets/icons/icon128.png"
     }
   },
-
   "icons": {
     "16": "src/assets/icons/icon16.png",
     "48": "src/assets/icons/icon48.png",
     "128": "src/assets/icons/icon128.png"
   },
-
   "commands": {
     "capture_screenshot": {
       "suggested_key": {
@@ -87,11 +80,14 @@
       "description": "Stop recording"
     }
   },
-
-  "web_accessible_resources": [{
-    "resources": [
-      "src/assets/icons/*"
-    ],
-    "matches": ["chrome-extension://*/*"]
-  }]
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/assets/icons/*"
+      ],
+      "matches": [
+        "chrome-extension://*/*"
+      ]
+    }
+  ]
 }
