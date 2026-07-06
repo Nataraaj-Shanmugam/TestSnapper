@@ -1365,150 +1365,83 @@ body::before {
 .hidden {
     display: none !important;
 }
-/* ==================================================================
-   VISUAL REFRESH (v1.1.6) — calm the terminal/neon look. Token values
-   updated above; this block neutralizes decorative terminal effects.
-   Appended last (source-order wins); no class/id names change.
-   ================================================================== */
-body, .tab, .btn, button, h1, h2, h3, label, .section-title, .step-number-badge {
-  text-transform: none !important;
-  letter-spacing: normal !important;
-}
-h1, h2, h3, .logo, .brand, .section-title, .step-number-badge {
-  text-shadow: none !important;
-}
-.logo, .logo svg, .brand svg {
-  filter: none !important;
-}
-body::before,
-[data-theme="dark"] body::before,
-header::before,
-[data-theme="dark"] header::before,
-[data-theme="dark"] .step-card::before,
-[data-theme="dark"] .sidebar::after {
-  content: none !important;
-  display: none !important;
-  animation: none !important;
-}
-[data-theme="dark"] header,
-[data-theme="dark"] .btn,
-[data-theme="dark"] button,
-[data-theme="dark"] .step-card,
-[data-theme="dark"] .sidebar,
-[data-theme="dark"] input,
-[data-theme="dark"] select,
-[data-theme="dark"] textarea,
-[data-theme="dark"] .input-styled,
-[data-theme="dark"] .select-styled,
-[data-theme="dark"] .modal,
-[data-theme="dark"] .step-number-badge {
-  border-radius: 8px !important;
-}
-[data-theme="dark"] * {
-  clip-path: none !important;
-}
-.step-card {
-  border-radius: 12px;
-}
 
 /* ==================================================================
-   REFRESH v2 — force system sans across the whole review UI; monospace
-   only for genuine code. (Headings/labels/inputs that set --font-mono
-   explicitly kept the monospace "terminal" look otherwise.)
+   SOFT CARDS — chosen design (v4), review page. White cards on a soft
+   grey page, filled primary, tasteful micro-motion. Shared light + dark.
+   Structure/classes unchanged — JS untouched.
    ================================================================== */
-body, body * {
-  font-family: var(--font-display) !important;
-  letter-spacing: normal !important;
-  text-transform: none !important;
-}
-code, pre, kbd, samp, .mono, .code, .step-selector code, [class*="selector"] code {
-  font-family: var(--font-mono) !important;
-}
+:root { --ts-ease: cubic-bezier(0.4,0,0.2,1); --ts-fast: 0.15s var(--ts-ease); --ts: 0.2s var(--ts-ease); }
 
-/* ==================================================================
-   PROFESSIONAL REVAMP (v3) — review page
-   Unifies dark onto the light design (no divergent terminal treatment)
-   and elevates the component styling. Structure/classes unchanged.
-   ================================================================== */
+/* Typography: sans everywhere, mono only for real code. */
+body, body * { font-family: var(--font-display) !important; letter-spacing: normal !important; text-transform: none !important; }
+code, pre, kbd, samp, .mono, .step-selector code, [class*="selector"] code { font-family: var(--font-mono) !important; }
 
-/* 1. Strip dark-only decorations. */
-[data-theme="dark"] .page-header::before,
-[data-theme="dark"] .page-header::after,
-[data-theme="dark"] .step-card::before,
-[data-theme="dark"] .sidebar::after,
-[data-theme="dark"] .session-settings-card::before {
-  content: none !important;
-  animation: none !important;
-  display: none !important;
-}
-[data-theme="dark"] .page-header,
-[data-theme="dark"] .toolbar,
-[data-theme="dark"] .step-card,
-[data-theme="dark"] .session-settings-card,
-[data-theme="dark"] .btn,
-[data-theme="dark"] .input-styled,
-[data-theme="dark"] .select-styled,
-[data-theme="dark"] .search-input,
-[data-theme="dark"] .icon-btn {
-  box-shadow: none !important;
-  border-width: 1px !important;
-}
+/* Page = soft grey; cards = white. Dark: page darkest, cards one step up. */
+body { background: var(--bg-secondary) !important; }
+[data-theme="dark"] body { background: var(--bg-primary) !important; }
 
-/* 2. Page header — clean card with a subtle bottom accent. */
-.page-header {
-  background: var(--bg-secondary) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 12px !important;
-  box-shadow: none !important;
+/* Strip legacy terminal decorations. */
+body::before, [data-theme="dark"] body::before,
+.page-header::before, [data-theme="dark"] .page-header::before,
+.page-header::after, [data-theme="dark"] .page-header::after,
+.step-card::before, [data-theme="dark"] .step-card::before,
+.sidebar::after, [data-theme="dark"] .sidebar::after,
+.session-settings-card::before, [data-theme="dark"] .session-settings-card::before {
+  content: none !important; animation: none !important; display: none !important;
 }
+[data-theme="dark"] * { clip-path: none !important; }
+
+/* Sidebar + main surfaces. */
+.sidebar { background: var(--bg-primary) !important; border-right: 1px solid var(--border) !important; }
+[data-theme="dark"] .sidebar { background: var(--bg-secondary) !important; }
+
+/* Cards — page header, settings, toolbar, step cards. */
+.page-header, .session-settings-card, .toolbar {
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important;
+}
+[data-theme="dark"] .page-header, [data-theme="dark"] .session-settings-card, [data-theme="dark"] .toolbar { background: var(--bg-secondary) !important; }
 .page-header h1, .page-header h2 { color: var(--text-primary) !important; font-weight: 600 !important; }
 
-/* 3. Cards — session settings, toolbar, step cards. */
-.session-settings-card, .toolbar {
-  background: var(--bg-secondary) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 12px !important;
-  box-shadow: none !important;
-}
+/* Step cards — white, soft, gentle hover lift. */
 .step-card {
-  background: var(--bg-primary) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 12px !important;
-  box-shadow: none !important;
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important;
+  transition: box-shadow var(--ts), border-color var(--ts), transform var(--ts);
+  animation: ts-card-in 0.25s var(--ts-ease);
 }
-.step-card:hover { border-color: var(--accent-border) !important; }
-.step-number-badge {
-  background: var(--accent-subtle) !important;
-  color: var(--accent) !important;
-  border-radius: 8px !important;
-  font-weight: 600 !important;
-}
+[data-theme="dark"] .step-card { background: var(--bg-secondary) !important; }
+.step-card:hover { border-color: var(--accent-border) !important; box-shadow: var(--shadow-md) !important; transform: translateY(-1px) !important; }
+.step-number-badge { background: var(--accent-subtle) !important; color: var(--accent) !important; border-radius: 8px !important; font-weight: 600 !important; }
 
-/* 4. Buttons — one calm system, clear primary. */
+/* Buttons — one calm system, tasteful lift. */
 .btn {
-  border-radius: 8px !important;
-  font-weight: 500 !important;
-  box-shadow: none !important;
-  border: 1px solid transparent !important;
+  border-radius: 9px !important; font-weight: 500 !important; border: 1px solid transparent !important; box-shadow: none !important;
+  transition: background var(--ts-fast), border-color var(--ts-fast), color var(--ts-fast), transform var(--ts-fast), box-shadow var(--ts-fast);
 }
-.btn-primary { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; }
-.btn-danger { background: var(--danger) !important; color: #fff !important; border-color: var(--danger) !important; }
-.btn-secondary {
-  background: transparent !important;
-  color: var(--text-secondary) !important;
-  border-color: var(--border) !important;
-}
+.btn:hover:not(:disabled) { transform: translateY(-1px) !important; }
+.btn:active:not(:disabled) { transform: translateY(0) scale(0.99) !important; }
+.btn-primary { background: var(--accent) !important; color: #fff !important; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+.btn-danger { background: var(--danger) !important; color: #fff !important; }
+.btn-secondary { background: var(--bg-tertiary) !important; color: var(--text-secondary) !important; border-color: transparent !important; }
 .btn-secondary:hover:not(:disabled) { background: var(--bg-hover) !important; color: var(--text-primary) !important; }
-.btn:disabled { opacity: 0.45 !important; }
-.icon-btn { color: var(--text-muted) !important; }
+.btn:disabled { opacity: 0.45 !important; transform: none !important; box-shadow: none !important; }
+.icon-btn { color: var(--text-muted) !important; border-radius: 8px !important; transition: background var(--ts-fast), color var(--ts-fast); }
 .icon-btn:hover { color: var(--text-primary) !important; background: var(--bg-hover) !important; }
 
-/* 5. Inputs — readable in both themes. */
+/* Inputs — readable, soft focus ring. */
 .input-styled, .select-styled, .search-input, textarea, input, select {
-  background: var(--bg-primary) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 8px !important;
-  color: var(--text-primary) !important;
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important; border-radius: 9px !important;
+  color: var(--text-primary) !important; transition: border-color var(--ts-fast), box-shadow var(--ts-fast);
+}
+[data-theme="dark"] .input-styled, [data-theme="dark"] .select-styled, [data-theme="dark"] .search-input,
+[data-theme="dark"] textarea, [data-theme="dark"] input, [data-theme="dark"] select { background: var(--bg-tertiary) !important; }
+.input-styled:focus, .select-styled:focus, .search-input:focus, textarea:focus, input:focus, select:focus {
+  border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-subtle) !important; outline: none !important;
 }
 .meta-label { color: var(--text-muted) !important; }
+
+/* Motion keyframe for step cards. */
+@keyframes ts-card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }

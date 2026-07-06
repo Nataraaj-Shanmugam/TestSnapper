@@ -1616,222 +1616,111 @@ input[type="number"]:focus {
     content: '|';
   }
 }
-/* ==================================================================
-   VISUAL REFRESH (v1.1.6) — calm the "brutalist terminal / neon" look.
-   Token values (fonts, palette, shadows) were updated above; this block
-   neutralizes the remaining decorative terminal effects that were baked
-   into individual rules. Appended last so source-order wins; no class or
-   id names change, so all popup JS is unaffected.
-   ================================================================== */
-
-/* Sans UI text; remove UPPERCASE + wide letter-spacing terminal treatment. */
-body, .tab, .btn, .section-title, h1, h2, h3, label, .stat-label, .state-text {
-  text-transform: none !important;
-  letter-spacing: normal !important;
-}
-
-/* Kill neon text glows and logo drop-shadow glows. */
-h1, h2, h3, .logo, .brand, .section-title, .state-text, .tab, .stat-value {
-  text-shadow: none !important;
-}
-.logo, .brand svg, .logo svg {
-  filter: none !important;
-}
-
-/* Remove decorative scanline / grid overlays and animated corner pulses. */
-body::before,
-[data-theme="dark"] body::before,
-header::before,
-[data-theme="dark"] header::before,
-.stats::after,
-[data-theme="dark"] .stats::after,
-.export-section::after,
-[data-theme="dark"] .export-section::after,
-.storage-section::after,
-[data-theme="dark"] .storage-section::after,
-[data-theme="dark"] .tab::before,
-[data-theme="dark"] .tab.active::before {
-  content: none !important;
-  display: none !important;
-  animation: none !important;
-}
-
-/* Emphasis shadows use the soft drop shadow, never a neon ring. */
-.btn:hover, .tab.active, .card, .stats, .session-item {
-  box-shadow: var(--shadow-sm) !important;
-}
-
-/* Dark theme: remove angular corner-cut clip-paths and square corners so dark
-   matches the calm, rounded light theme (refresh). */
-[data-theme="dark"] header,
-[data-theme="dark"] .tab,
-[data-theme="dark"] .theme-toggle,
-[data-theme="dark"] .btn,
-[data-theme="dark"] button,
-[data-theme="dark"] .stats,
-[data-theme="dark"] .stat-card,
-[data-theme="dark"] .export-section,
-[data-theme="dark"] .storage-section,
-[data-theme="dark"] .card,
-[data-theme="dark"] input,
-[data-theme="dark"] select,
-[data-theme="dark"] textarea,
-[data-theme="dark"] .message,
-[data-theme="dark"] .session-select-trigger,
-[data-theme="dark"] .session-dropdown-list,
-[data-theme="dark"] .session-dropdown-item {
-  border-radius: 8px !important;
-}
-[data-theme="dark"] * {
-  clip-path: none !important;
-}
 
 /* ==================================================================
-   REFRESH v2 — "simple & professional". The earlier pass missed the many
-   elements that set font-family: var(--font-mono) EXPLICITLY, so headings,
-   labels, inputs, and the footer stayed monospace (the "nerdy" look).
-   This forces a system sans across the whole UI and keeps monospace only
-   for genuine code. Appended last so it wins on source order.
+   SOFT CARDS — chosen design (v4). White cards on a soft grey page,
+   segmented tabs, filled primary, tasteful micro-motion. ONE design
+   shared by light + dark (dark is the same design, darker surfaces).
+   Structure/classes unchanged — JS untouched.
    ================================================================== */
-body, body * {
-  font-family: var(--font-display) !important;
-  letter-spacing: normal !important;
-  text-transform: none !important;
-}
-code, pre, kbd, samp, .mono, .code, [class*="selector"] code {
-  font-family: var(--font-mono) !important;
-}
-/* Header was overlapping: absolutely-centered <h1> collided with the help
-   button. Put the title in normal flow beside the icon; group the action
-   buttons on the right. */
-header h1 {
-  position: static !important;
-  transform: none !important;
-  left: auto !important;
-  width: auto !important;
-  font-size: var(--text-lg) !important;
-}
-#keyboardShortcutsHelp {
-  margin-left: auto !important;
-}
+:root { --ts-ease: cubic-bezier(0.4,0,0.2,1); --ts-fast: 0.15s var(--ts-ease); --ts: 0.2s var(--ts-ease); }
 
-/* ==================================================================
-   PROFESSIONAL REVAMP (v3) — popup
-   The dark theme previously diverged into a separate "terminal" design
-   (2px borders, scan-line/corner-pulse animations, neon insets, light
-   hardcoded banners) which made it feel alienated and hid text. This
-   layer unifies BOTH themes onto one clean component design and elevates
-   the visual style. Structure/classes unchanged — JS untouched.
-   ================================================================== */
+/* Typography: sans everywhere, mono only for real code */
+body, body * { font-family: var(--font-display) !important; letter-spacing: normal !important; text-transform: none !important; }
+code, pre, kbd, samp, .mono { font-family: var(--font-mono) !important; }
 
-/* 1. Strip the dark-only terminal decorations so dark = light design. */
-[data-theme="dark"] .stat-item::before,
-[data-theme="dark"] .stats::after,
-[data-theme="dark"] header::before,
-[data-theme="dark"] .tab::before,
-[data-theme="dark"] .tab.active::before,
-[data-theme="dark"] .export-section::after,
-[data-theme="dark"] .storage-section::after {
-  content: none !important;
-  animation: none !important;
-  display: none !important;
-}
-[data-theme="dark"] header,
-[data-theme="dark"] .tab,
-[data-theme="dark"] .stats,
-[data-theme="dark"] .stat-item,
-[data-theme="dark"] .export-section,
-[data-theme="dark"] .storage-section,
-[data-theme="dark"] .btn,
-[data-theme="dark"] input,
-[data-theme="dark"] select,
-[data-theme="dark"] .select,
-[data-theme="dark"] textarea {
-  box-shadow: none !important;
-  border-width: 1px !important;
-}
+/* Page = soft grey; cards = white. Dark: page darkest, cards one step up. */
+body { background: var(--bg-secondary) !important; }
+[data-theme="dark"] body { background: var(--bg-primary) !important; }
 
-/* 2. Header — quiet, with a single hairline divider (no heavy accent bar). */
+/* Strip legacy terminal decorations (both themes); keep the recording pulse. */
+body::before, [data-theme="dark"] body::before,
+header::before, [data-theme="dark"] header::before,
+.stat-item::before, [data-theme="dark"] .stat-item::before,
+.stats::after, [data-theme="dark"] .stats::after,
+.tab::before, [data-theme="dark"] .tab::before, [data-theme="dark"] .tab.active::before,
+.export-section::after, [data-theme="dark"] .export-section::after,
+.storage-section::after, [data-theme="dark"] .storage-section::after {
+  content: none !important; animation: none !important; display: none !important;
+}
+[data-theme="dark"] * { clip-path: none !important; }
+
+/* Header — hairline divider, title left, actions right (fixes old overlap). */
 header {
-  border: none !important;
-  border-bottom: 1px solid var(--border) !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  padding: 2px 2px 12px !important;
-  margin-bottom: 14px !important;
+  background: transparent !important; border: none !important;
+  border-bottom: 1px solid var(--border) !important; border-radius: 0 !important;
+  box-shadow: none !important; padding: 2px 2px 12px !important; margin-bottom: 14px !important;
 }
-header h1 { color: var(--text-primary) !important; font-weight: 600 !important; }
+header h1 { position: static !important; transform: none !important; left: auto !important; width: auto !important;
+  color: var(--text-primary) !important; font-weight: 600 !important; font-size: 15px !important; }
 .header-icon { color: var(--accent) !important; }
+#keyboardShortcutsHelp { margin-left: auto !important; }
+.theme-toggle { border-radius: 8px !important; border: 1px solid var(--border) !important; background: var(--bg-primary) !important;
+  transition: background var(--ts-fast), border-color var(--ts-fast), color var(--ts-fast); }
+[data-theme="dark"] .theme-toggle { background: var(--bg-secondary) !important; }
+.theme-toggle:hover { border-color: var(--accent) !important; color: var(--accent) !important; }
 
-/* 3. Tabs — clean underline instead of boxed buttons. */
+/* Segmented tabs — active is a raised pill with a soft shadow. */
 .tabs {
-  gap: 2px !important;
-  border-bottom: 1px solid var(--border) !important;
-  background: transparent !important;
-  margin-bottom: 16px !important;
-  border-radius: 0 !important;
+  display: flex !important; gap: 3px !important; background: var(--bg-tertiary) !important;
+  border: none !important; border-radius: 10px !important; padding: 3px !important; margin-bottom: 16px !important;
 }
 .tab {
-  background: transparent !important;
-  border: none !important;
-  border-bottom: 2px solid transparent !important;
-  border-radius: 0 !important;
-  color: var(--text-muted) !important;
-  font-weight: 500 !important;
-  padding: 8px 12px !important;
+  flex: 1 !important; text-align: center !important; background: transparent !important; border: none !important;
+  border-radius: 8px !important; color: var(--text-muted) !important; font-weight: 500 !important; padding: 7px 10px !important;
+  transition: color var(--ts-fast), background var(--ts-fast), box-shadow var(--ts-fast);
 }
-.tab:hover { color: var(--text-primary) !important; background: transparent !important; }
-.tab.active {
-  color: var(--accent) !important;
-  border-bottom-color: var(--accent) !important;
-  background: transparent !important;
-}
+.tab:hover { color: var(--text-secondary) !important; }
+.tab.active { background: var(--bg-primary) !important; color: var(--accent) !important; box-shadow: var(--shadow-sm) !important; }
+[data-theme="dark"] .tab.active { background: var(--bg-hover) !important; }
 
-/* 4. Cards / sections — soft hairline card, consistent radius. */
+/* Cards — white, 12px, soft shadow. */
 .stats, .export-section, .storage-section, .steps-viewer {
-  background: var(--bg-secondary) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-  box-shadow: none !important;
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important;
 }
-.state-indicator {
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-  box-shadow: none !important;
-}
+[data-theme="dark"] .stats, [data-theme="dark"] .export-section,
+[data-theme="dark"] .storage-section, [data-theme="dark"] .steps-viewer { background: var(--bg-secondary) !important; }
 
-/* 5. Stats — numbers pop in accent, labels quiet. */
+/* State indicator — card, with explicit state tints so text stays readable. */
+.state-indicator { background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important; transition: background var(--ts), border-color var(--ts); }
+[data-theme="dark"] .state-indicator { background: var(--bg-secondary) !important; }
+.state-indicator.is-recording { background: var(--danger-subtle) !important; border-color: var(--danger) !important; }
+.state-indicator.is-paused { background: var(--warning-subtle) !important; border-color: var(--warning) !important; }
+
+/* Stats internals. */
 .stat-item { background: transparent !important; border: none !important; border-radius: 0 !important; }
 .stat-value { color: var(--accent) !important; font-weight: 600 !important; }
 .stat-label { color: var(--text-muted) !important; }
 
-/* 6. Buttons — one calm system, clear primary. */
+/* Buttons — filled primary, soft secondary, tasteful lift on hover. */
 .btn {
-  border-radius: 8px !important;
-  font-weight: 500 !important;
-  box-shadow: none !important;
-  border: 1px solid transparent !important;
+  border-radius: 9px !important; font-weight: 500 !important; border: 1px solid transparent !important; box-shadow: none !important;
+  transition: background var(--ts-fast), border-color var(--ts-fast), color var(--ts-fast), transform var(--ts-fast), box-shadow var(--ts-fast);
 }
-.btn-primary { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; }
-.btn-danger { background: var(--danger) !important; color: #fff !important; border-color: var(--danger) !important; }
+.btn:hover:not(:disabled) { transform: translateY(-1px) !important; }
+.btn:active:not(:disabled) { transform: translateY(0) scale(0.99) !important; }
+.btn-primary { background: var(--accent) !important; color: #fff !important; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+.btn-danger { background: var(--danger) !important; color: #fff !important; }
+.btn-danger:hover:not(:disabled) { box-shadow: 0 4px 12px var(--danger-glow) !important; }
 .btn-secondary, .btn-warning, .btn-success, .btn-info {
-  background: transparent !important;
-  color: var(--text-secondary) !important;
-  border-color: var(--border) !important;
+  background: var(--bg-tertiary) !important; color: var(--text-secondary) !important; border-color: transparent !important;
 }
 .btn-secondary:hover:not(:disabled), .btn-warning:hover:not(:disabled),
-.btn-success:hover:not(:disabled), .btn-info:hover:not(:disabled) {
-  background: var(--bg-hover) !important;
-  color: var(--text-primary) !important;
-}
-.btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; }
+.btn-success:hover:not(:disabled), .btn-info:hover:not(:disabled) { background: var(--bg-hover) !important; color: var(--text-primary) !important; }
+.btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; transform: none !important; box-shadow: none !important; }
+.btn-small { border-radius: 7px !important; }
 
-/* 7. Inputs / selects — readable in both themes. */
+/* Inputs / selects — readable in both themes, soft focus ring. */
 input, select, .select, textarea {
-  background: var(--bg-primary) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 8px !important;
-  color: var(--text-primary) !important;
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important; border-radius: 9px !important;
+  color: var(--text-primary) !important; transition: border-color var(--ts-fast), box-shadow var(--ts-fast);
 }
+[data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] .select, [data-theme="dark"] textarea { background: var(--bg-tertiary) !important; }
+input:focus, select:focus, textarea:focus, .select:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-subtle) !important; outline: none !important; }
+
+/* Tasteful motion: gentle fade-in when switching tabs. */
+.tab-content.active { animation: ts-fade-in 0.22s var(--ts-ease); }
+@keyframes ts-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
