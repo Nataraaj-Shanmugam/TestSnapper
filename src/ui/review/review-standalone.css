@@ -1424,3 +1424,91 @@ body, body * {
 code, pre, kbd, samp, .mono, .code, .step-selector code, [class*="selector"] code {
   font-family: var(--font-mono) !important;
 }
+
+/* ==================================================================
+   PROFESSIONAL REVAMP (v3) — review page
+   Unifies dark onto the light design (no divergent terminal treatment)
+   and elevates the component styling. Structure/classes unchanged.
+   ================================================================== */
+
+/* 1. Strip dark-only decorations. */
+[data-theme="dark"] .page-header::before,
+[data-theme="dark"] .page-header::after,
+[data-theme="dark"] .step-card::before,
+[data-theme="dark"] .sidebar::after,
+[data-theme="dark"] .session-settings-card::before {
+  content: none !important;
+  animation: none !important;
+  display: none !important;
+}
+[data-theme="dark"] .page-header,
+[data-theme="dark"] .toolbar,
+[data-theme="dark"] .step-card,
+[data-theme="dark"] .session-settings-card,
+[data-theme="dark"] .btn,
+[data-theme="dark"] .input-styled,
+[data-theme="dark"] .select-styled,
+[data-theme="dark"] .search-input,
+[data-theme="dark"] .icon-btn {
+  box-shadow: none !important;
+  border-width: 1px !important;
+}
+
+/* 2. Page header — clean card with a subtle bottom accent. */
+.page-header {
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+.page-header h1, .page-header h2 { color: var(--text-primary) !important; font-weight: 600 !important; }
+
+/* 3. Cards — session settings, toolbar, step cards. */
+.session-settings-card, .toolbar {
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+.step-card {
+  background: var(--bg-primary) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+.step-card:hover { border-color: var(--accent-border) !important; }
+.step-number-badge {
+  background: var(--accent-subtle) !important;
+  color: var(--accent) !important;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+}
+
+/* 4. Buttons — one calm system, clear primary. */
+.btn {
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+  box-shadow: none !important;
+  border: 1px solid transparent !important;
+}
+.btn-primary { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; }
+.btn-danger { background: var(--danger) !important; color: #fff !important; border-color: var(--danger) !important; }
+.btn-secondary {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  border-color: var(--border) !important;
+}
+.btn-secondary:hover:not(:disabled) { background: var(--bg-hover) !important; color: var(--text-primary) !important; }
+.btn:disabled { opacity: 0.45 !important; }
+.icon-btn { color: var(--text-muted) !important; }
+.icon-btn:hover { color: var(--text-primary) !important; background: var(--bg-hover) !important; }
+
+/* 5. Inputs — readable in both themes. */
+.input-styled, .select-styled, .search-input, textarea, input, select {
+  background: var(--bg-primary) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  color: var(--text-primary) !important;
+}
+.meta-label { color: var(--text-muted) !important; }
