@@ -259,9 +259,11 @@ export class ExportService {
    * Export to JSON. Sanitizes URLs for SEC-003.
    */
   _exportJSON(exportData, sessionId) {
-    // Apply URL sanitization to all steps (SEC-003)
+    // Apply URL sanitization to all steps (SEC-003).
+    // Unified export: drop the CSS/XPath locator so JSON matches the Word doc
+    // (which never included it) — step, action, field, value, url only.
     const sanitizedSteps = exportData.steps.map(step => {
-      const sanitized = { ...step };
+      const { selector, ...sanitized } = step;
       if (sanitized.url) sanitized.url = this._sanitizeUrl(sanitized.url);
       if (sanitized.action === 'navigate' && sanitized.value) {
         sanitized.value = this._sanitizeUrl(sanitized.value);
@@ -301,7 +303,8 @@ export class ExportService {
    * Export to CSV. Sanitizes URLs for SEC-003 and defuses formula injection.
    */
   _exportCSV(exportData, sessionId) {
-    const headers = ['Step', 'Action', 'Field Name', 'Selector (CSS)', 'Value', 'URL'];
+    // Unified export: no locator column (matches the Word doc).
+    const headers = ['Step', 'Action', 'Field Name', 'Value', 'URL'];
     const rows = exportData.steps
       .filter(s => s.action !== 'screenshot')
       .map((step, index) => {
@@ -315,7 +318,6 @@ export class ExportService {
           index + 1,
           step.action,
           step.fieldName || 'N/A',
-          step.selector?.css || '',
           safeValue,
           safeUrl
         ];
@@ -355,7 +357,7 @@ export class ExportService {
       lines.push(`### Step ${i + 1}: ${step.action}`);
       if (step.fieldName) lines.push(`- **Field:** ${step.fieldName}`);
       if (step.value)     lines.push(`- **Value:** \`${step.value}\``);
-      if (step.selector?.css) lines.push(`- **Selector:** \`${step.selector.css}\``);
+      // Unified export: no locator line (matches the Word doc).
       if (safeUrl)        lines.push(`- **URL:** ${safeUrl}`);
       lines.push('');
     });
@@ -907,10 +909,7 @@ export class ExportService {
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(100, 100, 100);
 
-        if (step.selector?.css) {
-          doc.text(`Selector: ${step.selector.css}`, margin + 5, yPosition);
-          yPosition += 4;
-        }
+        // Unified export: no locator line (matches the Word doc).
 
         // Sanitize URL shown in PDF
         if (step.url) {

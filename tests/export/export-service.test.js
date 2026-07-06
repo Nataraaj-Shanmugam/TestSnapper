@@ -120,3 +120,36 @@ describe('ExportService._exportCSV — formula injection (CWE-1236)', () => {
     expect(service._csvSafeCell('https://example.com')).toBe('https://example.com');
   });
 });
+
+describe('ExportService — unified output omits the locator (matches Word)', () => {
+  let service;
+  beforeEach(() => { service = new ExportService(fakeStorage); });
+
+  const exportData = {
+    session: { name: 'S', createdAt: new Date().toISOString(), stepCount: 1 },
+    steps: [
+      { action: 'click', fieldName: 'Login', selector: { css: '#login-btn', xpath: '//button' }, value: '', url: 'https://e.com' }
+    ]
+  };
+
+  it('CSV has no Selector column and no selector value', () => {
+    const { content } = service._exportCSV(exportData, 'abc-123');
+    expect(content).not.toContain('Selector');
+    expect(content).not.toContain('#login-btn');
+    expect(content).toContain('Field Name');
+  });
+
+  it('JSON drops the selector from every step', () => {
+    const { content } = service._exportJSON(exportData, 'abc-123');
+    const parsed = JSON.parse(content);
+    expect(parsed.steps[0].selector).toBeUndefined();
+    expect(content).not.toContain('#login-btn');
+    expect(parsed.steps[0].fieldName).toBe('Login');
+  });
+
+  it('Markdown has no Selector line', () => {
+    const { content } = service._exportMarkdown(exportData, 'abc-123');
+    expect(content).not.toContain('Selector');
+    expect(content).not.toContain('#login-btn');
+  });
+});
