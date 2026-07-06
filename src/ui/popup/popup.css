@@ -9,9 +9,11 @@
 /* ==================== DESIGN TOKENS ==================== */
 
 :root {
-  /* Typography - System monospace stack (UX-018: no remote fonts) */
-  --font-display: 'Share Tech Mono', 'Consolas', 'Courier New', monospace;
-  --font-mono: 'Azeret Mono', 'Consolas', 'Monaco', monospace;
+  /* Typography (UX-018: no remote fonts).
+     Refresh: UI text uses a system SANS stack for readability; mono is reserved
+     for code, selectors, values, and timers. */
+  --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Azeret Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
 
   --text-xs: 10px;
   --text-sm: 11px;
@@ -78,54 +80,55 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.12);
-  --shadow-neon: 0 0 12px var(--accent-glow);
+  /* Refresh: emphasis shadow is a soft drop, not a neon glow. */
+  --shadow-neon: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-/* Dark Theme - True terminal */
+/* Dark Theme - Refined slate (refresh: unified steel-blue accent, no neon) */
 [data-theme="dark"] {
-  --bg-primary: #0a0a0a;
-  --bg-secondary: #121212;
-  --bg-tertiary: #1a1a1a;
-  --bg-hover: #262626;
-  --bg-glass: rgba(10, 10, 10, 0.85);
+  --bg-primary: #0f1216;
+  --bg-secondary: #161a20;
+  --bg-tertiary: #1d222b;
+  --bg-hover: #272e39;
+  --bg-glass: rgba(15, 18, 22, 0.85);
 
-  --border: #333333;
-  --border-light: #262626;
-  --border-accent: #00ffcc;
+  --border: #2a313c;
+  --border-light: #21272f;
+  --border-accent: #5b8fd0;
 
-  --text-primary: #f5f5f5;
-  --text-secondary: #d4d4d4;
-  --text-muted: #a3a3a3;
-  --text-disabled: #525252;
+  --text-primary: #e8eaed;
+  --text-secondary: #b8bec8;
+  --text-muted: #8b929e;
+  --text-disabled: #5a616b;
 
-  --accent: #00ffcc;
-  --accent-hover: #33ffdb;
-  --accent-subtle: rgba(0, 255, 204, 0.15);
-  --accent-border: #00ffcc;
-  --accent-glow: rgba(0, 255, 204, 0.6);
+  --accent: #5b8fd0;
+  --accent-hover: #74a2dc;
+  --accent-subtle: rgba(91, 143, 208, 0.16);
+  --accent-border: #5b8fd0;
+  --accent-glow: rgba(91, 143, 208, 0.28);
 
-  --secondary-accent: #ff00ff;
-  --secondary-glow: rgba(255, 0, 255, 0.5);
+  --secondary-accent: #8aa0bd;
+  --secondary-glow: rgba(138, 160, 189, 0.2);
 
-  --success: #00ff66;
-  --success-subtle: rgba(0, 255, 102, 0.15);
-  --success-glow: rgba(0, 255, 102, 0.6);
+  --success: #4caf78;
+  --success-subtle: rgba(76, 175, 120, 0.16);
+  --success-glow: rgba(76, 175, 120, 0.25);
 
-  --warning: #ffaa00;
-  --warning-subtle: rgba(255, 170, 0, 0.15);
-  --warning-glow: rgba(255, 170, 0, 0.6);
+  --warning: #d99a4e;
+  --warning-subtle: rgba(217, 154, 78, 0.16);
+  --warning-glow: rgba(217, 154, 78, 0.25);
 
-  --danger: #ff0055;
-  --danger-subtle: rgba(255, 0, 85, 0.15);
-  --danger-glow: rgba(255, 0, 85, 0.6);
+  --danger: #e0685f;
+  --danger-subtle: rgba(224, 104, 95, 0.16);
+  --danger-glow: rgba(224, 104, 95, 0.25);
 
-  --info: #00ccff;
-  --info-subtle: rgba(0, 204, 255, 0.15);
+  --info: #5b8fd0;
+  --info-subtle: rgba(91, 143, 208, 0.16);
 
-  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.7);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.8);
-  --shadow-neon: 0 0 20px var(--accent-glow), 0 0 40px var(--accent-glow);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-neon: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 /* ==================== BASE STYLES ==================== */
@@ -139,7 +142,7 @@
 body {
   width: 380px;
   min-height: 520px;
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-size: var(--text-base);
@@ -1612,4 +1615,73 @@ input[type="number"]:focus {
   100% {
     content: '|';
   }
+}
+/* ==================================================================
+   VISUAL REFRESH (v1.1.6) — calm the "brutalist terminal / neon" look.
+   Token values (fonts, palette, shadows) were updated above; this block
+   neutralizes the remaining decorative terminal effects that were baked
+   into individual rules. Appended last so source-order wins; no class or
+   id names change, so all popup JS is unaffected.
+   ================================================================== */
+
+/* Sans UI text; remove UPPERCASE + wide letter-spacing terminal treatment. */
+body, .tab, .btn, .section-title, h1, h2, h3, label, .stat-label, .state-text {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+/* Kill neon text glows and logo drop-shadow glows. */
+h1, h2, h3, .logo, .brand, .section-title, .state-text, .tab, .stat-value {
+  text-shadow: none !important;
+}
+.logo, .brand svg, .logo svg {
+  filter: none !important;
+}
+
+/* Remove decorative scanline / grid overlays and animated corner pulses. */
+body::before,
+[data-theme="dark"] body::before,
+header::before,
+[data-theme="dark"] header::before,
+.stats::after,
+[data-theme="dark"] .stats::after,
+.export-section::after,
+[data-theme="dark"] .export-section::after,
+.storage-section::after,
+[data-theme="dark"] .storage-section::after,
+[data-theme="dark"] .tab::before,
+[data-theme="dark"] .tab.active::before {
+  content: none !important;
+  display: none !important;
+  animation: none !important;
+}
+
+/* Emphasis shadows use the soft drop shadow, never a neon ring. */
+.btn:hover, .tab.active, .card, .stats, .session-item {
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* Dark theme: remove angular corner-cut clip-paths and square corners so dark
+   matches the calm, rounded light theme (refresh). */
+[data-theme="dark"] header,
+[data-theme="dark"] .tab,
+[data-theme="dark"] .theme-toggle,
+[data-theme="dark"] .btn,
+[data-theme="dark"] button,
+[data-theme="dark"] .stats,
+[data-theme="dark"] .stat-card,
+[data-theme="dark"] .export-section,
+[data-theme="dark"] .storage-section,
+[data-theme="dark"] .card,
+[data-theme="dark"] input,
+[data-theme="dark"] select,
+[data-theme="dark"] textarea,
+[data-theme="dark"] .message,
+[data-theme="dark"] .session-select-trigger,
+[data-theme="dark"] .session-dropdown-list,
+[data-theme="dark"] .session-dropdown-item {
+  border-radius: 8px !important;
+}
+[data-theme="dark"] * {
+  clip-path: none !important;
 }
