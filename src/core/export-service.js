@@ -553,8 +553,13 @@ export class ExportService {
         maxWidth: 1920, maxHeight: 1080, displayWidth: 600, displayHeight: 450,
         ...(imgOpts || { format: 'auto', quality: 0.92 })
       });
-      const bytes = new Uint8Array(await (await fetch(imgObj.dataUrl)).arrayBuffer());
+      // Decode the data URL to bytes WITHOUT fetch(): extension-page CSP
+      // (connect-src 'self') blocks fetching data: URLs, which silently
+      // dropped every screenshot from the Word export (PDF was unaffected
+      // because jsPDF decodes the data URL itself). atob-decode instead.
       const type = /^data:image\/png/i.test(imgObj.dataUrl) ? 'png' : 'jpg';
+      const _commaIdx = imgObj.dataUrl.indexOf(',');
+      const bytes = Uint8Array.from(atob(imgObj.dataUrl.slice(_commaIdx + 1)), c => c.charCodeAt(0));
       imgObj.dataUrl = null;
       return new Paragraph({
         children: [new ImageRun({ type, data: bytes, transformation: { width: imgObj.width, height: imgObj.height } })],
