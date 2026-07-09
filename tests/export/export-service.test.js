@@ -161,6 +161,18 @@ describe('ExportService — Author / Start Time / End Time in every export', () 
   const rawSession = { sessionId: 's1', sessionName: 'Login Flow', createdAt: '2026-06-01T10:00:00.000Z' };
   const withMeta = { ...rawSession, author: 'Jane Doe', startTime: '2026-06-01T10:00:00.000Z', endTime: '2026-06-01T10:05:00.000Z' };
 
+  it('_formatExportTime renders 12-hour AM/PM with no seconds (matches the UI datetime-local picker)', () => {
+    // 00:08 in 24-hour time = 12:08 AM in 12-hour time (same instant, the
+    // bug report was a formatting mismatch, not a data mismatch).
+    const midnightEight = new Date(2026, 6, 9, 0, 8, 53).toISOString();
+    const formatted = service._formatExportTime(midnightEight);
+    expect(formatted).toMatch(/12:08\s?AM/i);
+    // No seconds component (no second colon-separated pair after the minutes).
+    expect(formatted).not.toMatch(/:\d{2}:\d{2}\s?(AM|PM)/i);
+    expect(service._formatExportTime(null)).toBe('N/A');
+    expect(service._formatExportTime('not-a-date')).toBe('N/A');
+  });
+
   it('_formatSessionData surfaces author/startTime/endTime with sane fallbacks', () => {
     const noMeta = service._formatSessionData(rawSession, 3);
     expect(noMeta.author).toBe('');

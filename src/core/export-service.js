@@ -199,12 +199,21 @@ export class ExportService {
 
   /**
    * Format an ISO timestamp for display in export headers, or 'N/A' when absent.
+   * Explicit 12-hour AM/PM with no seconds, matching what the native
+   * datetime-local picker shows in the review page UI — plain
+   * toLocaleString() with no options falls back to a 24-hour-with-seconds
+   * format in some runtimes/locales, which read as "different" from the UI
+   * even though the underlying timestamp was identical.
    * @private
    */
   _formatExportTime(isoString) {
     if (!isoString) return 'N/A';
     const d = new Date(isoString);
-    return isNaN(d.getTime()) ? 'N/A' : d.toLocaleString();
+    if (isNaN(d.getTime())) return 'N/A';
+    return d.toLocaleString(undefined, {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    });
   }
 
   async _blobToDataURL(blob) {
