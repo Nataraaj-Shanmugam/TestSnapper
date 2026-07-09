@@ -795,7 +795,13 @@ export class FileSync {
         createdAt: session.createdAt,
         lastModified: session.lastModified || new Date().toISOString(),
         env: session.env,
-        stepCount: steps.length
+        stepCount: steps.length,
+        // Report metadata (user-editable on the review page) — must be
+        // explicitly forwarded here since this object replaces the whole
+        // persisted session record.
+        author: session.author || '',
+        startTime: session.startTime || session.createdAt,
+        endTime: session.endTime || ''
       },
       steps: serializedSteps
     };

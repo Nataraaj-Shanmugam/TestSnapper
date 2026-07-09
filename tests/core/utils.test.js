@@ -94,6 +94,33 @@ describe('Utils.formatTimestamp', () => {
   });
 });
 
+describe('Utils.toDatetimeLocalValue / fromDatetimeLocalValue', () => {
+  it('round-trips an ISO string through the datetime-local format', () => {
+    const iso = new Date(2026, 5, 7, 21, 3, 0).toISOString(); // local time, seconds truncated on round-trip
+    const local = Utils.toDatetimeLocalValue(iso);
+    expect(local).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    const backToIso = Utils.fromDatetimeLocalValue(local);
+    // Round-trip loses sub-minute precision only (datetime-local has no seconds field here)
+    expect(new Date(backToIso).getTime()).toBe(new Date(local).getTime());
+  });
+
+  it('toDatetimeLocalValue returns "" for missing/invalid input', () => {
+    expect(Utils.toDatetimeLocalValue('')).toBe('');
+    expect(Utils.toDatetimeLocalValue(null)).toBe('');
+    expect(Utils.toDatetimeLocalValue('not-a-date')).toBe('');
+  });
+
+  it('fromDatetimeLocalValue returns "" for missing/invalid input', () => {
+    expect(Utils.fromDatetimeLocalValue('')).toBe('');
+    expect(Utils.fromDatetimeLocalValue(null)).toBe('');
+  });
+
+  it('fromDatetimeLocalValue produces a valid ISO string', () => {
+    const result = Utils.fromDatetimeLocalValue('2026-06-07T21:03');
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  });
+});
+
 describe('Utils.debounce', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());

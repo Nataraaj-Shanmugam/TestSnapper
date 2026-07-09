@@ -153,3 +153,57 @@ describe('ExportService — unified output omits the locator (matches Word)', ()
     expect(content).not.toContain('#login-btn');
   });
 });
+
+describe('ExportService — Author / Start Time / End Time in every export', () => {
+  let service;
+  beforeEach(() => { service = new ExportService(fakeStorage); });
+
+  const rawSession = { sessionId: 's1', sessionName: 'Login Flow', createdAt: '2026-06-01T10:00:00.000Z' };
+  const withMeta = { ...rawSession, author: 'Jane Doe', startTime: '2026-06-01T10:00:00.000Z', endTime: '2026-06-01T10:05:00.000Z' };
+
+  it('_formatSessionData surfaces author/startTime/endTime with sane fallbacks', () => {
+    const noMeta = service._formatSessionData(rawSession, 3);
+    expect(noMeta.author).toBe('');
+    expect(noMeta.startTime).toBe(rawSession.createdAt); // falls back to createdAt
+    expect(noMeta.endTime).toBe('');
+
+    const withMetaFormatted = service._formatSessionData(withMeta, 3);
+    expect(withMetaFormatted.author).toBe('Jane Doe');
+    expect(withMetaFormatted.startTime).toBe(withMeta.startTime);
+    expect(withMetaFormatted.endTime).toBe(withMeta.endTime);
+  });
+
+  it('CSV includes an Author/Start Time/End Time preamble and unifies the filename to the session name', () => {
+    const exportData = { session: service._formatSessionData(withMeta, 0), steps: [] };
+    const { content, filename } = service._exportCSV(exportData, 's1');
+    expect(content).toContain('Author');
+    expect(content).toContain('Jane Doe');
+    expect(content).toContain('Start Time');
+    expect(content).toContain('End Time');
+    expect(filename).toMatch(/^Login_Flow_\d+\.csv$/); // was testsnapper_<id>_<ts>.csv — now unified
+  });
+
+  it('CSV shows N/A when author/end time are absent (not "undefined")', () => {
+    const exportData = { session: service._formatSessionData(rawSession, 0), steps: [] };
+    const { content } = service._exportCSV(exportData, 's1');
+    expect(content).not.toContain('undefined');
+    expect(content).toMatch(/"N\/A"/);
+  });
+
+  it('JSON includes author/startTime/endTime on the session object', () => {
+    const exportData = { session: service._formatSessionData(withMeta, 0), steps: [] };
+    const { content } = service._exportJSON(exportData, 's1');
+    const parsed = JSON.parse(content);
+    expect(parsed.session.author).toBe('Jane Doe');
+    expect(parsed.session.startTime).toBe(withMeta.startTime);
+    expect(parsed.session.endTime).toBe(withMeta.endTime);
+  });
+
+  it('Markdown includes Author/Start Time/End Time lines', () => {
+    const exportData = { session: service._formatSessionData(withMeta, 0), steps: [] };
+    const { content } = service._exportMarkdown(exportData, 's1');
+    expect(content).toContain('**Author:** Jane Doe');
+    expect(content).toContain('**Start Time:**');
+    expect(content).toContain('**End Time:**');
+  });
+});

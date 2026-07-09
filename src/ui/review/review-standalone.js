@@ -45,7 +45,9 @@ let _assetCache = null;
 
 const messageDiv = document.getElementById('message');
 const sessionNameInput = document.getElementById('sessionName');
-const sessionDate = document.getElementById('sessionDate');
+const sessionAuthorInput = document.getElementById('sessionAuthor');
+const sessionStartTimeInput = document.getElementById('sessionStartTime');
+const sessionEndTimeInput = document.getElementById('sessionEndTime');
 const sessionStepCount = document.getElementById('sessionStepCount');
 const stepsContainer = document.getElementById('stepsContainer');
 const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
@@ -133,8 +135,11 @@ function setupEventListeners() {
     });
   }
 
-  // Session name auto-save
+  // Session name / author / start / end time auto-save
   sessionNameInput.addEventListener('blur', saveSessionName);
+  sessionAuthorInput.addEventListener('blur', saveSessionAuthor);
+  sessionStartTimeInput.addEventListener('change', saveSessionStartTime);
+  sessionEndTimeInput.addEventListener('change', saveSessionEndTime);
 
   // Add Step Modal
   screenshotUpload.addEventListener('click', () => screenshotInput.click());
@@ -309,8 +314,24 @@ async function loadSession() {
     // Update UI
     sessionNameInput.value = sessionData.sessionName ||
       `Session ${Utils.formatTimestamp(sessionData.createdAt)}`;
-    sessionDate.textContent = `Created: ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionStepCount.textContent = `Steps: ${stepsData.length}`;
+
+    // Author — default to the last-used author (convenience) when this
+    // session doesn't have one set yet.
+    let author = sessionData.author || '';
+    if (!author) {
+      try {
+        const stored = await chrome.storage.local.get('lastAuthor');
+        author = stored.lastAuthor || '';
+      } catch (_) { /* ignore — leave blank */ }
+    }
+    sessionAuthorInput.value = author;
+
+    // Start/End Time — Start defaults to createdAt, End defaults to now for
+    // legacy sessions recorded before these fields existed (new sessions
+    // already have both set by background.js).
+    sessionStartTimeInput.value = Utils.toDatetimeLocalValue(sessionData.startTime || sessionData.createdAt);
+    sessionEndTimeInput.value = Utils.toDatetimeLocalValue(sessionData.endTime || new Date().toISOString());
 
     // PERF-008: Build asset cache once on session load
     _assetCache = null; // invalidate first
@@ -360,6 +381,44 @@ async function saveSessionName() {
     }
   } catch (error) {
     console.error('Failed to save session name:', error);
+  }
+}
+
+async function saveSessionAuthor() {
+  try {
+    let author = sessionAuthorInput.value.trim();
+    // Same defensive sanitization as saveSessionName (SEC-009).
+    author = author.replace(/[\x00-\x1F\x7F]/g, '').substring(0, 200);
+    sessionAuthorInput.value = author;
+
+    if (sessionData) {
+      sessionData.author = author;
+      await storage.updateSession(sessionData);
+      // Remember as a convenience default for the next session.
+      try { await chrome.storage.local.set({ lastAuthor: author }); } catch (_) { /* non-critical */ }
+    }
+  } catch (error) {
+    console.error('Failed to save author:', error);
+  }
+}
+
+async function saveSessionStartTime() {
+  try {
+    if (!sessionData) return;
+    sessionData.startTime = Utils.fromDatetimeLocalValue(sessionStartTimeInput.value) || sessionData.createdAt;
+    await storage.updateSession(sessionData);
+  } catch (error) {
+    console.error('Failed to save start time:', error);
+  }
+}
+
+async function saveSessionEndTime() {
+  try {
+    if (!sessionData) return;
+    sessionData.endTime = Utils.fromDatetimeLocalValue(sessionEndTimeInput.value);
+    await storage.updateSession(sessionData);
+  } catch (error) {
+    console.error('Failed to save end time:', error);
   }
 }
 

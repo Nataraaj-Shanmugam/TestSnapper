@@ -37,6 +37,22 @@
                 </div>
 
                 <div class="field-group">
+                    <label>Author</label>
+                    <input type="text" id="sessionAuthor" class="input-styled" placeholder="Your name..."
+                        autocomplete="off">
+                </div>
+
+                <div class="field-group">
+                    <label>Start Time</label>
+                    <input type="datetime-local" id="sessionStartTime" class="input-styled">
+                </div>
+
+                <div class="field-group">
+                    <label>End Time</label>
+                    <input type="datetime-local" id="sessionEndTime" class="input-styled">
+                </div>
+
+                <div class="field-group">
                     <label>Export Format</label>
                     <select id="exportFormat" class="select-styled">
                         <option value="docx">Microsoft Word (.docx)</option>
@@ -49,10 +65,6 @@
                 <div class="meta-info"
                     style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); margin-bottom: 24px;">
                     <div class="meta-item">
-                        <span class="meta-label">Created:</span>
-                        <span id="sessionDate" style="font-size: 13px;">-</span>
-                    </div>
-                    <div class="meta-item" style="margin-top: 8px;">
                         <span class="meta-label">Steps:</span>
                         <span id="sessionStepCount" style="font-size: 13px;">-</span>
                     </div>

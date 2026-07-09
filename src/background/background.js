@@ -514,6 +514,10 @@ async function createSession(tabInfo) {
   const session = {
     sessionId,
     createdAt: new Date().toISOString(),
+    // Report metadata (user-editable on the review page): startTime defaults
+    // to the moment recording began; endTime is set when recording stops.
+    startTime: new Date().toISOString(),
+    author: '',
     env: {
       url: tabInfo.url,
       title: tabInfo.title,
@@ -915,7 +919,20 @@ async function stopRecording(tabId) {
   }
 
   try {
+    // Capture the session reference BEFORE stopRecording() clears it, so we
+    // can stamp the true stop moment as the report's default End Time.
+    const endingSession = stateManager.session;
     const sessionId = stateManager.stopRecording();
+
+    if (endingSession) {
+      endingSession.endTime = new Date().toISOString();
+      try {
+        await storage.updateSession(endingSession);
+      } catch (err) {
+        Logger.warn('Failed to persist session endTime:', err);
+      }
+    }
+
     await persistActiveRecording();
     await BadgeManager.clear(tabId);
     ApiCapture.stop();

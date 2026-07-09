@@ -186,9 +186,25 @@ export class ExportService {
       id: session.sessionId,
       name: session.sessionName || 'Untitled Session',
       createdAt: session.createdAt,
+      // Report metadata — editable on the review page (Author, Start Time,
+      // End Time); startTime falls back to createdAt for pre-existing
+      // sessions recorded before this field existed.
+      author: session.author || '',
+      startTime: session.startTime || session.createdAt,
+      endTime: session.endTime || '',
       environment: session.env,
       stepCount
     };
+  }
+
+  /**
+   * Format an ISO timestamp for display in export headers, or 'N/A' when absent.
+   * @private
+   */
+  _formatExportTime(isoString) {
+    if (!isoString) return 'N/A';
+    const d = new Date(isoString);
+    return isNaN(d.getTime()) ? 'N/A' : d.toLocaleString();
   }
 
   async _blobToDataURL(blob) {
@@ -303,9 +319,19 @@ export class ExportService {
    * Export to CSV. Sanitizes URLs for SEC-003 and defuses formula injection.
    */
   _exportCSV(exportData, sessionId) {
+    const { session = {}, steps } = exportData;
+
+    // Metadata preamble (Author / Start Time / End Time), then a blank line,
+    // then the step table. Every value is run through _csvSafeCell (CWE-1236).
+    const metaRows = [
+      ['Author', session.author || 'N/A'],
+      ['Start Time', this._formatExportTime(session.startTime)],
+      ['End Time', this._formatExportTime(session.endTime)]
+    ];
+
     // Unified export: no locator column (matches the Word doc).
     const headers = ['Step', 'Action', 'Field Name', 'Value', 'URL'];
-    const rows = exportData.steps
+    const rows = steps
       .filter(s => s.action !== 'screenshot')
       .map((step, index) => {
         // Sanitize URL and navigate value
@@ -323,11 +349,13 @@ export class ExportService {
         ];
       });
 
-    const content = [headers, ...rows]
-      .map(row => row.map(cell => `"${this._csvSafeCell(cell).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
+    const toLine = (row) => row.map(cell => `"${this._csvSafeCell(cell).replace(/"/g, '""')}"`).join(',');
+    const content = [...metaRows.map(toLine), '', headers, ...rows].map(row => Array.isArray(row) ? toLine(row) : row).join('\n');
 
-    const filename = `testsnapper_${sessionId.substring(0, 8)}_${Date.now()}.csv`;
+    // Unified filename: same session-name convention as DOCX/PDF/JSON (was
+    // previously the outlier using testsnapper_<id>_<timestamp>).
+    const sessionName = (session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
+    const filename = `${sessionName}_${Date.now()}.csv`;
 
     return {
       content,
@@ -345,7 +373,9 @@ export class ExportService {
     const lines = [
       `# ${this._escapeHtml(sessionName)}`,
       '',
-      `**Recorded:** ${session.startTime || ''}  `,
+      `**Author:** ${this._escapeHtml(session.author || 'N/A')}  `,
+      `**Start Time:** ${this._formatExportTime(session.startTime)}  `,
+      `**End Time:** ${this._formatExportTime(session.endTime)}  `,
       `**Steps:** ${steps.length}`,
       '',
       '---',
@@ -477,7 +507,9 @@ export class ExportService {
 
     const children = [];
     children.push(new Paragraph({ text: `${session.name || 'Untitled Session'} - Test Document`, heading: HeadingLevel.HEADING_1 }));
-    children.push(new Paragraph({ children: [new TextRun({ text: 'Created: ', bold: true }), new TextRun(new Date(session.createdAt).toLocaleString())] }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'Author: ', bold: true }), new TextRun(session.author || 'N/A')] }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'Start Time: ', bold: true }), new TextRun(this._formatExportTime(session.startTime))] }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'End Time: ', bold: true }), new TextRun(this._formatExportTime(session.endTime))] }));
     children.push(new Paragraph({ children: [new TextRun({ text: 'Total Steps: ', bold: true }), new TextRun(String(session.stepCount))] }));
     children.push(new Paragraph({ text: 'Test Execution Steps', heading: HeadingLevel.HEADING_2 }));
 
@@ -623,8 +655,9 @@ export class ExportService {
   <h1>${this._escapeHtml(session.name)} - Test Document</h1>
 
   <div class='info'>
-    <p><b>Created:</b> ${new Date(session.createdAt).toLocaleString()}</p>
-    <p><b>Created by:</b> </p>
+    <p><b>Author:</b> ${this._escapeHtml(session.author || 'N/A')}</p>
+    <p><b>Start Time:</b> ${this._formatExportTime(session.startTime)}</p>
+    <p><b>End Time:</b> ${this._formatExportTime(session.endTime)}</p>
     <p><b>Total Steps:</b> ${session.stepCount}</p>
   </div>
 
@@ -863,7 +896,11 @@ export class ExportService {
 
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Created: ${new Date(session.createdAt).toLocaleString()}`, margin, yPosition);
+    doc.text(`Author: ${session.author || 'N/A'}`, margin, yPosition);
+    yPosition += 6;
+    doc.text(`Start Time: ${this._formatExportTime(session.startTime)}`, margin, yPosition);
+    yPosition += 6;
+    doc.text(`End Time: ${this._formatExportTime(session.endTime)}`, margin, yPosition);
     yPosition += 6;
     doc.text(`Total Steps: ${session.stepCount}`, margin, yPosition);
     yPosition += 15;

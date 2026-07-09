@@ -113,6 +113,29 @@ export const Utils = {
   },
 
   /**
+   * Convert an ISO 8601 string to the local, no-timezone value expected by
+   * an <input type="datetime-local">. Returns '' for missing/invalid input.
+   */
+  toDatetimeLocalValue(isoString) {
+    if (!isoString) return '';
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  },
+
+  /**
+   * Convert a <input type="datetime-local"> value (local time, no timezone)
+   * back to an ISO 8601 string. Returns '' for missing/invalid input.
+   */
+  fromDatetimeLocalValue(value) {
+    if (!value) return '';
+    const d = new Date(value); // parsed as local time per the datetime-local spec
+    if (isNaN(d.getTime())) return '';
+    return d.toISOString();
+  },
+
+  /**
    * Truncate text with ellipsis
    */
   truncate(text, maxLength = 50) {
