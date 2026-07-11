@@ -1,13 +1,14 @@
 /**
  * Compression Utility for Step Data
- * 
+ *
  * Implements GZIP compression using native CompressionStream API
  * for compressing step JSON data before storage.
- * 
- * BUG FIX: STR-MED-001 - No Compression for Step Data
  */
 
+import { Logger } from './logger.js';
+
 const COMPRESSION_PREFIX = 'COMPRESSED::GZIP::';
+const PLAIN_PREFIX = 'PLAIN::';
 
 /**
  * Compress data using GZIP
@@ -55,13 +56,15 @@ export async function compress(data) {
         }
         const base64 = btoa(binary);
 
-        console.log(`🗜️ Step data compressed: ${(jsonString.length / 1024).toFixed(1)}KB → ${(base64.length / 1024).toFixed(1)}KB`);
+        Logger.debug(`🗜️ Step data compressed: ${(jsonString.length / 1024).toFixed(1)}KB → ${(base64.length / 1024).toFixed(1)}KB`);
 
         return COMPRESSION_PREFIX + base64;
     } catch (error) {
-        console.warn('Compression failed, storing uncompressed:', error);
-        // Fallback: return original data as JSON string
-        return JSON.stringify(data);
+        Logger.warn('Compression failed, storing with PLAIN prefix:', error);
+        // Use PLAIN:: prefix so _readSteps can identify and round-trip this format.
+        // Previously returned bare JSON.stringify(data) which _readSteps could not recognise
+        // (it only handled COMPRESSED::GZIP:: or a raw Array), silently yielding [] on read-back.
+        return PLAIN_PREFIX + JSON.stringify(data);
     }
 }
 
@@ -76,6 +79,11 @@ export async function decompress(compressedString) {
         if (typeof compressedString !== 'string') {
             // Already an object (uncompressed legacy data)
             return compressedString;
+        }
+
+        // Handle PLAIN:: prefix written by the compression fallback path.
+        if (compressedString.startsWith(PLAIN_PREFIX)) {
+            return JSON.parse(compressedString.slice(PLAIN_PREFIX.length));
         }
 
         if (!compressedString.startsWith(COMPRESSION_PREFIX)) {
@@ -127,7 +135,7 @@ export async function decompress(compressedString) {
         const jsonString = decoder.decode(decompressed);
         return JSON.parse(jsonString);
     } catch (error) {
-        console.error('Decompression failed:', error);
+        Logger.error('Decompression failed:', error);
         // Try to return original if decompression fails
         if (typeof compressedString === 'string') {
             try {
@@ -141,10 +149,19 @@ export async function decompress(compressedString) {
 }
 
 /**
- * Check if data is compressed
+ * Check if data is GZIP-compressed (has the GZIP prefix)
  * @param {any} data - Data to check
  * @returns {boolean}
  */
 export function isCompressed(data) {
     return typeof data === 'string' && data.startsWith(COMPRESSION_PREFIX);
+}
+
+/**
+ * Check if data was stored with the PLAIN fallback prefix
+ * @param {any} data - Data to check
+ * @returns {boolean}
+ */
+export function isPlainFallback(data) {
+    return typeof data === 'string' && data.startsWith(PLAIN_PREFIX);
 }

@@ -1,5 +1,8 @@
-BUG_ENHANCEMENT_REPORT.md merge=ours
-CLAUDE.md               merge=ours
-create-release-zip.bat  merge=ours
-create-release-zip.sh   merge=ours
-RELEASE_GUIDE.md        merge=ours
+# SEC-004: vendored third-party bundles under libs/ are integrity-checked by
+# SHA-384 SRI hash (see scripts/download-libs.js) against their pristine
+# upstream bytes. Git's core.autocrlf was silently rewriting LF to CRLF on
+# checkout for these files (no override existed before this), which broke
+# libs/jspdf.umd.min.js's hash without changing a single character of code.
+# Treat them as binary so line endings are never touched, regardless of the
+# local core.autocrlf setting.
+libs/* -text

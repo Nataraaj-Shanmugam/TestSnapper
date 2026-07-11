@@ -5,275 +5,156 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
-        content="TestSnapper - Professional automated test recording Chrome extension with high-quality screenshots and multi-format export. Built with modern web technologies.">
+        content="TestSnapper - Professional automated Test recording Chrome extension with high-quality screenshots and multi-format export. Built with modern web technologies.">
     <meta name="keywords"
-        content="test automation, QA tools, test recorder, screenshot capture, test documentation, Chrome extension, Manifest V3">
+        content="test automation, QA tools, Test recorder, screenshot capture, Test documentation, Chrome extension, Manifest V3">
     <meta name="author" content="Nataraaj Shanmugam">
     <meta property="og:title" content="TestSnapper - Automated Test Recording & Documentation">
     <meta property="og:description"
-        content="Stop writing manual test steps. Capture interactions, screenshots, and export professional documentation instantly.">
+        content="Stop writing manual Test steps. Capture interactions, screenshots, and export professional documentation instantly.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://nataraaj-shanmugam.github.io/TestSnapper/">
     <title>TestSnapper - Automated Test Recording & Documentation</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Sora:wght@400;500;600;700;800&display=swap"
-        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
     <style>
-        *,
-        *::before,
-        *::after {
+        * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
         :root {
-            /* Primary — Deep Teal / Cyan */
-            --primary-50: #ecfeff;
-            --primary-100: #cffafe;
-            --primary-200: #a5f3fc;
-            --primary-300: #67e8f9;
-            --primary-400: #22d3ee;
-            --primary-500: #06b6d4;
-            --primary-600: #0891b2;
-            --primary-700: #0e7490;
-            --primary-800: #155e75;
-            --primary-900: #164e63;
-
-            /* Accent — Warm Amber */
-            --accent-300: #fcd34d;
-            --accent-400: #fbbf24;
-            --accent-500: #f59e0b;
-            --accent-600: #d97706;
-
-            /* Success */
-            --success-500: #10b981;
-            --success-600: #059669;
-
-            /* Neutrals — Slate */
-            --slate-50: #f8fafc;
-            --slate-100: #f1f5f9;
-            --slate-200: #e2e8f0;
-            --slate-300: #cbd5e1;
-            --slate-400: #94a3b8;
-            --slate-500: #64748b;
-            --slate-600: #475569;
-            --slate-700: #334155;
-            --slate-800: #1e293b;
-            --slate-900: #0f172a;
-            --slate-950: #020617;
-
-            /* Surfaces */
-            --surface-primary: #fafbfc;
-            --surface-white: #ffffff;
-            --surface-dark: #0b1120;
-            --surface-darker: #060d18;
-
-            /* Shadows — diffused, matte */
-            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
-            --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.04), 0 2px 10px rgba(0, 0, 0, 0.06);
-            --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04);
-            --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.08), 0 8px 20px rgba(0, 0, 0, 0.04);
-
-            /* Matte gradients */
-            --grad-hero: linear-gradient(145deg, #0b1120 0%, #0e2a3a 40%, #0c1e2e 70%, #091520 100%);
-            --grad-teal: linear-gradient(135deg, #0e7490 0%, #0891b2 50%, #06b6d4 100%);
-            --grad-dark: linear-gradient(180deg, #0b1120 0%, #0f1b2d 100%);
-            --grad-surface: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-
-            /* Radii */
-            --radius-sm: 6px;
-            --radius-md: 10px;
-            --radius-lg: 14px;
-            --radius-xl: 20px;
-            --radius-full: 999px;
+            --primary: #0284c7;
+            --primary-dark: #0369a1;
+            --primary-light: #0ea5e9;
+            --secondary: #64748b;
+            --success: #10b981;
+            --accent: #06b6d4;
+            --bg-light: #f8fafc;
+            --bg-white: #ffffff;
+            --bg-dark: #0f172a;
+            --text-dark: #0f172a;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 20px 25px -5px rgb(0 0 0 / 0.1);
+            --shadow-xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+            --gradient-primary: linear-gradient(135deg, #0284c7 0%, #0369a1 50%, #0c4a6e 100%);
+            --gradient-accent: linear-gradient(135deg, #06b6d4 0%, #0284c7 100%);
         }
 
         body {
-            font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
-            color: var(--slate-800);
-            background: var(--surface-primary);
+            color: var(--text-dark);
+            background: var(--bg-light);
             overflow-x: hidden;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
         }
 
-        /* Noise texture overlay for matte finish */
-        body::after {
-            content: '';
-            position: fixed;
-            inset: 0;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E");
-            opacity: 0.35;
-            pointer-events: none;
-            z-index: 10000;
-            mix-blend-mode: overlay;
-        }
-
-        h1, h2, h3, h4, h5, h6 {
-            font-family: 'Sora', 'DM Sans', sans-serif;
-            letter-spacing: -0.02em;
-        }
-
-        a {
-            color: inherit;
-            text-decoration: none;
-        }
-
-        img {
-            max-width: 100%;
-            display: block;
-        }
-
-        .icon-inline {
-            display: inline-flex;
-            width: 1em;
-            height: 1em;
-            vertical-align: middle;
-        }
-
-        /* ──────────────────────────────────
-           HEADER
-        ────────────────────────────────── */
+        /* Header */
         header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 1rem 0;
             position: fixed;
             width: 100%;
             top: 0;
             z-index: 1000;
-            background: rgba(250, 251, 252, 0.85);
-            backdrop-filter: blur(16px) saturate(1.5);
-            -webkit-backdrop-filter: blur(16px) saturate(1.5);
-            border-bottom: 1px solid rgba(226, 232, 240, 0.6);
-            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s;
         }
 
         header.scrolled {
-            background: rgba(250, 251, 252, 0.95);
-            box-shadow: var(--shadow-sm);
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: var(--shadow);
         }
 
         nav {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 0.875rem 2rem;
+            padding: 0 2rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
         .logo {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: var(--primary);
             display: flex;
             align-items: center;
-            gap: 0.625rem;
+            gap: 0.5rem;
             text-decoration: none;
-            font-family: 'Sora', sans-serif;
-            font-size: 1.35rem;
-            font-weight: 700;
-            color: var(--slate-900);
         }
 
-        .logo-mark {
+        .logo-icon {
             width: 36px;
             height: 36px;
-            background: var(--grad-teal);
-            border-radius: var(--radius-md);
+            background: var(--gradient-primary);
+            border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 2px 8px rgba(8, 145, 178, 0.25);
-        }
-
-        .logo-mark svg {
-            width: 20px;
-            height: 20px;
             color: white;
+            font-size: 1.25rem;
         }
 
         .nav-links {
             display: flex;
-            gap: 0.25rem;
+            gap: 2rem;
             list-style: none;
             align-items: center;
         }
 
         .nav-links a {
-            color: var(--slate-600);
+            color: var(--text-dark);
             text-decoration: none;
             font-weight: 500;
-            font-size: 0.9rem;
-            padding: 0.5rem 0.875rem;
-            border-radius: var(--radius-sm);
-            transition: all 0.2s;
+            font-size: 0.95rem;
+            transition: color 0.2s;
         }
 
         .nav-links a:hover {
-            color: var(--slate-900);
-            background: var(--slate-100);
+            color: var(--primary);
         }
 
         .nav-cta {
-            background: var(--slate-900) !important;
+            background: var(--gradient-primary);
             color: white !important;
-            padding: 0.5rem 1.25rem !important;
-            border-radius: var(--radius-md) !important;
+            padding: 0.5rem 1.25rem;
+            border-radius: 8px;
             font-weight: 600 !important;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+            transition: transform 0.2s, box-shadow 0.2s !important;
         }
 
         .nav-cta:hover {
-            background: var(--primary-700) !important;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(14, 116, 144, 0.3) !important;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
         }
 
-        /* Mobile menu */
-        .mobile-menu-btn {
-            display: none;
-            background: none;
-            border: none;
-            cursor: pointer;
-            padding: 0.5rem;
-            color: var(--slate-700);
-        }
-
-        /* ──────────────────────────────────
-           HERO
-        ────────────────────────────────── */
+        /* Hero Section */
         .hero {
-            background: var(--grad-hero);
+            background: var(--gradient-primary);
             color: white;
-            padding: 9rem 2rem 6rem;
+            padding: 10rem 2rem 6rem;
             position: relative;
             overflow: hidden;
         }
 
-        /* Subtle dot grid pattern */
         .hero::before {
             content: '';
             position: absolute;
-            inset: 0;
-            background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
-            background-size: 32px 32px;
-            mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 30%, transparent 70%);
-            -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 30%, transparent 70%);
-        }
-
-        /* Ambient glow */
-        .hero::after {
-            content: '';
-            position: absolute;
-            top: -20%;
-            right: -10%;
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, rgba(6, 182, 212, 0.12) 0%, transparent 70%);
-            pointer-events: none;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            opacity: 0.5;
         }
 
         .hero-content {
@@ -282,60 +163,50 @@
             position: relative;
             z-index: 1;
             display: grid;
-            grid-template-columns: 1.1fr 0.9fr;
+            grid-template-columns: 1fr 1fr;
             gap: 4rem;
             align-items: center;
         }
 
         .hero-text h1 {
-            font-size: 3.75rem;
+            font-size: 3.5rem;
             font-weight: 800;
             margin-bottom: 1.5rem;
-            line-height: 1.08;
-            letter-spacing: -0.03em;
-            color: white;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
         }
 
-        .hero-text h1 .text-gradient {
-            background: linear-gradient(135deg, #67e8f9 0%, #22d3ee 40%, #a5f3fc 100%);
+        .hero-text h1 span {
+            background: linear-gradient(135deg, #ffffff 0%, #bae6fd 100%);
             -webkit-background-clip: text;
             background-clip: text;
             color: transparent;
         }
 
-        .hero-text .hero-desc {
-            font-size: 1.15rem;
-            margin-bottom: 2.25rem;
-            color: var(--slate-300);
-            line-height: 1.75;
-            max-width: 520px;
+        .hero-text p {
+            font-size: 1.25rem;
+            margin-bottom: 2rem;
+            opacity: 0.95;
+            line-height: 1.7;
         }
 
         .hero-badges {
             display: flex;
-            gap: 0.75rem;
-            margin-bottom: 2.25rem;
+            gap: 1rem;
+            margin-bottom: 2rem;
             flex-wrap: wrap;
         }
 
         .badge {
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 0.4rem 0.875rem;
-            border-radius: var(--radius-full);
-            font-size: 0.8rem;
-            font-weight: 500;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            padding: 0.5rem 1rem;
+            border-radius: 999px;
+            font-size: 0.875rem;
+            font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 0.4rem;
-            color: var(--slate-300);
-            letter-spacing: 0.01em;
-        }
-
-        .badge svg {
-            width: 14px;
-            height: 14px;
-            color: var(--primary-400);
+            gap: 0.5rem;
         }
 
         .cta-buttons {
@@ -345,171 +216,117 @@
         }
 
         .btn {
-            padding: 0.875rem 1.75rem;
-            border-radius: var(--radius-md);
+            padding: 1rem 2rem;
+            border-radius: 12px;
             font-weight: 600;
             text-decoration: none;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: all 0.2s;
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
             border: none;
             cursor: pointer;
-            font-size: 0.95rem;
-            font-family: 'DM Sans', sans-serif;
-            letter-spacing: -0.01em;
-        }
-
-        .btn svg {
-            width: 18px;
-            height: 18px;
+            font-size: 1rem;
         }
 
         .btn-primary {
             background: white;
-            color: var(--slate-900);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            color: var(--primary-dark);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
         }
 
         .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
         }
 
-        .btn-ghost {
-            background: rgba(255, 255, 255, 0.06);
-            color: var(--slate-200);
-            border: 1px solid rgba(255, 255, 255, 0.12);
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(10px);
         }
 
-        .btn-ghost:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(255, 255, 255, 0.2);
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.25);
+            border-color: rgba(255, 255, 255, 0.5);
         }
 
-        .btn-accent {
-            background: var(--accent-500);
-            color: var(--slate-900);
-            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.2);
-        }
-
-        .btn-accent:hover {
-            background: var(--accent-400);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
-        }
-
-        /* Hero mockup */
         .hero-visual {
             position: relative;
         }
 
         .hero-mockup {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: var(--radius-xl);
-            padding: 1.75rem;
-            backdrop-filter: blur(12px);
-            position: relative;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: var(--shadow-xl);
         }
 
-        .hero-mockup::before {
-            content: '';
-            position: absolute;
-            inset: -1px;
-            border-radius: var(--radius-xl);
-            background: linear-gradient(135deg, rgba(6, 182, 212, 0.15), transparent 50%, rgba(245, 158, 11, 0.08));
-            z-index: -1;
-            mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            mask-composite: exclude;
-            -webkit-mask-composite: xor;
-            padding: 1px;
-        }
-
-        .mockup-bar {
+        .mockup-header {
             display: flex;
-            align-items: center;
             gap: 8px;
-            margin-bottom: 1.25rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            margin-bottom: 1.5rem;
         }
 
         .mockup-dot {
-            width: 10px;
-            height: 10px;
+            width: 12px;
+            height: 12px;
             border-radius: 50%;
         }
 
-        .mockup-dot.r { background: #ef4444; }
-        .mockup-dot.y { background: #eab308; }
-        .mockup-dot.g { background: #22c55e; }
-
-        .mockup-bar-title {
-            margin-left: auto;
-            font-size: 0.7rem;
-            color: var(--slate-500);
-            font-weight: 500;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
+        .mockup-dot.red {
+            background: #ef4444;
         }
 
-        .mockup-body {
-            background: rgba(255, 255, 255, 0.97);
-            border-radius: var(--radius-md);
-            padding: 1.25rem;
-            color: var(--slate-800);
+        .mockup-dot.yellow {
+            background: #f59e0b;
+        }
+
+        .mockup-dot.green {
+            background: #10b981;
+        }
+
+        .mockup-content {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 8px;
+            padding: 1.5rem;
+            color: var(--text-dark);
         }
 
         .mockup-step {
             display: flex;
             align-items: center;
-            gap: 0.875rem;
-            padding: 0.625rem 0.75rem;
-            background: var(--slate-50);
-            border-radius: var(--radius-sm);
-            margin-bottom: 0.5rem;
-            font-size: 0.825rem;
-            font-weight: 500;
-            color: var(--slate-700);
-            border: 1px solid var(--slate-100);
-        }
-
-        .mockup-step:last-child {
-            margin-bottom: 0;
+            gap: 1rem;
+            padding: 0.75rem;
+            background: var(--bg-light);
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            font-size: 0.875rem;
         }
 
         .mockup-step-num {
-            width: 22px;
-            height: 22px;
-            background: var(--primary-700);
+            width: 24px;
+            height: 24px;
+            background: var(--primary);
             color: white;
-            border-radius: var(--radius-sm);
+            border-radius: 6px;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 700;
-            font-size: 0.7rem;
-            flex-shrink: 0;
+            font-size: 0.75rem;
         }
 
-        .mockup-step-icon {
-            margin-left: auto;
-            width: 16px;
-            height: 16px;
-            color: var(--success-500);
-            flex-shrink: 0;
-        }
-
-        /* ──────────────────────────────────
-           STATS BAR
-        ────────────────────────────────── */
+        /* Stats Section */
         .stats {
+            background: var(--bg-white);
+            padding: 3rem 2rem;
+            margin-top: -3rem;
             position: relative;
             z-index: 10;
-            padding: 0 2rem;
-            margin-top: -2.5rem;
         }
 
         .stats-container {
@@ -517,55 +334,39 @@
             margin: 0 auto;
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            background: var(--surface-white);
-            border-radius: var(--radius-xl);
-            box-shadow: var(--shadow-xl);
-            border: 1px solid var(--slate-100);
-            overflow: hidden;
+            gap: 2rem;
+            background: white;
+            padding: 2.5rem;
+            border-radius: 16px;
+            box-shadow: var(--shadow-lg);
         }
 
         .stat-item {
             text-align: center;
-            padding: 2rem 1.5rem;
-            position: relative;
-        }
-
-        .stat-item:not(:last-child)::after {
-            content: '';
-            position: absolute;
-            right: 0;
-            top: 25%;
-            height: 50%;
-            width: 1px;
-            background: var(--slate-200);
         }
 
         .stat-number {
-            font-family: 'Sora', sans-serif;
-            font-size: 2.25rem;
+            font-size: 2.5rem;
             font-weight: 800;
-            color: var(--primary-700);
+            color: var(--primary);
             line-height: 1;
-            margin-bottom: 0.375rem;
-            letter-spacing: -0.03em;
+            margin-bottom: 0.5rem;
         }
 
         .stat-label {
-            color: var(--slate-500);
-            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
             font-weight: 500;
-            letter-spacing: 0.02em;
         }
 
-        /* ──────────────────────────────────
-           LAYOUT
-        ────────────────────────────────── */
+        /* Container */
         .container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 0 2rem;
         }
 
+        /* Section */
         section {
             padding: 6rem 0;
         }
@@ -576,136 +377,119 @@
         }
 
         .section-label {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.375rem;
-            background: var(--primary-50);
-            color: var(--primary-700);
-            padding: 0.4rem 1rem;
-            border-radius: var(--radius-full);
-            font-size: 0.8rem;
+            display: inline-block;
+            background: linear-gradient(135deg, rgba(2, 132, 199, 0.1), rgba(6, 182, 212, 0.1));
+            color: var(--primary);
+            padding: 0.5rem 1rem;
+            border-radius: 999px;
+            font-size: 0.875rem;
             font-weight: 600;
-            margin-bottom: 1.25rem;
-            letter-spacing: 0.02em;
-            border: 1px solid var(--primary-100);
-        }
-
-        .section-label svg {
-            width: 14px;
-            height: 14px;
+            margin-bottom: 1rem;
         }
 
         .section-header h2 {
             font-size: 2.75rem;
             font-weight: 800;
             margin-bottom: 1rem;
-            color: var(--slate-900);
-            letter-spacing: -0.03em;
-            line-height: 1.15;
+            color: var(--text-dark);
+            letter-spacing: -0.02em;
         }
 
         .section-header p {
-            font-size: 1.1rem;
-            color: var(--slate-500);
-            max-width: 560px;
+            font-size: 1.125rem;
+            color: var(--text-muted);
+            max-width: 600px;
             margin: 0 auto;
-            line-height: 1.7;
         }
 
-        /* ──────────────────────────────────
-           FEATURES
-        ────────────────────────────────── */
+        /* Features Grid */
         .features-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 1.5rem;
+            gap: 2rem;
         }
 
         .feature-card {
-            background: var(--surface-white);
+            background: var(--bg-white);
             padding: 2rem;
-            border-radius: var(--radius-lg);
-            border: 1px solid var(--slate-200);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            transition: all 0.3s ease;
+            border: 1px solid transparent;
             position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--gradient-accent);
+            transform: scaleX(0);
+            transition: transform 0.3s;
         }
 
         .feature-card:hover {
-            border-color: var(--primary-200);
-            box-shadow: var(--shadow-lg);
-            transform: translateY(-4px);
+            transform: translateY(-8px);
+            box-shadow: var(--shadow-xl);
+            border-color: rgba(2, 132, 199, 0.1);
         }
 
-        .feature-icon-wrap {
-            width: 48px;
-            height: 48px;
-            background: var(--primary-50);
-            border: 1px solid var(--primary-100);
-            border-radius: var(--radius-md);
+        .feature-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .feature-icon {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, rgba(2, 132, 199, 0.1), rgba(6, 182, 212, 0.1));
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-bottom: 1.25rem;
-            transition: all 0.3s;
-        }
-
-        .feature-icon-wrap svg {
-            width: 22px;
-            height: 22px;
-            color: var(--primary-700);
-        }
-
-        .feature-card:hover .feature-icon-wrap {
-            background: var(--primary-700);
-            border-color: var(--primary-700);
-        }
-
-        .feature-card:hover .feature-icon-wrap svg {
-            color: white;
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
         }
 
         .feature-card h3 {
-            font-size: 1.125rem;
+            font-size: 1.25rem;
             font-weight: 700;
-            margin-bottom: 0.625rem;
-            color: var(--slate-900);
+            margin-bottom: 0.75rem;
+            color: var(--text-dark);
         }
 
-        .feature-card > p {
-            color: var(--slate-500);
-            line-height: 1.65;
+        .feature-card p {
+            color: var(--text-muted);
+            line-height: 1.7;
             margin-bottom: 1rem;
-            font-size: 0.925rem;
         }
 
-        .feature-list {
+        .feature-card ul {
             list-style: none;
             padding: 0;
         }
 
-        .feature-list li {
-            color: var(--slate-600);
-            padding: 0.3rem 0;
+        .feature-card li {
+            color: var(--text-muted);
+            padding: 0.375rem 0;
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            font-size: 0.875rem;
+            font-size: 0.9rem;
         }
 
-        .feature-list li svg {
-            width: 14px;
-            height: 14px;
-            color: var(--success-500);
-            flex-shrink: 0;
+        .feature-card li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: 700;
         }
 
-        /* ──────────────────────────────────
-           HOW IT WORKS
-        ────────────────────────────────── */
+        /* How It Works */
         .workflow {
-            background: var(--surface-white);
-            border-top: 1px solid var(--slate-100);
-            border-bottom: 1px solid var(--slate-100);
+            background: var(--bg-white);
         }
 
         .workflow-steps {
@@ -718,11 +502,11 @@
         .workflow-steps::before {
             content: '';
             position: absolute;
-            top: 36px;
-            left: 80px;
-            right: 80px;
+            top: 40px;
+            left: 60px;
+            right: 60px;
             height: 2px;
-            background: linear-gradient(90deg, var(--primary-300), var(--primary-500), var(--primary-300));
+            background: linear-gradient(90deg, var(--primary), var(--accent));
             z-index: 0;
         }
 
@@ -733,46 +517,33 @@
         }
 
         .step-number {
-            width: 72px;
-            height: 72px;
-            background: var(--surface-white);
-            border: 2px solid var(--primary-200);
-            color: var(--primary-700);
+            width: 80px;
+            height: 80px;
+            background: var(--gradient-primary);
+            color: white;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: 'Sora', sans-serif;
-            font-size: 1.5rem;
+            font-size: 1.75rem;
             font-weight: 800;
             margin: 0 auto 1.5rem;
-            transition: all 0.3s;
-            box-shadow: var(--shadow-md);
-        }
-
-        .workflow-step:hover .step-number {
-            background: var(--primary-700);
-            color: white;
-            border-color: var(--primary-700);
-            box-shadow: 0 8px 24px rgba(14, 116, 144, 0.25);
+            box-shadow: 0 10px 30px rgba(2, 132, 199, 0.3);
         }
 
         .workflow-step h3 {
-            font-size: 1.05rem;
+            font-size: 1.125rem;
             font-weight: 700;
-            margin-bottom: 0.375rem;
-            color: var(--slate-900);
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
         }
 
         .workflow-step p {
-            color: var(--slate-500);
-            font-size: 0.9rem;
-            line-height: 1.6;
+            color: var(--text-muted);
+            font-size: 0.95rem;
         }
 
-        /* ──────────────────────────────────
-           EXPORT FORMATS
-        ────────────────────────────────── */
+        /* Export Formats */
         .export-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -780,79 +551,41 @@
         }
 
         .export-card {
-            background: var(--surface-white);
-            padding: 2rem 1.5rem;
-            border-radius: var(--radius-lg);
+            background: var(--bg-white);
+            padding: 2rem;
+            border-radius: 12px;
             text-align: center;
-            border: 1px solid var(--slate-200);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 2px solid var(--border);
+            transition: all 0.3s;
         }
 
         .export-card:hover {
-            border-color: var(--primary-300);
+            border-color: var(--primary);
             transform: translateY(-4px);
             box-shadow: var(--shadow-lg);
         }
 
         .export-icon {
-            width: 56px;
-            height: 56px;
-            margin: 0 auto 1.25rem;
-            background: var(--slate-50);
-            border: 1px solid var(--slate-200);
-            border-radius: var(--radius-md);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.3s;
-        }
-
-        .export-icon svg {
-            width: 24px;
-            height: 24px;
-            color: var(--primary-700);
-        }
-
-        .export-card:hover .export-icon {
-            background: var(--primary-50);
-            border-color: var(--primary-200);
+            font-size: 3rem;
+            margin-bottom: 1rem;
         }
 
         .export-card h4 {
             font-weight: 700;
-            font-size: 1.05rem;
-            margin-bottom: 0.375rem;
-            color: var(--slate-900);
+            font-size: 1.125rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
         }
 
         .export-card p {
-            font-size: 0.85rem;
-            color: var(--slate-500);
-            line-height: 1.5;
+            font-size: 0.875rem;
+            color: var(--text-muted);
         }
 
-        /* ──────────────────────────────────
-           TECH STACK
-        ────────────────────────────────── */
+        /* Tech Stack */
         .tech-section {
-            background: var(--grad-dark);
+            background: var(--bg-dark);
             color: white;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .tech-section::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            background-image: radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-            background-size: 28px 28px;
-        }
-
-        .tech-section .section-label {
-            background: rgba(255, 255, 255, 0.06);
-            border-color: rgba(255, 255, 255, 0.1);
-            color: var(--primary-300);
         }
 
         .tech-section .section-header h2 {
@@ -860,310 +593,197 @@
         }
 
         .tech-section .section-header p {
-            color: var(--slate-400);
+            color: rgba(255, 255, 255, 0.7);
         }
 
         .tech-grid {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
-            gap: 1rem;
-            position: relative;
-            z-index: 1;
+            gap: 1.5rem;
         }
 
         .tech-item {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            padding: 1.5rem 1rem;
-            border-radius: var(--radius-md);
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 1.5rem;
+            border-radius: 12px;
             text-align: center;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: all 0.3s;
         }
 
         .tech-item:hover {
-            background: rgba(255, 255, 255, 0.07);
-            border-color: rgba(6, 182, 212, 0.2);
-            transform: translateY(-3px);
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-4px);
         }
 
         .tech-item-icon {
-            width: 40px;
-            height: 40px;
-            margin: 0 auto 0.75rem;
-            background: rgba(6, 182, 212, 0.1);
-            border-radius: var(--radius-sm);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .tech-item-icon svg {
-            width: 20px;
-            height: 20px;
-            color: var(--primary-400);
+            font-size: 2rem;
+            margin-bottom: 0.75rem;
         }
 
         .tech-item h4 {
             font-weight: 600;
-            font-size: 0.875rem;
-            margin-bottom: 0.2rem;
-            color: white;
+            font-size: 0.95rem;
+            margin-bottom: 0.25rem;
         }
 
         .tech-item p {
-            font-size: 0.725rem;
-            color: var(--slate-400);
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.6);
         }
 
-        /* ──────────────────────────────────
-           INSTALLATION
-        ────────────────────────────────── */
+        /* Installation */
         .install-card {
-            background: var(--surface-white);
-            border-radius: var(--radius-xl);
-            border: 1px solid var(--slate-200);
+            background: var(--bg-white);
+            border-radius: 16px;
             box-shadow: var(--shadow-lg);
             overflow: hidden;
             display: grid;
             grid-template-columns: 1fr 1px 1fr;
+            align-items: stretch;
         }
 
-        .install-panel {
-            padding: 2.5rem;
+        .install-main {
+            padding: 3rem;
         }
 
-        .install-panel h3 {
-            font-size: 1.25rem;
+        .install-main h3 {
+            font-size: 1.5rem;
             font-weight: 700;
             margin-bottom: 1.5rem;
-            color: var(--slate-900);
-            display: flex;
-            align-items: center;
-            gap: 0.625rem;
+            color: var(--primary);
         }
 
-        .install-panel h3 svg {
-            width: 22px;
-            height: 22px;
-            color: var(--primary-700);
+        .install-main ol {
+            padding-left: 1.5rem;
         }
 
-        .install-panel h3 .recommended-tag {
-            font-size: 0.65rem;
-            font-weight: 600;
-            color: var(--success-600);
-            background: rgba(16, 185, 129, 0.08);
-            border: 1px solid rgba(16, 185, 129, 0.15);
-            padding: 0.15rem 0.5rem;
-            border-radius: var(--radius-full);
-            letter-spacing: 0.03em;
-            text-transform: uppercase;
+        .install-main li {
+            margin-bottom: 1rem;
+            font-size: 1rem;
+            color: var(--text-dark);
         }
 
-        .install-panel ol {
-            padding-left: 1.25rem;
-        }
-
-        .install-panel li {
-            margin-bottom: 0.75rem;
-            font-size: 0.95rem;
-            color: var(--slate-700);
-            line-height: 1.6;
-        }
-
-        .install-panel code {
-            background: var(--slate-50);
-            padding: 0.15rem 0.45rem;
+        .install-main code {
+            background: var(--bg-light);
+            padding: 0.25rem 0.5rem;
             border-radius: 4px;
-            font-family: 'SFMono-Regular', 'Cascadia Code', 'Consolas', monospace;
-            color: var(--primary-700);
-            font-size: 0.825rem;
-            border: 1px solid var(--slate-200);
-        }
-
-        .install-panel a {
-            color: var(--primary-700);
-            text-decoration: underline;
-            text-underline-offset: 2px;
-            transition: color 0.2s;
-        }
-
-        .install-panel a:hover {
-            color: var(--primary-800);
+            font-family: 'Courier New', monospace;
+            color: var(--primary);
+            font-size: 0.875rem;
         }
 
         .install-divider {
             width: 1px;
-            background: var(--slate-200);
+            background: var(--border);
             margin: 2rem 0;
+            height: auto;
         }
 
-        /* ──────────────────────────────────
-           ABOUT CREATOR
-        ────────────────────────────────── */
+        /* About Creator */
         .about-section {
-            background: var(--grad-surface);
-            border-top: 1px solid var(--slate-100);
+            background: linear-gradient(135deg, var(--bg-light) 0%, white 100%);
         }
 
         .about-card {
-            background: var(--surface-white);
-            border-radius: var(--radius-xl);
-            border: 1px solid var(--slate-200);
+            background: var(--bg-white);
+            border-radius: 16px;
             box-shadow: var(--shadow-lg);
             padding: 3rem;
             display: grid;
             grid-template-columns: auto 1fr;
-            gap: 2.5rem;
+            gap: 3rem;
             align-items: center;
         }
 
         .about-avatar {
-            width: 140px;
-            height: 140px;
-            background: var(--grad-teal);
+            width: 150px;
+            height: 150px;
+            background: var(--gradient-primary);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: 'Sora', sans-serif;
-            font-size: 2.5rem;
-            font-weight: 800;
+            font-size: 4rem;
             color: white;
-            letter-spacing: -0.02em;
-            box-shadow: 0 8px 30px rgba(14, 116, 144, 0.2);
+            box-shadow: 0 10px 40px rgba(2, 132, 199, 0.3);
         }
 
         .about-content h3 {
-            font-size: 1.5rem;
+            font-size: 1.75rem;
             font-weight: 700;
-            margin-bottom: 0.3rem;
-            color: var(--slate-900);
+            margin-bottom: 0.5rem;
         }
 
         .about-title {
-            color: var(--primary-700);
+            color: var(--primary);
             font-weight: 600;
             margin-bottom: 1rem;
-            font-size: 0.95rem;
         }
 
-        .about-content > p {
-            color: var(--slate-500);
+        .about-content p {
+            color: var(--text-muted);
             line-height: 1.8;
-            margin-bottom: 1.25rem;
-            font-size: 0.95rem;
-        }
-
-        .about-skills {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
             margin-bottom: 1.5rem;
-        }
-
-        .skill-tag {
-            background: var(--slate-50);
-            border: 1px solid var(--slate-200);
-            color: var(--slate-600);
-            padding: 0.3rem 0.75rem;
-            border-radius: var(--radius-full);
-            font-size: 0.775rem;
-            font-weight: 500;
         }
 
         .about-links {
             display: flex;
-            gap: 0.75rem;
+            gap: 1rem;
         }
 
         .about-link {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.625rem 1.25rem;
-            border-radius: var(--radius-md);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
             text-decoration: none;
             font-weight: 600;
-            font-size: 0.9rem;
-            transition: all 0.25s;
-        }
-
-        .about-link svg {
-            width: 18px;
-            height: 18px;
+            transition: all 0.2s;
         }
 
         .about-link.primary {
-            background: var(--slate-900);
+            background: var(--gradient-primary);
             color: white;
-        }
-
-        .about-link.primary:hover {
-            background: var(--primary-700);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 14px rgba(14, 116, 144, 0.25);
         }
 
         .about-link.secondary {
-            background: var(--surface-white);
-            color: var(--slate-700);
-            border: 1px solid var(--slate-200);
+            background: var(--bg-light);
+            color: var(--text-dark);
+            border: 1px solid var(--border);
         }
 
-        .about-link.secondary:hover {
-            border-color: var(--slate-300);
+        .about-link:hover {
             transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
         }
 
-        /* ──────────────────────────────────
-           CTA SECTION
-        ────────────────────────────────── */
+        /* CTA Section */
         .cta-section {
-            background: var(--grad-hero);
+            background: var(--gradient-primary);
             color: white;
             text-align: center;
             padding: 5rem 2rem;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .cta-section::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-            background-size: 24px 24px;
-        }
-
-        .cta-section .container {
-            position: relative;
-            z-index: 1;
         }
 
         .cta-section h2 {
             font-size: 2.5rem;
             font-weight: 800;
             margin-bottom: 1rem;
-            letter-spacing: -0.02em;
         }
 
         .cta-section p {
-            font-size: 1.125rem;
-            color: var(--slate-300);
+            font-size: 1.25rem;
+            opacity: 0.9;
             margin-bottom: 2rem;
-            max-width: 520px;
+            max-width: 600px;
             margin-left: auto;
             margin-right: auto;
-            line-height: 1.7;
         }
 
-        /* ──────────────────────────────────
-           FOOTER
-        ────────────────────────────────── */
+        /* Footer */
         footer {
-            background: var(--surface-darker);
+            background: var(--bg-dark);
             color: white;
             padding: 4rem 0 2rem;
         }
@@ -1175,28 +795,16 @@
             margin-bottom: 3rem;
         }
 
-        .footer-brand {
-            padding-right: 2rem;
-        }
-
-        .footer-brand .logo {
-            color: white;
-            margin-bottom: 0.75rem;
-        }
-
-        .footer-brand > p {
-            color: var(--slate-400);
-            font-size: 0.9rem;
+        .footer-brand p {
+            color: rgba(255, 255, 255, 0.7);
+            margin-top: 1rem;
             line-height: 1.7;
         }
 
         .footer-section h4 {
-            margin-bottom: 1.25rem;
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--slate-300);
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
+            margin-bottom: 1.5rem;
+            font-size: 1rem;
+            font-weight: 700;
         }
 
         .footer-section ul {
@@ -1204,12 +812,12 @@
         }
 
         .footer-section a {
-            color: var(--slate-400);
+            color: rgba(255, 255, 255, 0.7);
             text-decoration: none;
             display: block;
-            padding: 0.3rem 0;
+            padding: 0.375rem 0;
             transition: color 0.2s;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
         }
 
         .footer-section a:hover {
@@ -1219,30 +827,16 @@
         .footer-bottom {
             text-align: center;
             padding-top: 2rem;
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-            color: var(--slate-500);
-            font-size: 0.825rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.875rem;
         }
 
-        /* ──────────────────────────────────
-           RESPONSIVE
-        ────────────────────────────────── */
+        /* Responsive */
         @media (max-width: 1024px) {
             .hero-content {
                 grid-template-columns: 1fr;
                 text-align: center;
-            }
-
-            .hero-text .hero-desc {
-                max-width: 100%;
-            }
-
-            .hero-badges {
-                justify-content: center;
-            }
-
-            .cta-buttons {
-                justify-content: center;
             }
 
             .hero-visual {
@@ -1259,10 +853,6 @@
                 grid-template-columns: repeat(2, 1fr);
             }
 
-            .stat-item:nth-child(2)::after {
-                display: none;
-            }
-
             .tech-grid {
                 grid-template-columns: repeat(3, 1fr);
             }
@@ -1277,6 +867,11 @@
                 margin: 0;
             }
 
+            .install-alt {
+                border-left: none;
+                border-top: 1px solid var(--border);
+            }
+
             .footer-content {
                 grid-template-columns: repeat(2, 1fr);
             }
@@ -1287,48 +882,20 @@
                 display: none;
             }
 
-            .mobile-menu-btn {
-                display: block;
-            }
-
-            .hero {
-                padding: 8rem 1.5rem 5rem;
-            }
-
             .hero-text h1 {
                 font-size: 2.5rem;
             }
 
-            section {
-                padding: 4rem 0;
-            }
-
-            .section-header h2 {
-                font-size: 2rem;
-            }
-
-            .section-header {
-                margin-bottom: 3rem;
-            }
-
             .features-grid,
+            .workflow-steps,
             .export-grid,
             .tech-grid,
             .stats-container {
                 grid-template-columns: 1fr;
             }
 
-            .workflow-steps {
-                grid-template-columns: 1fr;
-                gap: 1.5rem;
-            }
-
             .workflow-steps::before {
                 display: none;
-            }
-
-            .stat-item::after {
-                display: none !important;
             }
 
             .about-card {
@@ -1336,70 +903,46 @@
                 text-align: center;
             }
 
-            .about-avatar {
-                margin: 0 auto;
-            }
-
-            .about-skills {
-                justify-content: center;
-            }
-
             .about-links {
                 justify-content: center;
-                flex-wrap: wrap;
             }
 
             .footer-content {
                 grid-template-columns: 1fr;
             }
-
-            .cta-section h2 {
-                font-size: 2rem;
-            }
         }
 
-        /* ──────────────────────────────────
-           ANIMATIONS
-        ────────────────────────────────── */
+        /* Animations */
         @keyframes fadeInUp {
             from {
                 opacity: 0;
-                transform: translateY(24px);
+                transform: translateY(30px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
             }
         }
 
-        .hero-text {
-            animation: fadeInUp 0.7s cubic-bezier(0.4, 0, 0.2, 1) both;
+        .animate-in {
+            animation: fadeInUp 0.6s ease-out forwards;
         }
 
-        .hero-visual {
-            animation: fadeInUp 0.7s cubic-bezier(0.4, 0, 0.2, 1) 0.15s both;
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0);
+            }
+
+            50% {
+                transform: translateY(-10px);
+            }
         }
 
-        @keyframes subtleFloat {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-8px); }
-        }
-
-        .hero-visual {
-            animation: fadeInUp 0.7s cubic-bezier(0.4, 0, 0.2, 1) 0.15s both,
-                       subtleFloat 5s ease-in-out 1s infinite;
-        }
-
-        .reveal {
-            opacity: 0;
-            transform: translateY(20px);
-            transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1),
-                        transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .reveal.visible {
-            opacity: 1;
-            transform: translateY(0);
+        .float-animation {
+            animation: float 3s ease-in-out infinite;
         }
     </style>
 </head>
@@ -1409,12 +952,7 @@
     <header id="header">
         <nav>
             <a href="#" class="logo">
-                <span class="logo-mark">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                        <circle cx="12" cy="13" r="4"/>
-                    </svg>
-                </span>
+                <span class="logo-icon">📸</span>
                 TestSnapper
             </a>
             <ul class="nav-links">
@@ -1426,75 +964,55 @@
                 <li><a href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
                         target="_blank" class="nav-cta">Install Free</a></li>
             </ul>
-            <button class="mobile-menu-btn" aria-label="Menu">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                    <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
-                </svg>
-            </button>
         </nav>
     </header>
 
     <!-- Hero Section -->
     <section class="hero">
         <div class="hero-content">
-            <div class="hero-text">
+            <div class="hero-text animate-in">
                 <div class="hero-badges">
-                    <span class="badge">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                        Chrome Extension
-                    </span>
-                    <span class="badge">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                        Open Source
-                    </span>
-                    <span class="badge">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                        Privacy First
-                    </span>
+                    <span class="badge">✨ Chrome Extension</span>
+                    <span class="badge">🚀 Open Source</span>
+                    <span class="badge">🔒 Privacy First</span>
                 </div>
-                <h1>Automate Your<br><span class="text-gradient">Test Documentation</span></h1>
-                <p class="hero-desc">Stop writing manual test steps. TestSnapper captures every interaction, takes
-                    high-quality screenshots, and exports professional documentation in seconds.</p>
+                <h1>Automate Your <span>Test Documentation</span></h1>
+                <p>Stop writing manual Test steps. TestSnapper captures every interaction, takes high-quality
+                    screenshots, and exports professional documentation in seconds.</p>
                 <div class="cta-buttons">
                     <a href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
                         class="btn btn-primary" target="_blank">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        Install from Chrome Web Store
+                        🛒 Install from Chrome Web Store
                     </a>
-                    <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper" class="btn btn-ghost" target="_blank">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                        Star on GitHub
+                    <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper" class="btn btn-secondary"
+                        target="_blank">
+                        ⭐ Star on GitHub
                     </a>
                 </div>
             </div>
-            <div class="hero-visual">
+            <div class="hero-visual float-animation">
                 <div class="hero-mockup">
-                    <div class="mockup-bar">
-                        <span class="mockup-dot r"></span>
-                        <span class="mockup-dot y"></span>
-                        <span class="mockup-dot g"></span>
-                        <span class="mockup-bar-title">TestSnapper</span>
+                    <div class="mockup-header">
+                        <span class="mockup-dot red"></span>
+                        <span class="mockup-dot yellow"></span>
+                        <span class="mockup-dot green"></span>
                     </div>
-                    <div class="mockup-body">
+                    <div class="mockup-content">
                         <div class="mockup-step">
                             <span class="mockup-step-num">1</span>
                             Click on "Login" button
-                            <svg class="mockup-step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                         </div>
                         <div class="mockup-step">
                             <span class="mockup-step-num">2</span>
                             Enter username "john@example.com"
-                            <svg class="mockup-step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                         </div>
                         <div class="mockup-step">
                             <span class="mockup-step-num">3</span>
                             Enter password "••••••••"
-                            <svg class="mockup-step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                         </div>
                         <div class="mockup-step">
                             <span class="mockup-step-num">4</span>
                             Click "Submit" button
-                            <svg class="mockup-step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                         </div>
                     </div>
                 </div>
@@ -1505,19 +1023,19 @@
     <!-- Stats Section -->
     <section class="stats">
         <div class="stats-container">
-            <div class="stat-item reveal">
+            <div class="stat-item">
                 <div class="stat-number">5K+</div>
                 <div class="stat-label">Lines of Code</div>
             </div>
-            <div class="stat-item reveal">
+            <div class="stat-item">
                 <div class="stat-number">10+</div>
                 <div class="stat-label">Core Modules</div>
             </div>
-            <div class="stat-item reveal">
+            <div class="stat-item">
                 <div class="stat-number">4</div>
                 <div class="stat-label">Export Formats</div>
             </div>
-            <div class="stat-item reveal">
+            <div class="stat-item">
                 <div class="stat-number">95%</div>
                 <div class="stat-label">Screenshot Quality</div>
             </div>
@@ -1528,108 +1046,81 @@
     <section id="features">
         <div class="container">
             <div class="section-header">
-                <span class="section-label">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                    Features
-                </span>
+                <span class="section-label">Features</span>
                 <h2>Built for Professional QA Teams</h2>
-                <p>Enterprise-grade test recording with the simplicity of a Chrome extension</p>
+                <p>Enterprise-grade Test recording with the simplicity of a Chrome extension</p>
             </div>
 
             <div class="features-grid">
-                <div class="feature-card reveal">
-                    <div class="feature-icon-wrap">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/>
-                        </svg>
-                    </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔴</div>
                     <h3>Smart Auto-Recording</h3>
                     <p>Automatically captures user interactions in real-time with intelligent event detection</p>
-                    <ul class="feature-list">
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Clicks, typing, navigation</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Form submissions & dropdowns</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Checkbox & radio selections</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Pause / Resume / Stop controls</li>
+                    <ul>
+                        <li>Clicks, typing, navigation</li>
+                        <li>Form submissions & dropdowns</li>
+                        <li>Checkbox & radio selections</li>
+                        <li>Pause/Resume/Stop controls</li>
                     </ul>
                 </div>
 
-                <div class="feature-card reveal">
-                    <div class="feature-icon-wrap">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/>
-                        </svg>
-                    </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎯</div>
                     <h3>Smart Field Detection</h3>
                     <p>Automatically extracts meaningful, human-readable field names from the DOM</p>
-                    <ul class="feature-list">
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Label associations</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> ARIA attributes</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Placeholder text</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Semantic HTML analysis</li>
+                    <ul>
+                        <li>Label associations</li>
+                        <li>ARIA attributes</li>
+                        <li>Placeholder text</li>
+                        <li>Semantic HTML analysis</li>
                     </ul>
                 </div>
 
-                <div class="feature-card reveal">
-                    <div class="feature-icon-wrap">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>
-                        </svg>
-                    </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📸</div>
                     <h3>High-Quality Screenshots</h3>
                     <p>Crystal-clear documentation visuals with automated overlay cleanup</p>
-                    <ul class="feature-list">
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> 95% JPEG quality capture</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> 1200px high-resolution export</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Auto-capture on every step</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Manual snap (Ctrl+Shift+S)</li>
+                    <ul>
+                        <li>95% JPEG quality capture</li>
+                        <li>1200px high-resolution export</li>
+                        <li>Auto-capture on every step</li>
+                        <li>Manual snap (Ctrl+Shift+S)</li>
                     </ul>
                 </div>
 
-                <div class="feature-card reveal">
-                    <div class="feature-icon-wrap">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
-                        </svg>
-                    </div>
+                <div class="feature-card">
+                    <div class="feature-icon">✏️</div>
                     <h3>Professional Review UI</h3>
                     <p>Modern card-based editor with drag-and-drop step management</p>
-                    <ul class="feature-list">
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Drag & drop reordering</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Bulk delete operations</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Light / Dark theme toggle</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Insert steps anywhere</li>
+                    <ul>
+                        <li>Drag & drop reordering</li>
+                        <li>Bulk delete operations</li>
+                        <li>Light/Dark theme toggle</li>
+                        <li>Insert steps anywhere</li>
                     </ul>
                 </div>
 
-                <div class="feature-card reveal">
-                    <div class="feature-icon-wrap">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                        </svg>
-                    </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📤</div>
                     <h3>Multi-Format Export</h3>
                     <p>Export to your preferred format with professional formatting</p>
-                    <ul class="feature-list">
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> DOCX with full-width images</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> JSON for automation tools</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> CSV for spreadsheets</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> TXT for simple notes</li>
+                    <ul>
+                        <li>DOCX with full-width images</li>
+                        <li>JSON for automation tools</li>
+                        <li>CSV for spreadsheets</li>
+                        <li>TXT for simple notes</li>
                     </ul>
                 </div>
 
-                <div class="feature-card reveal">
-                    <div class="feature-icon-wrap">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                        </svg>
-                    </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
                     <h3>Privacy First</h3>
                     <p>100% client-side processing with zero cloud dependencies</p>
-                    <ul class="feature-list">
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Local IndexedDB storage</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> No data leaves your browser</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Auto-redacts passwords</li>
-                        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Sensitive field masking</li>
+                    <ul>
+                        <li>Local IndexedDB storage</li>
+                        <li>No data leaves your browser</li>
+                        <li>Auto-redacts passwords</li>
+                        <li>Sensitive field masking</li>
                     </ul>
                 </div>
             </div>
@@ -1640,34 +1131,31 @@
     <section id="how-it-works" class="workflow">
         <div class="container">
             <div class="section-header">
-                <span class="section-label">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                    Workflow
-                </span>
+                <span class="section-label">Workflow</span>
                 <h2>How It Works</h2>
-                <p>Get started in four simple steps</p>
+                <p>Get started in 4 simple steps</p>
             </div>
 
             <div class="workflow-steps">
-                <div class="workflow-step reveal">
+                <div class="workflow-step">
                     <div class="step-number">1</div>
                     <h3>Start Recording</h3>
                     <p>Click the extension icon and hit "Start Recording"</p>
                 </div>
 
-                <div class="workflow-step reveal">
+                <div class="workflow-step">
                     <div class="step-number">2</div>
                     <h3>Perform Actions</h3>
                     <p>Navigate and interact with your web application</p>
                 </div>
 
-                <div class="workflow-step reveal">
+                <div class="workflow-step">
                     <div class="step-number">3</div>
                     <h3>Review & Edit</h3>
                     <p>Open the Review UI to refine your documentation</p>
                 </div>
 
-                <div class="workflow-step reveal">
+                <div class="workflow-step">
                     <div class="step-number">4</div>
                     <h3>Export</h3>
                     <p>Download in DOCX, JSON, CSV, or TXT format</p>
@@ -1680,43 +1168,32 @@
     <section id="export">
         <div class="container">
             <div class="section-header">
-                <span class="section-label">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    Export
-                </span>
+                <span class="section-label">Export</span>
                 <h2>Export to Any Format</h2>
                 <p>Professional documentation in the format you need</p>
             </div>
 
             <div class="export-grid">
-                <div class="export-card reveal">
-                    <div class="export-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                    </div>
+                <div class="export-card">
+                    <div class="export-icon">📄</div>
                     <h4>DOCX</h4>
                     <p>Word documents with full-width 1200px screenshots</p>
                 </div>
 
-                <div class="export-card reveal">
-                    <div class="export-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                    </div>
+                <div class="export-card">
+                    <div class="export-icon">📊</div>
                     <h4>JSON</h4>
                     <p>Structured data for automation frameworks</p>
                 </div>
 
-                <div class="export-card reveal">
-                    <div class="export-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
-                    </div>
+                <div class="export-card">
+                    <div class="export-icon">📈</div>
                     <h4>CSV</h4>
                     <p>Spreadsheet-compatible for Excel & Sheets</p>
                 </div>
 
-                <div class="export-card reveal">
-                    <div class="export-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    </div>
+                <div class="export-card">
+                    <div class="export-icon">📝</div>
                     <h4>TXT</h4>
                     <p>Simple text summaries for quick notes</p>
                 </div>
@@ -1728,82 +1205,59 @@
     <section id="tech-stack" class="tech-section">
         <div class="container">
             <div class="section-header">
-                <span class="section-label">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                    Technology
-                </span>
+                <span class="section-label" style="background: rgba(255,255,255,0.1); color: white;">Technology</span>
                 <h2>Built With Modern Tech</h2>
                 <p>Leveraging cutting-edge web technologies for performance and reliability</p>
             </div>
 
             <div class="tech-grid">
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h.01"/><path d="M17 7h.01"/><path d="M7 17h.01"/><path d="M17 17h.01"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">🧩</div>
                     <h4>Manifest V3</h4>
                     <p>Latest Chrome Extension API</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">⚡</div>
                     <h4>Service Workers</h4>
                     <p>Background Processing</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">💾</div>
                     <h4>IndexedDB</h4>
                     <p>Client-side Storage</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">🎨</div>
                     <h4>OffscreenCanvas</h4>
                     <p>Image Processing</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">📦</div>
                     <h4>Blob API</h4>
                     <p>Binary Data Handling</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                    </div>
-                    <h4>Async / Await</h4>
+                <div class="tech-item">
+                    <div class="tech-item-icon">🔄</div>
+                    <h4>Async/Await</h4>
                     <p>Modern JavaScript ES6+</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">📑</div>
                     <h4>DOCX Generation</h4>
                     <p>Document Export</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">🎭</div>
                     <h4>CSS3 Animations</h4>
-                    <p>Modern UI / UX</p>
+                    <p>Modern UI/UX</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">🔐</div>
                     <h4>Content Scripts</h4>
                     <p>DOM Interaction</p>
                 </div>
-                <div class="tech-item reveal">
-                    <div class="tech-item-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></svg>
-                    </div>
+                <div class="tech-item">
+                    <div class="tech-item-icon">📡</div>
                     <h4>Message Passing</h4>
                     <p>Extension Communication</p>
                 </div>
@@ -1815,40 +1269,32 @@
     <section id="installation">
         <div class="container">
             <div class="section-header">
-                <span class="section-label">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    Get Started
-                </span>
+                <span class="section-label">Get Started</span>
                 <h2>Installation</h2>
                 <p>Get TestSnapper running in under a minute</p>
             </div>
 
             <div class="install-card">
-                <div class="install-panel">
-                    <h3>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
-                        Chrome Web Store
-                        <span class="recommended-tag">Recommended</span>
-                    </h3>
+                <div class="install-main">
+                    <h3>🛒 Chrome Web Store (Recommended)</h3>
                     <ol>
                         <li>Visit the <a
                                 href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
-                                target="_blank">TestSnapper Chrome Web Store page</a></li>
+                                style="color: var(--primary);" target="_blank">TestSnapper Chrome Web Store page</a>
+                        </li>
                         <li>Click <strong>Add to Chrome</strong></li>
                         <li>Confirm by clicking <strong>Add extension</strong></li>
                         <li>The TestSnapper icon appears in your toolbar</li>
-                        <li>Click the icon to start recording</li>
+                        <li>Click the icon to start recording! 🎉</li>
                     </ol>
                 </div>
                 <div class="install-divider"></div>
-                <div class="install-panel">
-                    <h3>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                        Developer Installation
-                    </h3>
+
+                <div class="install-main">
+                    <h3>🔧 Developer Installation (From Source)</h3>
                     <ol>
                         <li>Clone from <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper"
-                                target="_blank">GitHub Repository</a></li>
+                                style="color: var(--primary);" target="_blank">GitHub Repository</a></li>
                         <li>Navigate to <code>chrome://extensions</code> in Chrome</li>
                         <li>Enable <strong>Developer Mode</strong> (top right)</li>
                         <li>Click <strong>Load Unpacked</strong> button</li>
@@ -1863,41 +1309,26 @@
     <section id="about" class="about-section">
         <div class="container">
             <div class="section-header">
-                <span class="section-label">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                    Creator
-                </span>
+                <span class="section-label">Creator</span>
                 <h2>About the Developer</h2>
             </div>
 
-            <div class="about-card reveal">
+            <div class="about-card">
                 <div class="about-avatar">NS</div>
                 <div class="about-content">
                     <h3>Nataraaj Shanmugam</h3>
                     <div class="about-title">Software Engineer & QA Automation Specialist</div>
-                    <p>Passionate about building tools that improve developer productivity and testing workflows.
-                        TestSnapper was born from the frustration of manually documenting test cases during exploratory
-                        testing sessions. This project demonstrates expertise in Chrome Extension development,
+                    <p>Passionate about building tools that improve developer productivity and Testing workflows.
+                        TestSnapper was born from the frustration of manually documenting Test cases during exploratory
+                        Testing sessions. This project demonstrates expertise in Chrome Extension development,
                         client-side storage, image processing, and modern JavaScript architecture.</p>
-                    <div class="about-skills">
-                        <span class="skill-tag">Chrome Extensions</span>
-                        <span class="skill-tag">Manifest V3</span>
-                        <span class="skill-tag">JavaScript ES6+</span>
-                        <span class="skill-tag">QA Automation</span>
-                        <span class="skill-tag">DOM APIs</span>
-                        <span class="skill-tag">IndexedDB</span>
-                        <span class="skill-tag">Image Processing</span>
-                        <span class="skill-tag">Webpack</span>
-                    </div>
                     <div class="about-links">
                         <a href="https://github.com/Nataraaj-Shanmugam" target="_blank" class="about-link primary">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                            GitHub Profile
+                            👤 GitHub Profile
                         </a>
                         <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper" target="_blank"
                             class="about-link secondary">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                            View Source Code
+                            📂 View Source Code
                         </a>
                     </div>
                 </div>
@@ -1909,12 +1340,11 @@
     <section class="cta-section">
         <div class="container">
             <h2>Ready to Streamline Your Testing?</h2>
-            <p>Join the community of QA professionals using TestSnapper to document their tests faster</p>
+            <p>Join the community of QA professionals using TestSnapper to document their Tests faster</p>
             <div class="cta-buttons" style="justify-content: center;">
                 <a href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
-                    class="btn btn-accent" target="_blank">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    Install Free from Chrome Web Store
+                    class="btn btn-primary" target="_blank">
+                    🛒 Install Free from Chrome Web Store
                 </a>
             </div>
         </div>
@@ -1925,15 +1355,11 @@
         <div class="container">
             <div class="footer-content">
                 <div class="footer-brand">
-                    <a href="#" class="logo">
-                        <span class="logo-mark">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>
-                            </svg>
-                        </span>
+                    <a href="#" class="logo" style="color: white;">
+                        <span class="logo-icon">📸</span>
                         TestSnapper
                     </a>
-                    <p>Automated test recording and documentation for modern web applications. Open source, privacy
+                    <p>Automated Test recording and documentation for modern web applications. Open source, privacy
                         focused, and built with modern web technologies.</p>
                 </div>
 
@@ -1985,92 +1411,50 @@
 
     <script>
         // Header scroll effect
-        const header = document.getElementById('header');
-        let lastScroll = 0;
-
         window.addEventListener('scroll', () => {
-            const currentScroll = window.scrollY;
-            if (currentScroll > 50) {
+            const header = document.getElementById('header');
+            if (window.scrollY > 50) {
                 header.classList.add('scrolled');
             } else {
                 header.classList.remove('scrolled');
             }
-            lastScroll = currentScroll;
-        }, { passive: true });
+        });
 
-        // Smooth scrolling for anchor links
+        // Smooth scrolling
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
             anchor.addEventListener('click', function (e) {
                 e.preventDefault();
                 const target = document.querySelector(this.getAttribute('href'));
                 if (target) {
-                    const headerOffset = 80;
-                    const elementPosition = target.getBoundingClientRect().top;
-                    const offsetPosition = elementPosition + window.scrollY - headerOffset;
-
-                    window.scrollTo({
-                        top: offsetPosition,
-                        behavior: 'smooth'
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
                     });
                 }
             });
         });
 
-        // Intersection Observer for reveal animations
-        const revealObserver = new IntersectionObserver((entries) => {
-            entries.forEach((entry, index) => {
-                if (entry.isIntersecting) {
-                    // Stagger animation based on sibling index
-                    const siblings = entry.target.parentElement.querySelectorAll('.reveal');
-                    let delay = 0;
-                    siblings.forEach((sib, i) => {
-                        if (sib === entry.target) delay = i * 80;
-                    });
-                    setTimeout(() => {
-                        entry.target.classList.add('visible');
-                    }, delay);
-                    revealObserver.unobserve(entry.target);
-                }
-            });
-        }, {
+        // Animate on scroll
+        const observerOptions = {
             threshold: 0.1,
-            rootMargin: '0px 0px -60px 0px'
-        });
+            rootMargin: '0px 0px -100px 0px'
+        };
 
-        document.querySelectorAll('.reveal').forEach(el => {
-            revealObserver.observe(el);
-        });
-
-        // Animated stat counters
-        const statObserver = new IntersectionObserver((entries) => {
+        const observer = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
-                    const statNumbers = entry.target.querySelectorAll('.stat-number');
-                    statNumbers.forEach(stat => {
-                        const text = stat.textContent;
-                        const match = text.match(/^(\d+)/);
-                        if (match) {
-                            const target = parseInt(match[1]);
-                            const suffix = text.replace(match[1], '');
-                            let current = 0;
-                            const increment = Math.ceil(target / 40);
-                            const timer = setInterval(() => {
-                                current += increment;
-                                if (current >= target) {
-                                    current = target;
-                                    clearInterval(timer);
-                                }
-                                stat.textContent = current + suffix;
-                            }, 30);
-                        }
-                    });
-                    statObserver.unobserve(entry.target);
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
                 }
             });
-        }, { threshold: 0.5 });
+        }, observerOptions);
 
-        const statsContainer = document.querySelector('.stats-container');
-        if (statsContainer) statObserver.observe(statsContainer);
+        document.querySelectorAll('.feature-card, .workflow-step, .export-card, .tech-item, .stat-item').forEach(el => {
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(30px)';
+            el.style.transition = 'opacity 0.6s ease-out, transform 0.6s ease-out';
+            observer.observe(el);
+        });
     </script>
 </body>
 

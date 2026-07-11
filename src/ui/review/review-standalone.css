@@ -4,14 +4,14 @@
  * Monospace-first, geometric, high-contrast
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Azeret+Mono:wght@400;500;600;700;800&display=swap');
+/* UX-018: Google Fonts removed — use system font stack for offline reliability */
 
 /* ==================== DESIGN TOKENS ==================== */
 
 :root {
-    /* Typography - Terminal aesthetic with monospace dominance */
-    --font-display: 'Share Tech Mono', 'Courier New', monospace;
-    --font-mono: 'Azeret Mono', 'Consolas', 'Monaco', monospace;
+    /* Typography (UX-018: no remote fonts). Refresh: sans for UI, mono for code. */
+    --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'Azeret Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
 
     --text-xs: 10px;
     --text-sm: 11px;
@@ -78,58 +78,58 @@
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
     --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.12);
-    --shadow-neon: 0 0 12px var(--accent-glow);
+    --shadow-neon: 0 2px 8px rgba(0, 0, 0, 0.1);
 
     /* Aliases for compatibility */
     --color-primary: var(--accent);
     --border-color: var(--border);
 }
 
-/* Dark Theme - True terminal */
+/* Dark Theme - Refined slate (refresh: unified steel-blue accent, no neon) */
 [data-theme="dark"] {
-    --bg-primary: #0a0a0a;
-    --bg-secondary: #121212;
-    --bg-tertiary: #1a1a1a;
-    --bg-hover: #262626;
-    --bg-glass: rgba(10, 10, 10, 0.85);
+    --bg-primary: #0f1216;
+    --bg-secondary: #161a20;
+    --bg-tertiary: #1d222b;
+    --bg-hover: #272e39;
+    --bg-glass: rgba(15, 18, 22, 0.85);
 
-    --border: #333333;
-    --border-light: #262626;
-    --border-accent: #00ffcc;
+    --border: #2a313c;
+    --border-light: #21272f;
+    --border-accent: #5b8fd0;
 
-    --text-primary: #f5f5f5;
-    --text-secondary: #d4d4d4;
-    --text-muted: #a3a3a3;
-    --text-disabled: #525252;
+    --text-primary: #e8eaed;
+    --text-secondary: #b8bec8;
+    --text-muted: #8b929e;
+    --text-disabled: #5a616b;
 
-    --accent: #00ffcc;
-    --accent-hover: #33ffdb;
-    --accent-subtle: rgba(0, 255, 204, 0.15);
-    --accent-border: #00ffcc;
-    --accent-glow: rgba(0, 255, 204, 0.6);
+    --accent: #5b8fd0;
+    --accent-hover: #74a2dc;
+    --accent-subtle: rgba(91, 143, 208, 0.16);
+    --accent-border: #5b8fd0;
+    --accent-glow: rgba(91, 143, 208, 0.28);
 
-    --secondary-accent: #ff00ff;
-    --secondary-glow: rgba(255, 0, 255, 0.5);
+    --secondary-accent: #8aa0bd;
+    --secondary-glow: rgba(138, 160, 189, 0.2);
 
-    --success: #00ff66;
-    --success-subtle: rgba(0, 255, 102, 0.15);
-    --success-glow: rgba(0, 255, 102, 0.6);
+    --success: #4caf78;
+    --success-subtle: rgba(76, 175, 120, 0.16);
+    --success-glow: rgba(76, 175, 120, 0.25);
 
-    --warning: #ffaa00;
-    --warning-subtle: rgba(255, 170, 0, 0.15);
-    --warning-glow: rgba(255, 170, 0, 0.6);
+    --warning: #d99a4e;
+    --warning-subtle: rgba(217, 154, 78, 0.16);
+    --warning-glow: rgba(217, 154, 78, 0.25);
 
-    --danger: #ff0055;
-    --danger-subtle: rgba(255, 0, 85, 0.15);
-    --danger-glow: rgba(255, 0, 85, 0.6);
+    --danger: #e0685f;
+    --danger-subtle: rgba(224, 104, 95, 0.16);
+    --danger-glow: rgba(224, 104, 95, 0.25);
 
-    --info: #00ccff;
-    --info-subtle: rgba(0, 204, 255, 0.15);
+    --info: #5b8fd0;
+    --info-subtle: rgba(91, 143, 208, 0.16);
 
-    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.5);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.7);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.8);
-    --shadow-neon: 0 0 20px var(--accent-glow), 0 0 40px var(--accent-glow);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+    --shadow-neon: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 /* ==================== BASE STYLES ==================== */
@@ -141,7 +141,7 @@
 }
 
 body {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     background-color: var(--bg-primary);
     color: var(--text-primary);
     font-size: var(--text-base);
@@ -190,41 +190,8 @@ body::before {
 /* ==================== SIDEBAR ==================== */
 
 .sidebar {
-    width: 320px;
-    background-color: var(--bg-secondary);
-    border-right: 3px solid var(--border);
-    padding: var(--space-4);
-    height: 100vh;
-    position: sticky;
-    top: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    z-index: 10;
-    position: relative;
-}
-
-.sidebar::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    right: -3px;
-    width: 3px;
-    height: 100%;
-    background: linear-gradient(180deg, var(--accent) 0%, transparent 20%, transparent 80%, var(--accent) 100%);
-    opacity: 0.3;
-    pointer-events: none;
-}
-
-.header-logo h1 {
-    font-family: var(--font-display);
-    font-size: var(--text-xl);
-    font-weight: 400;
-    color: var(--accent);
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    text-shadow: 0 0 8px var(--accent-glow);
-    margin-bottom: var(--space-3);
+    width: 100%;
+    margin-bottom: var(--space-4);
 }
 
 /* ==================== SESSION SETTINGS CARD ==================== */
@@ -251,8 +218,33 @@ body::before {
     clip-path: polygon(0 100%, 0 0, 100% 100%);
 }
 
+.settings-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.settings-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+
+.settings-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+}
+
 .field-group {
-    margin-bottom: var(--space-3);
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 140px;
 }
 
 .field-group label {
@@ -294,21 +286,26 @@ body::before {
 }
 
 .meta-info {
-    margin-top: var(--space-4);
-    padding-top: var(--space-3);
-    border-top: 2px solid var(--border);
-    margin-bottom: var(--space-4);
+    flex-shrink: 0;
 }
 
 .meta-item {
     font-family: var(--font-display);
-    font-size: var(--text-xs);
-    color: var(--text-muted);
+    font-size: var(--text-md);
+    color: var(--text-secondary);
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-1) 0;
+    padding: var(--space-2) var(--space-3);
     letter-spacing: 1px;
+    white-space: nowrap;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+}
+
+.meta-item #sessionStepCount {
+    font-weight: 600;
+    color: var(--text-primary);
 }
 
 .meta-label {
@@ -321,9 +318,14 @@ body::before {
 
 .sidebar-actions {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
     gap: var(--space-2);
-    margin-top: auto;
+    flex-shrink: 0;
+}
+
+.sidebar-actions .btn {
+    white-space: nowrap;
 }
 
 /* ==================== MAIN CONTENT ==================== */
@@ -377,6 +379,12 @@ body::before {
     text-transform: uppercase;
     color: var(--accent);
     text-shadow: 0 0 8px var(--accent-glow);
+}
+
+.page-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
 }
 
 .page-header p {
@@ -471,6 +479,41 @@ body::before {
 .btn-danger:not(:disabled):hover {
     box-shadow: 0 0 30px var(--danger-glow), inset 0 0 20px rgba(255, 255, 255, 0.2);
     transform: translateY(-2px);
+}
+
+/* UX-003: Dark text on success/warning for WCAG AA contrast */
+.btn-success {
+    background: var(--success);
+    color: #14532d;
+    border-color: var(--success);
+    box-shadow: 0 0 20px var(--success-glow);
+}
+
+.btn-success:not(:disabled):hover {
+    color: #14532d;
+    box-shadow: 0 0 30px var(--success-glow), inset 0 0 20px rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+}
+
+.btn-warning {
+    background: var(--warning);
+    color: #1a1a1f;
+    border-color: var(--warning);
+    box-shadow: 0 0 20px var(--warning-glow);
+}
+
+.btn-warning:not(:disabled):hover {
+    color: #1a1a1f;
+    box-shadow: 0 0 30px var(--warning-glow), inset 0 0 20px rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+}
+
+[data-theme="dark"] .btn-success {
+    color: #14532d;
+}
+
+[data-theme="dark"] .btn-warning {
+    color: #1a1a1f;
 }
 
 .icon-btn {
@@ -613,10 +656,9 @@ body::before {
     transform: scale(0.98);
 }
 
-.step-card.drag-over {
-    border: 3px dashed var(--accent);
-    box-shadow: 0 0 30px var(--accent-glow);
-    background: var(--accent-subtle);
+/* PERF-008: search/filter toggles this instead of rebuilding the DOM. */
+.step-card.is-filtered-out {
+    display: none;
 }
 
 .step-top {
@@ -824,13 +866,14 @@ body::before {
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
+    opacity: 0.45;
     transition: opacity var(--transition-base);
     margin: -10px 0;
     z-index: 5;
 }
 
-.add-between:hover {
+.add-between:hover,
+.add-between:focus-within {
     opacity: 1;
 }
 
@@ -840,11 +883,12 @@ body::before {
     height: 2px;
     width: 100%;
     background: var(--accent);
+    opacity: 0.5;
 }
 
 .add-between .btn-add {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border-radius: 0;
     background: var(--accent);
     color: var(--bg-primary);
@@ -854,7 +898,7 @@ body::before {
     justify-content: center;
     cursor: pointer;
     box-shadow: 0 0 20px var(--accent-glow);
-    font-size: var(--text-lg);
+    font-size: var(--text-md);
     font-family: var(--font-display);
     position: relative;
     z-index: 1;
@@ -865,7 +909,26 @@ body::before {
 .add-between .btn-add:hover {
     background: var(--accent-hover);
     box-shadow: 0 0 30px var(--accent-glow);
-    transform: scale(1.1);
+    transform: scale(1.15);
+}
+
+/* Drag-and-drop insertion overlay: the add-between strip nearest the cursor
+   lights up as the drop target, replacing the old whole-card dashed swap
+   highlight so the insertion point is unambiguous. */
+.add-between.drag-target {
+    opacity: 1;
+    height: var(--space-4);
+    margin: calc(-1 * var(--space-2)) 0;
+}
+
+.add-between.drag-target::before {
+    height: 3px;
+    opacity: 1;
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.add-between.drag-target .btn-add {
+    transform: scale(1.2);
 }
 
 /* ==================== MODALS ==================== */
@@ -1025,76 +1088,25 @@ body::before {
     letter-spacing: 1.5px;
 }
 
-/* ==================== SIDEBAR TOGGLE (hidden on desktop) ==================== */
-
-.sidebar-toggle {
-    display: none;
-    position: fixed;
-    top: var(--space-4);
-    left: var(--space-4);
-    z-index: 20;
-    width: 40px;
-    height: 40px;
-    border-radius: 0;
-    border: 2px solid var(--border);
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    box-shadow: 4px 4px 0 var(--bg-tertiary);
-    padding: 0;
-    transition: all var(--transition-base);
-    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
-}
-
-.sidebar-toggle:hover {
-    background: var(--bg-hover);
-    color: var(--accent);
-    border-color: var(--accent);
-    box-shadow: 0 0 20px var(--accent-glow), 6px 6px 0 var(--bg-tertiary);
-    transform: translateY(-2px);
-}
-
-.sidebar-overlay {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 9;
-}
-
 /* ==================== RESPONSIVE: < 768px ==================== */
 
 @media (max-width: 768px) {
-    .sidebar-toggle {
-        display: flex;
+    .settings-row {
+        flex-direction: column;
     }
 
-    .sidebar-overlay.active {
-        display: block;
+    .settings-footer {
+        flex-direction: column;
+        align-items: flex-start;
     }
 
-    .sidebar {
-        position: fixed;
-        left: -280px;
-        top: 0;
-        height: 100vh;
-        transition: left 0.2s ease;
-        z-index: 15;
-        overflow-y: auto;
-    }
-
-    .sidebar.open {
-        left: 0;
+    .sidebar-actions {
+        flex-direction: column;
+        width: 100%;
     }
 
     .main-content {
         padding: var(--space-4);
-        padding-top: 64px;
     }
 
     .page-header {
@@ -1176,8 +1188,14 @@ body::before {
 
 /* ==================== TERMINAL FOCUS RINGS ==================== */
 
+/* UX-007: Solid opaque focus rings for WCAG non-text contrast (≥3:1) */
 *:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid #4A7FB5;
+    outline-offset: 2px;
+}
+
+[data-theme="dark"] *:focus-visible {
+    outline: 2px solid #5EC8C0;
     outline-offset: 2px;
 }
 
@@ -1208,17 +1226,6 @@ body::before {
     clip-path: polygon(0 100%, 0 0, 100% 100%);
 }
 
-/* Geometric accent lines */
-.sidebar::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: linear-gradient(90deg, var(--accent) 0%, transparent 50%);
-    opacity: 0.3;
-}
 
 .page-header::after {
     content: '';
@@ -1258,7 +1265,7 @@ body::before {
     content: '';
     position: fixed;
     top: 0;
-    left: 320px;
+    left: 0;
     right: 0;
     bottom: 0;
     background-image:
@@ -1323,3 +1330,106 @@ body::before {
 .hidden {
     display: none !important;
 }
+
+/* ==================================================================
+   SOFT CARDS — chosen design (v4), review page. White cards on a soft
+   grey page, filled primary, tasteful micro-motion. Shared light + dark.
+   Structure/classes unchanged — JS untouched.
+   ================================================================== */
+:root { --ts-ease: cubic-bezier(0.4,0,0.2,1); --ts-fast: 0.15s var(--ts-ease); --ts: 0.2s var(--ts-ease); }
+/* UX-003: --accent (#4f7cbb light / #5b8fd0 dark) is ~4.26:1 / ~3.34:1 with
+   white text — both fail WCAG AA (4.5:1). Filled buttons use this dedicated,
+   theme-invariant pair instead; --accent itself stays as-is for borders,
+   rings, and other non-text-contrast uses. */
+:root { --accent-contrast: #3e6399; --accent-contrast-hover: #345583; }
+
+/* Typography: sans everywhere, mono only for real code. */
+body, body * { font-family: var(--font-display) !important; letter-spacing: normal !important; text-transform: none !important; }
+code, pre, kbd, samp, .mono, .step-selector code, [class*="selector"] code { font-family: var(--font-mono) !important; }
+
+/* Page = soft grey; cards = white. Dark: page darkest, cards one step up. */
+body { background: var(--bg-secondary) !important; }
+[data-theme="dark"] body { background: var(--bg-primary) !important; }
+
+/* Strip legacy terminal decorations. */
+body::before, [data-theme="dark"] body::before,
+.page-header::before, [data-theme="dark"] .page-header::before,
+.page-header::after, [data-theme="dark"] .page-header::after,
+.step-card::before, [data-theme="dark"] .step-card::before,
+.sidebar::after, [data-theme="dark"] .sidebar::after,
+.session-settings-card::before, [data-theme="dark"] .session-settings-card::before,
+.session-settings-card::after, [data-theme="dark"] .session-settings-card::after {
+  content: none !important; animation: none !important; display: none !important;
+}
+[data-theme="dark"] * { clip-path: none !important; }
+
+
+/* Cards — page header, settings, toolbar, step cards. clip-path is reset
+   here too (not just under [data-theme="dark"] above) because the legacy
+   diagonal corner-cut was only ever stripped in dark mode, leaving light
+   mode — the default theme — with jagged corners fighting the 12px radius. */
+.page-header, .session-settings-card, .toolbar {
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important; clip-path: none !important;
+}
+[data-theme="dark"] .page-header, [data-theme="dark"] .session-settings-card, [data-theme="dark"] .toolbar { background: var(--bg-secondary) !important; }
+.page-header h1, .page-header h2 { color: var(--text-primary) !important; font-weight: 600 !important; }
+
+/* Step cards — white, soft, gentle hover lift. */
+.step-card {
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important; clip-path: none !important;
+  transition: box-shadow var(--ts), border-color var(--ts), transform var(--ts);
+  animation: ts-card-in 0.25s var(--ts-ease);
+}
+[data-theme="dark"] .step-card { background: var(--bg-secondary) !important; }
+.step-card:hover { border-color: var(--accent-border) !important; box-shadow: var(--shadow-md) !important; transform: translateY(-1px) !important; }
+.step-number-badge { background: var(--accent-subtle) !important; color: var(--accent) !important; border-radius: 8px !important; font-weight: 600 !important; }
+
+/* Buttons — one calm system, tasteful lift. */
+.btn, .icon-btn, .add-between .btn-add {
+  clip-path: none !important;
+}
+.btn {
+  border-radius: 9px !important; font-weight: 500 !important; border: 1px solid transparent !important; box-shadow: none !important;
+  transition: background var(--ts-fast), border-color var(--ts-fast), color var(--ts-fast), transform var(--ts-fast), box-shadow var(--ts-fast);
+}
+.btn:hover:not(:disabled) { transform: translateY(-1px) !important; }
+.btn:active:not(:disabled) { transform: translateY(0) scale(0.99) !important; }
+.btn-primary { background: var(--accent-contrast) !important; color: #fff !important; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-contrast-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+.btn-danger { background: var(--danger) !important; color: #fff !important; }
+.btn-secondary { background: var(--bg-tertiary) !important; color: var(--text-secondary) !important; border-color: transparent !important; }
+.btn-secondary:hover:not(:disabled) { background: var(--bg-hover) !important; color: var(--text-primary) !important; }
+.btn:disabled { opacity: 0.45 !important; transform: none !important; box-shadow: none !important; }
+.icon-btn { color: var(--text-muted) !important; border-radius: 8px !important; transition: background var(--ts-fast), color var(--ts-fast); }
+.icon-btn:hover { color: var(--text-primary) !important; background: var(--bg-hover) !important; }
+
+/* Inputs — readable, soft focus ring. Checkboxes/radios EXCLUDED so their
+   native rendering isn't clobbered (that broke the step-select checkmark). */
+.input-styled, .select-styled, .search-input, textarea,
+input:not([type="checkbox"]):not([type="radio"]), select {
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important; border-radius: 9px !important;
+  color: var(--text-primary) !important; transition: border-color var(--ts-fast), box-shadow var(--ts-fast); clip-path: none !important;
+}
+[data-theme="dark"] .input-styled, [data-theme="dark"] .select-styled, [data-theme="dark"] .search-input,
+[data-theme="dark"] textarea,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]), [data-theme="dark"] select { background: var(--bg-tertiary) !important; }
+
+/* Checkboxes/radios — clean native control tinted with the accent. The step
+   checkbox previously used an appearance:none design whose white checkmark
+   vanished under the forced white background; use the native check instead. */
+input[type="checkbox"], input[type="radio"], .step-checkbox {
+  appearance: auto !important; -webkit-appearance: auto !important;
+  width: 18px !important; height: 18px !important;
+  accent-color: var(--accent) !important; cursor: pointer !important;
+  background: none !important; border: none !important; border-radius: 0 !important; box-shadow: none !important;
+}
+.step-checkbox::after, .step-checkbox::before { content: none !important; }
+.input-styled:focus, .select-styled:focus, .search-input:focus, textarea:focus, input:focus, select:focus {
+  border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-subtle) !important; outline: none !important;
+}
+.meta-label { color: var(--text-muted) !important; }
+
+/* Motion keyframe for step cards. */
+@keyframes ts-card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }

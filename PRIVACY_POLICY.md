@@ -20,6 +20,8 @@ TestSnapper does not collect:
 
 Any interaction or webpage data accessed during recording is used **only in real time** to generate test steps and is **not sent anywhere**.
 
+Typed values recognized as sensitive (passwords, tokens, card numbers, and similar patterns) are redacted before being stored. **Screenshots are not:** a screenshot is an exact raster capture of whatever is rendered on screen at that moment, so it can include sensitive text visible on the page even when the corresponding typed value was redacted. TestSnapper skips automatic and manual screenshot capture while a recognized sensitive field is focused, but it cannot detect sensitive text elsewhere on the page (e.g. an account number already displayed on screen). Avoid capturing screens that show data you don't want included in your exported documentation.
+
 ## 2. Local Processing
 All processing happens on the user’s device.  
 Recorded interactions are stored temporarily in the extension’s local storage or downloaded as files **only when initiated by the user**.

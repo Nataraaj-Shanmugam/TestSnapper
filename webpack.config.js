@@ -1,5 +1,22 @@
 const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
+const fs = require('fs');
+
+// Read version from package.json for manifest injection
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
+const VERSION = packageJson.version;
+
+// P0-2 guard: fail the build if a runtime-required library is missing.
+// (PDF export shipped broken once because libs/jspdf.umd.min.js was absent
+// and nothing in the pipeline checked for it.)
+const REQUIRED_LIBS = ['docx.min.js', 'jspdf.umd.min.js'];
+for (const lib of REQUIRED_LIBS) {
+  if (!fs.existsSync(path.join(__dirname, 'libs', lib))) {
+    throw new Error(
+      `Required library libs/${lib} is missing. Run "npm run setup-libs" before building.`
+    );
+  }
+}
 
 module.exports = {
   mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
@@ -41,24 +58,30 @@ module.exports = {
   plugins: [
     new CopyPlugin({
       patterns: [
-        // Manifest
-        { from: 'manifest.json', to: 'manifest.json' },
+        // Manifest — inject version from package.json
+        {
+          from: 'manifest.json',
+          to: 'manifest.json',
+          transform(content) {
+            // Replace version placeholder with actual version from package.json
+            const manifest = JSON.parse(content.toString());
+            manifest.version = VERSION;
+            return JSON.stringify(manifest, null, 2);
+          }
+        },
 
-        // Source files (non-bundled)
+        // Source files (non-bundled, loaded as ES modules by the browser).
+        // Chrome 91+ natively supports all syntax used; minimum_chrome_version
+        // in manifest.json enforces this (MED-025).
         { from: 'src/content', to: 'src/content' },
         { from: 'src/ui', to: 'src/ui' },
         { from: 'src/core', to: 'src/core' },
-        { from: 'src/storage.js', to: 'src/storage.js' },
-        { from: 'src/export.js', to: 'src/export.js' },
 
         // Assets
         { from: 'src/assets', to: 'src/assets', noErrorOnMissing: true },
 
         // Libraries
         { from: 'libs', to: 'libs', noErrorOnMissing: true },
-
-        // Documentation
-        { from: 'docs', to: 'docs', noErrorOnMissing: true },
       ]
     })
   ],

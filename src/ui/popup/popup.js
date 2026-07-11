@@ -1,7 +1,7 @@
 /**
  * Popup Script (CSP-safe, full functionality version)
  * Handles UI state, recording control, export, and settings
- * 
+ *
  * CRITICAL FIXES APPLIED:
  * - BUG-001: Removed duplicate handleSaveSettings function (was at lines 350-363)
  * - BUG-002: Fixed theme state inconsistency - standardized on light-mode class
@@ -9,13 +9,29 @@
  * - POP-003: Added storage usage indicator
  * - POP-004: Added permission error handling
  * - POP-006: Added keyboard shortcuts documentation
+ * - FUNC-006: Fixed broken dynamic import path (../../core/storage.js)
+ * - UX-004: Custom session combobox keyboard navigation (ArrowDown/Up, Home/End, Enter/Space, Escape)
+ * - UX-010: Export shows persistent progress (not auto-dismissed) until promise settles
+ * - UX-013: Help button renders shortcuts as structured content
+ * - UX-020: Popup tabs arrow-key navigation with roving tabindex
  */
 
-console.log("✅ TestSnapper Popup loaded");
+import { FSStorageManager } from '../../core/fs-storage.js';
+import { ExportService } from '../../core/export-service.js';
+import { Utils } from '../../core/utils.js';
+import { Logger } from '../../core/logger.js';
+import { setupTheme } from '../theme.js';
+
+Logger.info("✅ TestSnapper Popup loaded");
+
+const fsStorage = new FSStorageManager();
+const fileSync = fsStorage.fileSync;
+const exportService = new ExportService(fsStorage);
 
 document.addEventListener("DOMContentLoaded", async () => {
   await init();
-  // POP-MED-002: Reduced from 2s to 3s for better performance
+  // Poll background state only while recording/paused; started after init() so
+  // currentState is already populated from the background response (LOW-024).
   setInterval(() => {
     if (currentState === "recording" || currentState === "paused") {
       updateState();
@@ -36,6 +52,7 @@ const viewStepsBtn = document.getElementById("viewStepsBtn");
 const closeStepsBtn = document.getElementById("closeStepsBtn");
 const deleteSessionBtn = document.getElementById("deleteSessionBtn");
 const clearAllBtn = document.getElementById("clearAllBtn");
+const stateIndicator = document.getElementById("stateIndicator");
 const stateDot = document.getElementById("stateDot");
 const stateText = document.getElementById("stateText");
 const stepCount = document.getElementById("stepCount");
@@ -45,6 +62,13 @@ const stepsViewer = document.getElementById("stepsViewer");
 const stepsList = document.getElementById("stepsList");
 const liveStepsViewer = document.getElementById("liveStepsViewer");
 const liveStepsList = document.getElementById("liveStepsList");
+
+// File sync
+const setStorageFolderBtn = document.getElementById("setStorageFolderBtn");
+const reauthorizeFolderBtn = document.getElementById("reauthorizeFolderBtn");
+const syncIndicator = document.getElementById("syncIndicator");
+const syncFolderName = document.getElementById("syncFolderName");
+const fileSyncStatus = document.getElementById("fileSyncStatus");
 
 // Settings section
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
@@ -68,81 +92,84 @@ let currentSessionId = null;
 // =====================
 // Initialization
 // =====================
+// Failure-isolate each init phase: one broken widget must never take down
+// the whole popup (P0-8: a single null-element throw used to abort init()).
+async function safePhase(name, fn) {
+  try {
+    await fn();
+  } catch (err) {
+    Logger.error(`Popup init phase "${name}" failed:`, err);
+  }
+}
+
 async function init() {
-  setupTabs();
-  setupEventListeners();
-  setupTheme();
-  await updateState();
-  await loadSessions();
-  await loadSettings();
-  await loadExportFormat(); // POP-MED-003: Load saved export format
-  await updateStorageUsage(); // BUG FIX: POP-003
-  setupKeyboardShortcuts(); // BUG FIX: POP-006
-}
-
-/**
- * BUG FIX: BUG-002 - Theme State Inconsistency
- * Standardized on light-mode class toggle with explicit state management
- */
-function setupTheme() {
-  const themeToggle = document.getElementById('themeToggle');
-  if (!themeToggle) return;
-
-  // Detect initial theme: saved > system preference
-  const savedTheme = localStorage.getItem('theme');
-  if (savedTheme) {
-    applyTheme(savedTheme);
-  } else {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    applyTheme(prefersDark ? 'dark' : 'light');
-  }
-
-  // Toggle Listener
-  themeToggle.addEventListener('click', () => {
-    const currentTheme = document.body.dataset.theme || 'light';
-    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-    applyTheme(newTheme);
-    localStorage.setItem('theme', newTheme);
-  });
-}
-
-function applyTheme(theme) {
-  const iconEl = document.querySelector('#themeToggle .icon');
-  document.body.dataset.theme = theme;
-
-  if (iconEl) {
-    if (theme === 'light') {
-      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
-    } else {
-      iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
-    }
+  await safePhase('setupTabs', () => setupTabs());
+  await safePhase('setupEventListeners', () => setupEventListeners());
+  await safePhase('setupTheme', () => setupTheme());
+  await safePhase('storageInit', () => fsStorage.init());
+  await safePhase('updateState', () => updateState());
+  await safePhase('checkFileSyncStatus', () => checkFileSyncStatus());
+  await safePhase('flushAllPending', () => flushAllPending()); // Flush buffered sessions from previous recordings
+  await safePhase('loadSessions', () => loadSessions());
+  await safePhase('loadSettings', () => loadSettings());
+  await safePhase('loadExportFormat', () => loadExportFormat()); // POP-MED-003
+  await safePhase('updateStorageUsage', () => updateStorageUsage()); // POP-003
+  await safePhase('setupKeyboardShortcuts', () => setupKeyboardShortcuts()); // POP-006
+  const versionFooter = document.getElementById('versionFooter');
+  if (versionFooter) {
+    const { version } = chrome.runtime.getManifest();
+    versionFooter.textContent = `TestSnapper v${version}`;
   }
 }
 
+// setupTheme / applyTheme imported from ../theme.js
+
 /**
- * BUG FIX: POP-006 - Keyboard shortcuts documentation
+ * UX-013 / POP-006 - Keyboard shortcuts documentation
+ * Wired to #keyboardShortcutsHelp button in popup.html.
+ * Renders structured shortcut list, not a plain toast string.
  */
 function setupKeyboardShortcuts() {
   const helpBtn = document.getElementById('keyboardShortcutsHelp');
   if (!helpBtn) return;
 
   helpBtn.addEventListener('click', () => {
-    showMessage(`
-Keyboard Shortcuts:
-• Ctrl+Shift+S (⌘⇧S): Capture Screenshot
-• Ctrl+Shift+U (⌘⇧U): Pause/Resume Recording
-• Ctrl+Shift+E (⌘⇧E): Stop Recording
-    `.trim(), 'info', 8000);
+    // Toggle: a second click while the shortcuts list is showing dismisses
+    // it instead of re-showing it (a help popover should close on repeat click).
+    const isShortcutsShowing = messageDiv.style.display === 'flex' &&
+      messageDiv.classList.contains('message-multiline');
+    if (isShortcutsShowing) {
+      hideMessage();
+      return;
+    }
+
+    const shortcuts = [
+      { keys: 'Ctrl+Shift+S / ⌘⇧S', desc: 'Capture Screenshot' },
+      { keys: 'Ctrl+Shift+U / ⌘⇧U', desc: 'Pause/Resume Recording' },
+      { keys: 'Ctrl+Shift+E / ⌘⇧E', desc: 'Stop Recording' },
+      { keys: 'Ctrl+Enter / ⌘↵',    desc: 'Export Session' },
+      { keys: '← → Arrow Keys',      desc: 'Navigate Tabs' },
+    ];
+    const lines = shortcuts.map(s => `• ${s.keys}: ${s.desc}`).join('\n');
+    showMessage(lines, 'info', 8000);
+    // UX-013: the shared toast is built for a single centered line; a
+    // multi-line shortcut list needs left-aligned text with real line breaks.
+    messageDiv.classList.add('message-multiline');
   });
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message) => {
   if (message.action === 'sessionNameUpdated') {
     loadSessions();
   } else if (message.action === 'storageQuotaWarning') {
-    // BUG FIX: POP-003 - Storage quota warning
-    showMessage(`⚠️ Storage ${(message.usage.percentage * 100).toFixed(1)}% full. Consider deleting old sessions.`, 'warning', 10000);
+    // BUG FIX: POP-003 - Storage quota warning (only relevant if still using buffer)
+    showMessage(`Storage ${(message.usage.percentage * 100).toFixed(1)}% full. Consider deleting old sessions.`, 'warning', 10000);
     updateStorageUsage();
+  } else if (message.action === 'sessionDataChanged') {
+    if (message.changeType !== 'deleted') loadSessions();
+  } else if (message.action === 'flushRecordingBuffer') {
+    // Recording stopped — flush buffered session from chrome.storage to filesystem
+    flushBufferedSession(message.sessionId);
   }
 });
 
@@ -150,19 +177,69 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // UI Setup
 // =====================
 function setupTabs() {
-  document.querySelectorAll(".tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      const targetTab = tab.dataset.tab;
+  const tabs = Array.from(document.querySelectorAll(".tab"));
+  const tablist = document.querySelector(".tabs");
 
-      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
+  // Ensure tablist has proper ARIA role
+  if (tablist) {
+    tablist.setAttribute('role', 'tablist');
+  }
 
-      document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
-      document.getElementById(targetTab + "-tab").classList.add("active");
+  function activateTab(tab) {
+    const targetTab = tab.dataset.tab;
 
-      if (targetTab === "export") loadSessions();
+    // Update tabs: roving tabindex
+    tabs.forEach((t) => {
+      t.classList.remove("active");
+      t.setAttribute('tabindex', '-1');
+      t.setAttribute('aria-selected', 'false');
     });
+    tab.classList.add("active");
+    tab.setAttribute('tabindex', '0');
+    tab.setAttribute('aria-selected', 'true');
+
+    document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
+    document.getElementById(targetTab + "-tab").classList.add("active");
+
+    if (targetTab === "export") loadSessions();
+  }
+
+  tabs.forEach((tab) => {
+    // Set initial roving tabindex
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('tabindex', tab.classList.contains('active') ? '0' : '-1');
+    tab.setAttribute('aria-selected', tab.classList.contains('active') ? 'true' : 'false');
+
+    tab.addEventListener("click", () => activateTab(tab));
   });
+
+  // UX-020: Arrow key navigation on tablist
+  if (tablist) {
+    tablist.addEventListener('keydown', (e) => {
+      const currentIndex = tabs.findIndex(t => t === document.activeElement);
+      if (currentIndex === -1) return;
+
+      let nextIndex = currentIndex;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        nextIndex = (currentIndex + 1) % tabs.length;
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        nextIndex = 0;
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        nextIndex = tabs.length - 1;
+      } else {
+        return;
+      }
+
+      // Per ARIA APG: arrow keys only move focus; Enter/Space activate (HIGH-027)
+      tabs[nextIndex].focus();
+    });
+  }
 }
 
 function setupEventListeners() {
@@ -184,24 +261,33 @@ function setupEventListeners() {
   restoreAllBtn?.addEventListener("click", () => restoreFileInput.click());
   restoreFileInput?.addEventListener("change", handleRestoreAll);
 
+  // File sync
+  setStorageFolderBtn?.addEventListener("click", handleSetStorageFolder);
+  reauthorizeFolderBtn?.addEventListener("click", handleReauthorize);
+  document.getElementById("onboardingPickFolderBtn")?.addEventListener("click", handleSetStorageFolder);
+  document.getElementById("onboardingReauthBtn")?.addEventListener("click", handleReauthorize);
+
   // Settings interactivity
+  // BUG-005 FIX: captureApiCalls, captureFailedCalls, captureAllCalls, includeTimestamp, apiCallsOptions
+  // have no corresponding HTML elements — all inner references use optional chaining to avoid crashes.
   captureApiCalls?.addEventListener("change", (e) => {
-    apiCallsOptions.style.display = e.target.checked ? "block" : "none";
+    if (apiCallsOptions) apiCallsOptions.style.display = e.target.checked ? "block" : "none";
     if (!e.target.checked) {
-      captureFailedCalls.checked = false;
-      captureAllCalls.checked = false;
+      if (captureFailedCalls) captureFailedCalls.checked = false;
+      if (captureAllCalls) captureAllCalls.checked = false;
     }
   });
 
   autoScreenshot?.addEventListener("change", (e) => {
-    screenshotInterval.style.display = e.target.checked ? "block" : "none";
+    if (screenshotInterval) screenshotInterval.style.display = e.target.checked ? "block" : "none";
+    syncNavScreenshotDependency();
   });
 
   captureFailedCalls?.addEventListener("change", (e) => {
-    if (e.target.checked) captureAllCalls.checked = false;
+    if (e.target.checked && captureAllCalls) captureAllCalls.checked = false;
   });
   captureAllCalls?.addEventListener("change", (e) => {
-    if (e.target.checked) captureFailedCalls.checked = false;
+    if (e.target.checked && captureFailedCalls) captureFailedCalls.checked = false;
   });
 
   // POP-MED-003: Save export format when changed
@@ -215,6 +301,24 @@ function setupEventListeners() {
 
   // POP-MED-001: Keyboard navigation
   setupKeyboardNavigation();
+}
+
+/**
+ * "Auto-Capture Screenshots" is the master switch for all automatic screenshots.
+ * "Screenshot Before Navigation" is a sub-option that only applies when
+ * auto-capture is on, so grey it out (and visually mark the dependency) when
+ * auto-capture is off.
+ */
+function syncNavScreenshotDependency() {
+  const navBox = document.getElementById('captureOnNavigation');
+  if (!navBox) return;
+  const enabled = !!autoScreenshot?.checked;
+  navBox.disabled = !enabled;
+  const label = navBox.closest('.checkbox-label') || navBox.parentElement;
+  if (label) {
+    label.style.opacity = enabled ? '' : '0.5';
+    label.title = enabled ? '' : 'Enable "Auto-Capture Screenshots" to use this';
+  }
 }
 
 // =====================
@@ -238,29 +342,15 @@ function setupKeyboardNavigation() {
       }
     }
 
-    // Tab navigation enhancement - ensure focusable elements
-    if (e.key === 'Tab') {
-      // Let browser handle default tab behavior
-      // Just ensure our buttons are focusable
-    }
   });
 
-  // Make all buttons keyboard accessible
+  // Make all buttons keyboard accessible — native <button> already handles Enter/Space,
+  // so no keydown listener is needed (LOW-021 / LOW-022: removed dead Tab block and double-fire listener).
   const makeButtonAccessible = (button) => {
     if (!button) return;
-
-    // Ensure button has tabindex
     if (!button.hasAttribute('tabindex')) {
       button.setAttribute('tabindex', '0');
     }
-
-    // Add Enter/Space key support if not already present
-    button.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        button.click();
-      }
-    });
   };
 
   // Make all control buttons accessible
@@ -278,37 +368,23 @@ function setupKeyboardNavigation() {
 }
 
 // =====================
-// BUG FIX: POP-003 - Storage Usage Indicator
+// Storage Usage Indicator
 // =====================
 async function updateStorageUsage() {
+  const bar = document.getElementById('storageUsageBar');
+  const text = document.getElementById('storageUsageText');
+  if (!bar || !text) return;
   try {
-    const response = await chrome.runtime.sendMessage({ action: "getStorageUsage" });
-    if (response.success) {
-      const usage = response.usage;
-      const usageBar = document.getElementById('storageUsageBar');
-      const usageText = document.getElementById('storageUsageText');
-
-      if (usageBar && usageText) {
-        const percentage = (usage.percentage * 100).toFixed(1);
-        usageBar.style.width = `${percentage}%`;
-        usageBar.className = 'storage-usage-bar';
-
-        // Color coding
-        if (usage.error) {
-          usageBar.classList.add('storage-critical');
-        } else if (usage.warning) {
-          usageBar.classList.add('storage-warning');
-        } else {
-          usageBar.classList.add('storage-ok');
-        }
-
-        const usedMB = (usage.used / 1024 / 1024).toFixed(1);
-        const totalMB = (usage.total / 1024 / 1024).toFixed(0);
-        usageText.textContent = `${usedMB} MB / ${totalMB} MB (${percentage}%)`;
-      }
-    }
-  } catch (error) {
-    console.error('Failed to update storage usage:', error);
+    const used = await new Promise(resolve => chrome.storage.local.getBytesInUse(null, resolve));
+    // unlimitedStorage — use 1 GB as a soft reference ceiling for display
+    const maxBytes = 1024 * 1024 * 1024;
+    const pct = Math.min((used / maxBytes) * 100, 100);
+    bar.style.width = pct + '%';
+    bar.className = 'storage-usage-bar ' + (pct > 95 ? 'storage-critical' : pct > 80 ? 'storage-warn' : 'storage-ok');
+    const mb = (used / (1024 * 1024)).toFixed(1);
+    text.textContent = `${mb} MB used`;
+  } catch {
+    text.textContent = 'Storage unavailable';
   }
 }
 
@@ -353,7 +429,7 @@ async function handleStart() {
       showMessage("Failed to start: " + (response.error || "Unknown error"), "error");
     }
   } catch (err) {
-    console.error("Start failed:", err);
+    Logger.error("Start failed:", err);
     showMessage("Error starting recording. Check permissions.", "error");
   }
 }
@@ -364,7 +440,7 @@ async function handlePause() {
     response.success ? showMessage("Recording paused", "info") : showMessage("Pause failed", "error");
     await updateState();
   } catch (err) {
-    console.error("Pause failed:", err);
+    Logger.error("Pause failed:", err);
     showMessage("Error pausing recording", "error");
   }
 }
@@ -375,7 +451,7 @@ async function handleResume() {
     response.success ? showMessage("Recording resumed", "success") : showMessage("Resume failed", "error");
     await updateState();
   } catch (err) {
-    console.error("Resume failed:", err);
+    Logger.error("Resume failed:", err);
     showMessage("Error resuming recording", "error");
   }
 }
@@ -394,7 +470,7 @@ async function handleStop() {
       showMessage("Failed to stop: " + (response.error || "Unknown error"), "error");
     }
   } catch (err) {
-    console.error("Stop failed:", err);
+    Logger.error("Stop failed:", err);
     showMessage("Error stopping recording", "error");
   } finally {
     stopBtn.disabled = false;
@@ -406,7 +482,7 @@ async function handleScreenshot() {
     const response = await chrome.runtime.sendMessage({ action: "captureScreenshot" });
     response.success ? showMessage("Screenshot captured!", "success") : showMessage("Capture failed", "error");
   } catch (err) {
-    console.error("Screenshot failed:", err);
+    Logger.error("Screenshot failed:", err);
     showMessage("Error capturing screenshot", "error");
   }
 }
@@ -416,22 +492,68 @@ async function handleExport() {
   if (!sessionId) return showMessage("Select a session first", "error");
 
   const format = document.querySelector('input[name="format"]:checked')?.value || 'json';
-  showMessage("Exporting...", "info");
+
+  // UX-010: Show persistent progress — do NOT auto-dismiss while export is running.
+  // Keep the status visible until the promise settles (success or error).
+  showExportProgress("Exporting...");
 
   try {
-    const response = await chrome.runtime.sendMessage({ action: "exportSession", sessionId, format });
+    const result = await exportService.exportSession(sessionId, format, (pct) => {
+      // Progress callback: update the status message with percentage if provided
+      if (typeof pct === 'number') {
+        showExportProgress(`Exporting... ${Math.round(pct * 100)}%`);
+      }
+    });
 
-    if (response.success) {
-      showMessage(`Exported as ${response.filename}`, "success");
-      // BUG FIX: POP-HIGH-001 - Update storage usage after export
-      await updateStorageUsage();
+    let downloadUrl;
+    let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+
+    if (result.blob) {
+      downloadUrl = URL.createObjectURL(result.blob);
     } else {
-      showMessage("Export failed: " + (response.error || "Unknown error"), "error");
+      const utf8Bytes = new TextEncoder().encode(result.content);
+      let binaryString = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < utf8Bytes.length; i += chunkSize) {
+        binaryString += String.fromCharCode.apply(null, utf8Bytes.subarray(i, i + chunkSize));
+      }
+      downloadUrl = `data:${result.mimeType};charset=utf-8;base64,${btoa(binaryString)}`;
     }
+
+    await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
+    if (result.blob) URL.revokeObjectURL(downloadUrl);
+    hideExportProgress();
+    showMessage(`Exported as ${filename}`, "success");
   } catch (err) {
-    console.error("Export failed:", err);
-    showMessage("Error during export", "error");
+    Logger.error("Export failed:", err);
+    hideExportProgress();
+    showMessage("Export failed: " + err.message, "error");
   }
+}
+
+/**
+ * UX-010: Show a persistent (non-auto-dismissing) export progress status.
+ * Disables the export button and suppresses the normal toast auto-dismiss timer.
+ * @param {string} msg - Status message to display
+ */
+function showExportProgress(msg) {
+  // Cancel any pending toast auto-dismiss timer so the message stays visible
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+  const icon = _toastIcons.info;
+  messageDiv.innerHTML = `<span class="toast-icon">${icon}</span><span class="toast-text">${Utils.escapeHtml(msg)}</span>`;
+  messageDiv.className = "message info exporting";
+  messageDiv.style.display = "flex";
+  messageDiv.classList.remove("toast-exit");
+
+  if (exportBtn) exportBtn.disabled = true;
+}
+
+/**
+ * UX-010: Clear the export progress status and re-enable the export button.
+ */
+function hideExportProgress() {
+  if (exportBtn) exportBtn.disabled = false;
 }
 
 async function handleViewSteps() {
@@ -443,7 +565,7 @@ async function handleViewSteps() {
     await chrome.tabs.create({ url });
     setTimeout(() => window.close(), 500);
   } catch (err) {
-    console.error("View steps failed:", err);
+    Logger.error("View steps failed:", err);
     showMessage("Error opening review page", "error");
   }
 }
@@ -454,16 +576,14 @@ async function handleDeleteSession() {
   if (!confirm("Delete this session? This cannot be undone.")) return;
 
   try {
-    const response = await chrome.runtime.sendMessage({ action: "deleteSession", sessionId });
-    if (response.success) {
-      showMessage("Deleted session", "success");
-      await loadSessions();
-      await updateStorageUsage(); // Update storage after delete
-    } else {
-      showMessage("Delete failed: " + (response.error || "Unknown error"), "error");
-    }
+    // Delete from filesystem (and buffer if pending)
+    await fsStorage.clearSession(sessionId);
+    // Also notify background to clear any buffer state
+    chrome.runtime.sendMessage({ action: "deleteSession", sessionId }).catch(() => {});
+    showMessage("Deleted session", "success");
+    await loadSessions();
   } catch (err) {
-    console.error("Delete failed:", err);
+    Logger.error("Delete failed:", err);
     showMessage("Error deleting session", "error");
   }
 }
@@ -472,16 +592,16 @@ async function handleClearAll() {
   if (!confirm("Delete ALL sessions? This cannot be undone.")) return;
 
   try {
-    const response = await chrome.runtime.sendMessage({ action: "clearAllSessions" });
-    if (response.success) {
-      showMessage("Cleared all sessions", "success");
-      await loadSessions();
-      await updateStorageUsage(); // Update storage after clear
-    } else {
-      showMessage("Clear failed: " + (response.error || "Unknown error"), "error");
+    const sessions = await fsStorage.getAllSessions();
+    for (const s of sessions) {
+      await fsStorage.clearSession(s.sessionId);
     }
+    // Also clear all from background buffer
+    chrome.runtime.sendMessage({ action: "clearAllSessions" }).catch(() => {});
+    showMessage("Cleared all sessions", "success");
+    await loadSessions();
   } catch (err) {
-    console.error("Clear all failed:", err);
+    Logger.error("Clear all failed:", err);
     showMessage("Error clearing sessions", "error");
   }
 }
@@ -493,29 +613,25 @@ async function handleBackupAll() {
   try {
     showMessage("Preparing backup...", "info");
 
-    const response = await chrome.runtime.sendMessage({ action: "exportAllData" });
+    // PERF-016: call exportAllData() directly in window context — no message bus, no 64MB limit.
+    // FSStorageManager reads from filesystem (or chrome.storage with a size guard) directly.
+    const backupData = await fsStorage.exportAllData();
 
-    if (response.success) {
-      const backupData = response.data;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-      const filename = `testsnapper-backup-${timestamp}.json`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+    const filename = `testsnapper-backup-${timestamp}.json`;
 
-      // Create download
-      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
 
-      showMessage(`Backup saved: ${filename}`, "success");
-    } else {
-      showMessage("Backup failed: " + (response.error || "Unknown error"), "error");
-    }
+    showMessage(`Backup saved: ${filename}`, "success");
   } catch (err) {
-    console.error("Backup failed:", err);
-    showMessage("Error creating backup", "error");
+    Logger.error("Backup failed:", err);
+    showMessage("Error creating backup: " + err.message, "error");
   }
 }
 
@@ -544,20 +660,14 @@ async function handleRestoreAll(event) {
       throw new Error("Invalid backup file format");
     }
 
-    const response = await chrome.runtime.sendMessage({
-      action: "importAllData",
-      data: backupData
-    });
+    // PERF-016: call importData() directly in window context — no 64MB message limit.
+    await fsStorage.importData(backupData);
 
-    if (response.success) {
-      showMessage(`Restored ${backupData.sessions.length} sessions successfully`, "success");
-      await loadSessions();
-      await updateStorageUsage();
-    } else {
-      showMessage("Restore failed: " + (response.error || "Unknown error"), "error");
-    }
+    showMessage(`Restored ${backupData.sessions.length} sessions successfully`, "success");
+    await loadSessions();
+    await updateStorageUsage();
   } catch (err) {
-    console.error("Restore failed:", err);
+    Logger.error("Restore failed:", err);
     showMessage("Error restoring backup: " + err.message, "error");
   } finally {
     event.target.value = ''; // Reset file input
@@ -578,7 +688,8 @@ async function handleSaveSettings() {
     // Validate settings before saving
     const screenshotSecondsValue = parseInt(screenshotSeconds?.value) || 5;
     const maxSessionsValue = parseInt(maxSessions?.value) || 25;
-    const imageQualityValue = parseFloat(document.getElementById('imageQuality')?.value) || 0.92;
+    const screenshotFormatValue = document.getElementById('screenshotFormat')?.value || 'png';
+    const exportImageQualityValue = document.getElementById('exportImageQuality')?.value || 'auto';
 
     // Validation ranges
     if (screenshotSecondsValue < 1 || screenshotSecondsValue > 60) {
@@ -591,11 +702,6 @@ async function handleSaveSettings() {
       return;
     }
 
-    if (imageQualityValue < 0.1 || imageQualityValue > 1.0) {
-      showMessage("Image quality must be between 0.1-1.0", "error");
-      return;
-    }
-
     const settings = {
       autoScreenshot: autoScreenshot?.checked || false,
       screenshotSeconds: screenshotSecondsValue,
@@ -603,7 +709,8 @@ async function handleSaveSettings() {
       smartDedup: document.getElementById('smartDedup')?.checked !== false,
       autoSave: autoSave?.checked !== false,
       maxSessions: maxSessionsValue,
-      imageQuality: imageQualityValue,
+      screenshotFormat: screenshotFormatValue,
+      exportImageQuality: exportImageQualityValue,
       captureApiCalls: captureApiCalls?.checked || false,
       captureFailedCalls: captureFailedCalls?.checked || false,
       captureAllCalls: captureAllCalls?.checked || false,
@@ -621,29 +728,42 @@ async function handleSaveSettings() {
       showMessage('Failed to save settings: ' + (res.error || "Unknown error"), 'error');
     }
   } catch (err) {
-    console.error("Save settings failed:", err);
+    Logger.error("Save settings failed:", err);
     showMessage("Error saving settings", "error");
   }
 }
 
 async function loadSessions() {
   try {
-    const response = await chrome.runtime.sendMessage({ action: "getAllSessions" });
-    if (response.success) {
-      const sessions = response.sessions || [];
-      sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
-      sessions.forEach((s) => {
-        const opt = document.createElement("option");
-        const sessionName = s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`;
-        opt.value = s.sessionId;
-        opt.textContent = `${sessionName} (${s.stepCount || 0} steps)`;
-        sessionDropdown.appendChild(opt);
-      });
-      if (currentSessionId) sessionDropdown.value = currentSessionId;
+    // Check if filesystem is ready — if not, sessions may exist but can't be read
+    const fsReady = await fsStorage.isFilesystemReady();
+    if (!fsReady && await fileSync.isConfigured()) {
+      // Folder is configured but permission isn't granted — sessions are on disk
+      // but inaccessible until the user clicks Re-authorize
+      sessionDropdown.innerHTML = '<option value="">Re-authorize to view sessions...</option>';
       handleSessionSelect();
+      return;
     }
+
+    // Read directly from filesystem (or buffer for active/pending sessions)
+    const sessions = await fsStorage.getAllSessions();
+    sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
+    sessions.forEach((s) => {
+      const opt = document.createElement("option");
+      const sessionName = s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`;
+      opt.value = s.sessionId;
+      opt.textContent = `${sessionName} (${s.stepCount || 0} steps)`;
+      sessionDropdown.appendChild(opt);
+    });
+
+    if (currentSessionId) {
+      sessionDropdown.value = currentSessionId;
+    }
+    handleSessionSelect();
   } catch (e) {
-    console.error("Load sessions failed:", e);
+    Logger.error("Load sessions failed:", e);
   }
 }
 
@@ -671,14 +791,24 @@ async function loadSettings() {
     if (autoSave) autoSave.checked = s.autoSave !== false;
     if (maxSessions) maxSessions.value = s.maxSessions || 25;
 
-    const imageQualityInput = document.getElementById('imageQuality');
-    if (imageQualityInput) imageQualityInput.value = s.imageQuality || 0.92;
+    const captureOnNavigationInput = document.getElementById('captureOnNavigation');
+    if (captureOnNavigationInput) captureOnNavigationInput.checked = s.captureOnNavigation !== false;
+
+    const smartDedupInput = document.getElementById('smartDedup');
+    if (smartDedupInput) smartDedupInput.checked = s.smartDedup !== false;
+
+    const screenshotFormatInput = document.getElementById('screenshotFormat');
+    if (screenshotFormatInput) screenshotFormatInput.value = s.screenshotFormat || 'png';
+
+    const exportImageQualityInput = document.getElementById('exportImageQuality');
+    if (exportImageQualityInput) exportImageQualityInput.value = s.exportImageQuality || 'auto';
 
     // Update visibility
     if (apiCallsOptions) apiCallsOptions.style.display = captureApiCalls?.checked ? "block" : "none";
     if (screenshotInterval) screenshotInterval.style.display = autoScreenshot?.checked ? "block" : "none";
+    syncNavScreenshotDependency();
   } catch (err) {
-    console.error("Load settings failed:", err);
+    Logger.error("Load settings failed:", err);
   }
 }
 
@@ -694,7 +824,7 @@ async function loadExportFormat() {
       formatRadio.checked = true;
     }
   } catch (err) {
-    console.error("Load export format failed:", err);
+    Logger.error("Load export format failed:", err);
   }
 }
 
@@ -702,7 +832,7 @@ async function saveExportFormat(format) {
   try {
     await chrome.storage.local.set({ exportFormat: format });
   } catch (err) {
-    console.error("Save export format failed:", err);
+    Logger.error("Save export format failed:", err);
   }
 }
 
@@ -715,14 +845,52 @@ async function updateState() {
     if (response) {
       currentState = response.state;
       currentSessionId = response.session?.sessionId || null;
-      stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
-      stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
-      stepCount.textContent = response.stepCount || 0;
+      // BUG-008 FIX: null-guard all DOM element accesses to avoid crashes if
+      // an element is ever missing from the DOM.
+      if (stateText) {
+        stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
+        stateText.classList.toggle("recording", currentState === "recording");
+        stateText.classList.toggle("paused", currentState === "paused");
+      }
+      if (stateDot) {
+        stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
+      }
+      if (stateIndicator) {
+        stateIndicator.classList.toggle("is-recording", currentState === "recording");
+        stateIndicator.classList.toggle("is-paused", currentState === "paused");
+      }
 
-      // Update screenshot count
+      // Animate stat values
+      const newStepCount = response.stepCount || 0;
+      const newScreenshotCount = response.screenshotCount || 0;
       const screenshotCountEl = document.getElementById('screenshotCount');
-      if (screenshotCountEl) {
-        screenshotCountEl.textContent = response.screenshotCount || 0;
+
+      if (_isFirstStateUpdate) {
+        // Count-up animation on first load
+        _isFirstStateUpdate = false;
+        if (stepCount) animateCountUp(stepCount, newStepCount);
+        if (screenshotCountEl) animateCountUp(screenshotCountEl, newScreenshotCount);
+      } else {
+        // Bump animation on subsequent changes
+        if (stepCount) {
+          const prevStepCount = stepCount.textContent;
+          stepCount.textContent = newStepCount;
+          if (String(newStepCount) !== prevStepCount) {
+            stepCount.classList.remove("bumped");
+            void stepCount.offsetWidth;
+            stepCount.classList.add("bumped");
+          }
+        }
+
+        if (screenshotCountEl) {
+          const prevScreenshots = screenshotCountEl.textContent;
+          screenshotCountEl.textContent = newScreenshotCount;
+          if (String(newScreenshotCount) !== prevScreenshots) {
+            screenshotCountEl.classList.remove("bumped");
+            void screenshotCountEl.offsetWidth;
+            screenshotCountEl.classList.add("bumped");
+          }
+        }
       }
 
       // Update session duration
@@ -741,7 +909,7 @@ async function updateState() {
       if (currentState === "recording" && currentSessionId) updateLiveSteps();
     }
   } catch (e) {
-    console.error("State update failed:", e);
+    Logger.error("State update failed:", e);
   }
 }
 
@@ -750,21 +918,26 @@ async function updateLiveSteps() {
     const res = await chrome.runtime.sendMessage({ action: "getSessionSteps", sessionId: currentSessionId });
     if (res.success) displaySteps(res.steps, liveStepsList);
   } catch (err) {
-    console.error("Update live steps failed:", err);
+    Logger.error("Update live steps failed:", err);
   }
 }
 
 function updateButtonStates() {
-  startBtn.disabled = currentState !== "idle";
-  pauseBtn.disabled = currentState !== "recording";
-  resumeBtn.disabled = currentState !== "paused";
-  stopBtn.disabled = currentState === "idle";
-  screenshotBtn.disabled = currentState !== "recording";
+  if (startBtn) startBtn.disabled = currentState !== "idle";
+  if (pauseBtn) pauseBtn.disabled = currentState !== "recording";
+  if (resumeBtn) resumeBtn.disabled = currentState !== "paused";
+  if (stopBtn) stopBtn.disabled = currentState === "idle";
+  if (screenshotBtn) screenshotBtn.disabled = currentState !== "recording";
 }
 
 function displaySteps(steps, target = stepsList) {
   if (!steps?.length) {
-    target.innerHTML = `<p style="text-align:center;color:#999;font-size:11px;">No steps recorded</p>`;
+    target.innerHTML = `
+      <div class="empty-state">
+        <svg class="empty-state-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        <span class="empty-state-title">No steps yet</span>
+        <span class="empty-state-desc">Interact with the page to start capturing test steps</span>
+      </div>`;
     return;
   }
   target.innerHTML = steps
@@ -773,31 +946,202 @@ function displaySteps(steps, target = stepsList) {
     <div class="step-item">
       <div class="step-header">
         <span class="step-number">Step ${i + 1}</span>
-        <span class="step-action">${escapeHtml(step.action)}</span>
+        <span class="step-action" data-action="${Utils.escapeHtml(step.action.toLowerCase())}">${Utils.escapeHtml(step.action)}</span>
       </div>
       <div class="step-details">
-        ${step.fieldName ? `<div><strong>Field:</strong> ${escapeHtml(step.fieldName)}</div>` : ""}
-        ${step.selector?.css ? `<div><strong>Selector:</strong> <code>${escapeHtml(step.selector.css)}</code></div>` : ""}
-        ${step.value ? `<div><strong>Value:</strong> ${escapeHtml(step.value)}</div>` : ""}
+        ${step.fieldName ? `<div><strong>Field:</strong> ${Utils.escapeHtml(step.fieldName)}</div>` : ""}
+        ${step.selector?.css ? `<div><strong>Selector:</strong> <code>${Utils.escapeHtml(step.selector.css)}</code></div>` : ""}
+        ${step.value ? `<div><strong>Value:</strong> ${Utils.escapeHtml(step.value)}</div>` : ""}
       </div>
     </div>`
     )
     .join("");
 }
 
-/**
- * BUG FIX: Added HTML escaping to prevent XSS
- */
-function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+
+const _toastIcons = {
+  success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  error: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+};
+let _toastTimer = null;
+let _isFirstStateUpdate = true;
+
+function animateCountUp(el, target, durationMs = 400) {
+  const start = parseInt(el.textContent) || 0;
+  if (start === target || target === 0) { el.textContent = target; return; }
+  const startTime = performance.now();
+  function tick(now) {
+    const progress = Math.min((now - startTime) / durationMs, 1);
+    const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+    el.textContent = Math.round(start + (target - start) * eased);
+    if (progress < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
 }
 
 function showMessage(text, type = "info", duration = 3000) {
-  messageDiv.textContent = text;
+  // Clear any pending dismiss
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+  const icon = _toastIcons[type] || _toastIcons.info;
+  messageDiv.innerHTML = `<span class="toast-icon">${icon}</span><span class="toast-text">${Utils.escapeHtml(text)}</span><span class="toast-progress"></span>`;
   messageDiv.className = "message " + type;
-  messageDiv.style.display = "block";
-  setTimeout(() => (messageDiv.style.display = "none"), duration);
+  messageDiv.style.setProperty("--toast-duration", duration + "ms");
+  messageDiv.style.display = "flex";
+  messageDiv.classList.remove("toast-exit");
+
+  _toastTimer = setTimeout(() => {
+    messageDiv.classList.add("toast-exit");
+    setTimeout(() => { messageDiv.style.display = "none"; messageDiv.classList.remove("toast-exit"); }, 200);
+  }, duration);
+}
+
+// Manual dismiss — same exit animation as the auto-dismiss timer in showMessage().
+function hideMessage() {
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+  messageDiv.classList.add("toast-exit");
+  setTimeout(() => {
+    messageDiv.style.display = "none";
+    messageDiv.classList.remove("toast-exit", "message-multiline");
+  }, 200);
+}
+
+// =====================
+// File Sync / Storage Setup
+// =====================
+
+async function checkFileSyncStatus() {
+  try {
+    const configured = await fileSync.isConfigured();
+    if (!configured) {
+      updateSyncUI('none', 'No folder linked');
+      return;
+    }
+
+    const permission = await fileSync.checkPermission();
+    const folderName = await fileSync.getFolderName();
+
+    if (permission === 'granted') {
+      updateSyncUI('active', folderName || '.TestSnapper');
+    } else {
+      // 'prompt' or 'denied' — requestPermission() requires a real user gesture
+      // so we can't silently call it here. Show the re-auth banner instead.
+      updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
+    }
+  } catch (err) {
+    Logger.error('File sync status check failed:', err);
+    updateSyncUI('none', 'Error checking folder');
+  }
+}
+
+function updateSyncUI(state, label) {
+  const onboardingBanner = document.getElementById('storageOnboarding');
+  const reauthBanner = document.getElementById('storageReauthBanner');
+
+  // Control top-of-popup banners
+  if (onboardingBanner) onboardingBanner.style.display = state === 'none' ? 'flex' : 'none';
+  if (reauthBanner) reauthBanner.style.display = state === 'needs-auth' ? 'flex' : 'none';
+
+  // Update compact status in Export tab
+  if (!syncIndicator || !syncFolderName || !fileSyncStatus) return;
+
+  syncIndicator.className = 'sync-indicator';
+  fileSyncStatus.className = 'file-sync-status';
+  syncFolderName.textContent = label || 'No folder set';
+
+  if (state === 'active') {
+    syncIndicator.classList.add('sync-active');
+    fileSyncStatus.classList.add('active');
+    if (setStorageFolderBtn) setStorageFolderBtn.textContent = 'Change Location';
+    if (reauthorizeFolderBtn) reauthorizeFolderBtn.style.display = 'none';
+  } else if (state === 'needs-auth') {
+    syncIndicator.classList.add('sync-needs-auth');
+    fileSyncStatus.classList.add('needs-auth');
+    if (reauthorizeFolderBtn) reauthorizeFolderBtn.style.display = '';
+  } else {
+    if (reauthorizeFolderBtn) reauthorizeFolderBtn.style.display = 'none';
+    if (setStorageFolderBtn) setStorageFolderBtn.textContent = 'Setup .TestSnapper';
+  }
+}
+
+async function handleSetStorageFolder() {
+  try {
+    showMessage('Pick a parent folder — .TestSnapper will be created inside it', 'info', 5000);
+    const result = await fileSync.pickDirectory();
+    updateSyncUI('active', `.TestSnapper (in ${result.parentName})`);
+
+    // Run migration if chrome.storage has existing sessions and not yet migrated
+    const migrated = await fileSync.isMigrated();
+    if (!migrated) {
+      const { StorageManager } = await import('../../core/storage.js');
+      const legacyStorage = new StorageManager();
+      await legacyStorage.init();
+      showMessage('Migrating existing sessions to filesystem...', 'info', 5000);
+      const { migrated: count } = await fileSync.migrateFromChromeStorage(legacyStorage);
+      showMessage(`${count} session(s) migrated to ${result.parentName}/.TestSnapper`, 'success');
+    } else {
+      showMessage(`Storage folder set: ${result.parentName}/.TestSnapper`, 'success');
+    }
+
+    await loadSessions();
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    Logger.error('Set storage folder failed:', err);
+    showMessage('Failed to set folder: ' + err.message, 'error');
+  }
+}
+
+async function handleReauthorize() {
+  try {
+    const granted = await fileSync.requestPermission();
+    if (granted) {
+      const folderName = await fileSync.getFolderName();
+      updateSyncUI('active', folderName);
+      await flushAllPending();
+      await loadSessions();
+      showMessage('Folder access restored', 'success');
+    } else {
+      showMessage('Permission denied. Try setting a new folder.', 'error');
+    }
+  } catch (err) {
+    Logger.error('Re-authorize failed:', err);
+    showMessage('Re-authorization failed', 'error');
+  }
+}
+
+// =====================
+// Flush Helpers (Buffer → Filesystem)
+// =====================
+
+/**
+ * Flush a single buffered session from chrome.storage to the filesystem.
+ */
+async function flushBufferedSession(sessionId) {
+  if (!sessionId) return;
+  const fsReady = await fsStorage.isFilesystemReady();
+  if (!fsReady) return;
+
+  const success = await fsStorage.flushSession(sessionId);
+  if (success) {
+    // Notify background to clear buffer
+    chrome.runtime.sendMessage({ action: 'clearBuffer', sessionId }).catch(() => {});
+    await loadSessions();
+  }
+}
+
+/**
+ * Flush all sessions that are pending flush from previous recordings.
+ */
+async function flushAllPending() {
+  const fsReady = await fsStorage.isFilesystemReady();
+  if (!fsReady) return;
+
+  const response = await chrome.runtime.sendMessage({ action: 'getPendingFlush' }).catch(() => null);
+  if (!response?.pending?.length) return;
+
+  for (const sessionId of response.pending) {
+    await flushBufferedSession(sessionId);
+  }
 }

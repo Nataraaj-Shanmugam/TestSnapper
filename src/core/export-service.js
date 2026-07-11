@@ -15,21 +15,51 @@
  *   The fix: read `asset.dataUrl` first (what background.js writes).
  *   Fall back to `asset.data`, then to `asset.blob` (live-session only)
  *   so every possible write-path is covered.
+ *
+ * Export memory optimization: process screenshots one at a time, null
+ * out references immediately, use URL.createObjectURL for downloads.
+ *
+ * PDF fix — load jsPDF from local lib via chrome.runtime.getURL
+ * instead of CDN (blocked by extension CSP). DOCX fix — detect lib availability
+ * before the image pipeline to avoid wasted CPU+memory.
+ *
+ * URL sanitization at export time — strips sensitive query params
+ * from step.url and navigate step.value in all export formats.
+ *
+ * Image export quality — DOCX and PDF route every screenshot through
+ * ImageProcessor.processForExport (content-aware PNG/JPEG, lossless for text-heavy UI)
+ * instead of the old forced JPEG-0.85 downscale. PDF now embeds screenshots via
+ * jsPDF addImage; DOCX sizes images with a single unit and avoids page splits.
  */
+
+import { ImageProcessor } from './image-processor.js';
+import { Logger } from './logger.js';
+import { sanitizeUrl } from './privacy-utils.js';
 
 export class ExportService {
   constructor(storage) {
     this.storage = storage;
-    this.cancelledExports = new Set(); // Track cancelled exports
-    console.log('✅ ExportService initialized');
+    this.cancelledExports = new Set();
+    this._imgOptsMap = new Map(); // per-session imgOpts, prevents cross-export races (MED-020)
+    Logger.debug('ExportService initialized');
   }
 
   /**
-   * BUG FIX: EXP-HIGH-001 - Cancel an ongoing export
+   * Cancel an ongoing export
    */
   cancelExport(sessionId) {
     this.cancelledExports.add(sessionId);
-    console.log('🛑 Export cancelled for session:', sessionId);
+    Logger.debug('Export cancelled for session:', sessionId);
+  }
+
+  /**
+   * FUNC-009: release a cancellation flag once an export attempt has settled
+   * (succeeded, failed, or been cancelled). Without this, a cancelExport()
+   * that lands after the last internal _isCancelled() checkpoint would leak
+   * into — and silently kill — the caller's *next* export of this session.
+   */
+  resetCancellation(sessionId) {
+    this._clearCancellation(sessionId);
   }
 
   /**
@@ -47,19 +77,31 @@ export class ExportService {
   }
 
   /**
+   * Sanitize a URL by stripping sensitive query parameters.
+   * Applies to step.url and navigate step.value at export time (SEC-003).
+   *
+   * @param {string} url - Original URL
+   * @returns {string} URL with sensitive params removed, or original on parse error
+   */
+  _sanitizeUrl(url) {
+    // Delegate to the canonical implementation (privacy-utils) so capture-time
+    // and export-time sanitization can never diverge (SEC-1).
+    return sanitizeUrl(url);
+  }
+
+  /**
    * Main export orchestrator
    */
   async exportSession(sessionId, format, progressCallback) {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
 
-    // Clear any previous cancellation
-    this._clearCancellation(sessionId);
+    Logger.info('Starting export:', format, 'for session:', sessionId);
 
-    console.log('📄 Starting export:', format, 'for session:', sessionId);
-
-    // Check cancellation
+    // Check pre-cancellation (must come before _clearCancellation so
+    // cancelExport() called before exportSession() is actually honoured).
     if (this._isCancelled(sessionId)) {
+      this._clearCancellation(sessionId);
       throw new Error('Export cancelled');
     }
 
@@ -70,6 +112,12 @@ export class ExportService {
 
     let steps = await this.storage.getSteps(sessionId);
     steps.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+
+    // PERF-003: resolve per-session so concurrent exports don't share state
+    // (MED-020) — done after steps load so a large session can cap its own
+    // resolution/format regardless of the user's quality setting.
+    const screenshotCount = steps.filter(s => s.hasScreenshot).length;
+    this._imgOptsMap.set(sessionId, await this._resolveExportImageOpts(screenshotCount));
 
     notify({
       percent: 20,
@@ -82,37 +130,123 @@ export class ExportService {
       steps: steps
     };
 
-    switch (format.toLowerCase()) {
-      case 'json':
-        notify({ percent: 90, status: 'Preparing JSON export...' });
-        return this._exportJSON(exportData, sessionId);
+    try {
+      switch (format.toLowerCase()) {
+        case 'json':
+          notify({ percent: 90, status: 'Preparing JSON export...' });
+          return this._exportJSON(exportData, sessionId);
 
-      case 'csv':
-        notify({ percent: 90, status: 'Preparing CSV export...' });
-        return this._exportCSV(exportData, sessionId);
+        case 'csv':
+          notify({ percent: 90, status: 'Preparing CSV export...' });
+          return this._exportCSV(exportData, sessionId);
 
-      case 'docx':
-        return await this._exportDOCX(exportData, sessionId, notify);
+        case 'docx':
+          return await this._exportDOCX(exportData, sessionId, notify);
 
-      case 'pdf':
-        notify({ percent: 90, status: 'Preparing PDF export...' });
-        return await this._exportPDF(exportData, sessionId);
+        case 'pdf':
+          notify({ percent: 90, status: 'Preparing PDF export...' });
+          return await this._exportPDF(exportData, sessionId, notify);
 
-      default:
-        throw new Error(`Unsupported format: ${format}`);
+        case 'markdown':
+          notify({ percent: 90, status: 'Preparing Markdown export...' });
+          return this._exportMarkdown(exportData, sessionId);
+
+        default:
+          throw new Error(`Unsupported format: ${format}`);
+      }
+    } finally {
+      this._clearCancellation(sessionId);
+      this._imgOptsMap.delete(sessionId);
     }
   }
 
   // ==================== Private Helpers ====================
+
+  /**
+   * Resolve the export image format/quality from the user's
+   * `exportImageQuality` setting. Falls back to 'auto' (recommended) if the
+   * setting is missing or chrome.storage is unavailable (e.g. tests).
+   *   'auto'     → content-aware PNG/JPEG, quality 0.92 (sharp text, balanced)
+   *   'high'     → content-aware, quality 0.95 (largest, best fidelity)
+   *   'standard' → JPEG ~0.85 (smallest files)
+   *
+   * PERF-003: for sessions with more than LARGE_SESSION_THRESHOLD
+   * screenshots, this overrides the user's preference to a smaller
+   * resolution/format regardless of setting — every screenshot still has to
+   * be held in memory at some point during export, so a 100+ screenshot
+   * session at "high" quality risks an OOM crash the setting itself can't
+   * protect against.
+   * @private
+   * @param {number} [screenshotCount=0]
+   * @returns {Promise<{format: string, quality: number, maxWidth?: number, maxHeight?: number}>}
+   */
+  async _resolveExportImageOpts(screenshotCount = 0) {
+    let pref = 'auto';
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        const r = await chrome.storage.local.get('settings');
+        pref = r?.settings?.exportImageQuality || 'auto';
+      }
+    } catch (_) { /* default */ }
+
+    // Validate against the known set; fall back to 'auto' for unknown/invalid
+    // values so a corrupted setting can't diverge into an invalid state.
+    const ALLOWED = ['auto', 'high', 'standard'];
+    if (!ALLOWED.includes(pref)) pref = 'auto';
+
+    let opts;
+    switch (pref) {
+      case 'high': opts = { format: 'auto', quality: 0.95 }; break;
+      case 'standard': opts = { format: 'jpeg-standard', quality: 0.85 }; break;
+      case 'auto':
+      default: opts = { format: 'auto', quality: 0.92 };
+    }
+
+    const LARGE_SESSION_THRESHOLD = 25;
+    if (screenshotCount > LARGE_SESSION_THRESHOLD) {
+      Logger.warn(
+        `Export has ${screenshotCount} screenshots (>${LARGE_SESSION_THRESHOLD}); ` +
+        `capping resolution/format to reduce peak memory regardless of the ${pref} quality setting.`
+      );
+      return { format: 'jpeg-standard', quality: 0.85, maxWidth: 1280, maxHeight: 720 };
+    }
+
+    return opts;
+  }
 
   _formatSessionData(session, stepCount) {
     return {
       id: session.sessionId,
       name: session.sessionName || 'Untitled Session',
       createdAt: session.createdAt,
+      // Report metadata — editable on the review page (Author, Start Time,
+      // End Time); startTime falls back to createdAt for pre-existing
+      // sessions recorded before this field existed.
+      author: session.author || '',
+      startTime: session.startTime || session.createdAt,
+      endTime: session.endTime || '',
       environment: session.env,
       stepCount
     };
+  }
+
+  /**
+   * Format an ISO timestamp for display in export headers, or 'N/A' when absent.
+   * Explicit 12-hour AM/PM with no seconds, matching what the native
+   * datetime-local picker shows in the review page UI — plain
+   * toLocaleString() with no options falls back to a 24-hour-with-seconds
+   * format in some runtimes/locales, which read as "different" from the UI
+   * even though the underlying timestamp was identical.
+   * @private
+   */
+  _formatExportTime(isoString) {
+    if (!isoString) return 'N/A';
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return 'N/A';
+    return d.toLocaleString(undefined, {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    });
   }
 
   async _blobToDataURL(blob) {
@@ -129,94 +263,6 @@ export class ExportService {
       };
       reader.readAsDataURL(blob);
     });
-  }
-
-  async _compressImage(blob, maxWidth = 600, quality = 0.95) {
-    try {
-      const useOffscreen = typeof OffscreenCanvas !== 'undefined';
-
-      if (useOffscreen) {
-        const imageBitmap = await createImageBitmap(blob);
-        const scale = Math.min(maxWidth / imageBitmap.width, 1);
-        const width = Math.floor(imageBitmap.width * scale);
-        const height = Math.floor(imageBitmap.height * scale);
-
-        const canvas = new OffscreenCanvas(width, height);
-        const ctx = canvas.getContext('2d', { alpha: false });
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(imageBitmap, 0, 0, width, height);
-
-        const compressed = await canvas.convertToBlob({
-          type: 'image/jpeg',
-          quality
-        });
-
-        imageBitmap.close();
-        return compressed;
-      } else {
-        const dataUrl = await this._blobToDataURL(blob);
-
-        return await new Promise((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            try {
-              const scale = Math.min(maxWidth / img.width, 1);
-              const canvas = document.createElement('canvas');
-              const width = Math.floor(img.width * scale);
-              const height = Math.floor(img.height * scale);
-              canvas.width = width;
-              canvas.height = height;
-
-              const ctx = canvas.getContext('2d', { alpha: false });
-              ctx.imageSmoothingEnabled = true;
-              ctx.imageSmoothingQuality = 'high';
-
-              if (width < img.width * 0.5) {
-                const tempCanvas = document.createElement('canvas');
-                const intermediateWidth = Math.floor(img.width * 0.7);
-                const intermediateHeight = Math.floor(img.height * 0.7);
-                tempCanvas.width = intermediateWidth;
-                tempCanvas.height = intermediateHeight;
-
-                const tempCtx = tempCanvas.getContext('2d');
-                tempCtx.imageSmoothingEnabled = true;
-                tempCtx.imageSmoothingQuality = 'high';
-                tempCtx.drawImage(img, 0, 0, intermediateWidth, intermediateHeight);
-                ctx.drawImage(tempCanvas, 0, 0, width, height);
-                tempCanvas.width = 0;
-                tempCanvas.height = 0;
-              } else {
-                ctx.drawImage(img, 0, 0, width, height);
-              }
-
-              canvas.toBlob(
-                (compressedBlob) => {
-                  canvas.width = 0;
-                  canvas.height = 0;
-                  img.src = '';
-                  resolve(compressedBlob || blob);
-                },
-                'image/jpeg',
-                quality
-              );
-            } catch (err) {
-              console.warn('Canvas compression failed:', err);
-              img.src = '';
-              resolve(blob);
-            }
-          };
-          img.onerror = () => {
-            img.src = '';
-            resolve(blob);
-          };
-          img.src = dataUrl;
-        });
-      }
-    } catch (err) {
-      console.warn('Image compression failed, using original:', err);
-      return blob;
-    }
   }
 
   /**
@@ -246,7 +292,7 @@ export class ExportService {
       try {
         return await this._blobToDataURL(asset.blob);
       } catch (err) {
-        console.warn('blobToDataURL failed for asset', asset.id, err);
+        Logger.warn('blobToDataURL failed for asset', asset.id, err);
       }
     }
 
@@ -267,8 +313,23 @@ export class ExportService {
 
   // ==================== Format Exporters ====================
 
+  /**
+   * Export to JSON. Sanitizes URLs for SEC-003.
+   */
   _exportJSON(exportData, sessionId) {
-    const content = JSON.stringify(exportData, null, 2);
+    // Apply URL sanitization to all steps (SEC-003).
+    // Unified export: drop the CSS/XPath locator so JSON matches the Word doc
+    // (which never included it) — step, action, field, value, url only.
+    const sanitizedSteps = exportData.steps.map(step => {
+      const { selector, ...sanitized } = step;
+      if (sanitized.url) sanitized.url = this._sanitizeUrl(sanitized.url);
+      if (sanitized.action === 'navigate' && sanitized.value) {
+        sanitized.value = this._sanitizeUrl(sanitized.value);
+      }
+      return sanitized;
+    });
+
+    const content = JSON.stringify({ session: exportData.session, steps: sanitizedSteps }, null, 2);
     const sessionName = (exportData.session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
     const filename = `${sessionName}_${Date.now()}.json`;
 
@@ -279,24 +340,64 @@ export class ExportService {
     };
   }
 
+  /**
+   * Neutralize CSV formula injection. A cell whose first character is one of
+   * `= + - @` (or a leading tab/CR) is interpreted as a formula by Excel /
+   * Google Sheets. Prefixing it with a single apostrophe defuses execution
+   * while keeping the visible value intact. (CSV Injection / CWE-1236)
+   * @private
+   * @param {*} value - raw cell value
+   * @returns {string}
+   */
+  _csvSafeCell(value) {
+    const str = String(value).replace(/[\r\n]+/g, ' ');
+    if (/^[=+\-@\t\r]/.test(str)) {
+      return `'${str}`;
+    }
+    return str;
+  }
+
+  /**
+   * Export to CSV. Sanitizes URLs for SEC-003 and defuses formula injection.
+   */
   _exportCSV(exportData, sessionId) {
-    const headers = ['Step', 'Action', 'Field Name', 'Selector (CSS)', 'Value', 'URL'];
-    const rows = exportData.steps
+    const { session = {}, steps } = exportData;
+
+    // Metadata preamble (Author / Start Time / End Time), then a blank line,
+    // then the step table. Every value is run through _csvSafeCell (CWE-1236).
+    const metaRows = [
+      ['Author', session.author || 'N/A'],
+      ['Start Time', this._formatExportTime(session.startTime)],
+      ['End Time', this._formatExportTime(session.endTime)]
+    ];
+
+    // Unified export: no locator column (matches the Word doc).
+    const headers = ['Step', 'Action', 'Field Name', 'Value', 'URL'];
+    const rows = steps
       .filter(s => s.action !== 'screenshot')
-      .map((step, index) => [
-        index + 1,
-        step.action,
-        step.fieldName || 'N/A',
-        step.selector?.css || '',
-        step.value || '',
-        step.url
-      ]);
+      .map((step, index) => {
+        // Sanitize URL and navigate value
+        const safeUrl = this._sanitizeUrl(step.url);
+        const safeValue = (step.action === 'navigate' && step.value)
+          ? this._sanitizeUrl(step.value)
+          : (step.value || '');
 
-    const content = [headers, ...rows]
-      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
+        return [
+          index + 1,
+          step.action,
+          step.fieldName || 'N/A',
+          safeValue,
+          safeUrl
+        ];
+      });
 
-    const filename = `testsnapper_${sessionId.substring(0, 8)}_${Date.now()}.csv`;
+    const toLine = (row) => row.map(cell => `"${this._csvSafeCell(cell).replace(/"/g, '""')}"`).join(',');
+    const content = [...metaRows.map(toLine), '', headers, ...rows].map(row => Array.isArray(row) ? toLine(row) : row).join('\n');
+
+    // Unified filename: same session-name convention as DOCX/PDF/JSON (was
+    // previously the outlier using testsnapper_<id>_<timestamp>).
+    const sessionName = (session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
+    const filename = `${sessionName}_${Date.now()}.csv`;
 
     return {
       content,
@@ -306,110 +407,250 @@ export class ExportService {
   }
 
   /**
-   * 🔧 FIX: EXP-002 - Resize images for exports to reduce file size
+   * Export to Markdown.
    */
-  async _resizeImageForExport(dataUrl, maxWidth = 600, maxHeight = 450) {
-    // Helper to check if we are in a Service Worker or similar context
-    const useOffscreen = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined';
+  _exportMarkdown(exportData, sessionId) {
+    const { session, steps } = exportData;
+    const sessionName = session.name || 'Untitled Session';
+    const lines = [
+      `# ${this._escapeHtml(sessionName)}`,
+      '',
+      `**Author:** ${this._escapeHtml(session.author || 'N/A')}  `,
+      `**Start Time:** ${this._formatExportTime(session.startTime)}  `,
+      `**End Time:** ${this._formatExportTime(session.endTime)}  `,
+      `**Steps:** ${steps.length}`,
+      '',
+      '---',
+      ''
+    ];
 
-    if (useOffscreen) {
-      try {
-        // Service Worker implementation using OffscreenCanvas
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
-        const bitmap = await createImageBitmap(blob);
+    steps.forEach((step, i) => {
+      const safeUrl = this._sanitizeUrl(step.url);
+      lines.push(`### Step ${i + 1}: ${step.action}`);
+      if (step.fieldName) lines.push(`- **Field:** ${step.fieldName}`);
+      if (step.value)     lines.push(`- **Value:** \`${step.value}\``);
+      // Unified export: no locator line (matches the Word doc).
+      if (safeUrl)        lines.push(`- **URL:** ${safeUrl}`);
+      lines.push('');
+    });
 
-        const { width: imgWidth, height: imgHeight } = bitmap;
+    const content = lines.join('\n');
+    const filename = `${sessionName.replace(/[^a-z0-9]/gi, '_')}_${Date.now()}.md`;
 
-        // Calculate scale
-        const scale = Math.min(
-          maxWidth / imgWidth,
-          maxHeight / imgHeight,
-          1
-        );
+    return { content, filename, mimeType: 'text/markdown' };
+  }
 
-        if (scale >= 1) {
-          bitmap.close();
-          return { dataUrl, width: imgWidth, height: imgHeight };
-        }
+  /**
+   * Load the local jsPDF library via chrome.runtime.getURL (FUNC-005).
+   * CDN loading is intentionally removed — extension CSP blocks it.
+   * @private
+   * @returns {Promise<boolean>} true if jsPDF loaded successfully
+   */
+  async _loadJsPDF() {
+    // Already loaded?
+    if (typeof window !== 'undefined' && window.jspdf && window.jspdf.jsPDF) {
+      return true;
+    }
 
-        const canvasWidth = Math.floor(imgWidth * scale);
-        const canvasHeight = Math.floor(imgHeight * scale);
-
-        const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(bitmap, 0, 0, canvasWidth, canvasHeight);
-
-        // Convert back to blob -> dataUrl
-        // OffscreenCanvas.convertToBlob is standard
-        const resizedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
-        const reader = new FileReader();
-        const resizedDataUrl = await new Promise((resolve) => {
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(resizedBlob);
-        });
-
-        bitmap.close();
-        console.log(`📐 Resized image (Offscreen): ${imgWidth}x${imgHeight} → ${canvasWidth}x${canvasHeight}`);
-        return { dataUrl: resizedDataUrl, width: canvasWidth, height: canvasHeight };
-
-      } catch (error) {
-        console.error('Offscreen image resize failed:', error);
-        // We might not know dimensions if bitmap creation failed, safe fallback
-        return { dataUrl, width: 600, height: 450 };
-      }
-    } else {
-      // Standard DOM implementation
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-
-        img.onload = () => {
-          try {
-            // Calculate scale to fit within max dimensions
-            const scale = Math.min(
-              maxWidth / img.width,
-              maxHeight / img.height,
-              1 // Don't upscale
-            );
-
-            if (scale >= 1) {
-              // No resize needed
-              resolve({ dataUrl: dataUrl, width: img.width, height: img.height });
-              return;
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.floor(img.width * scale);
-            canvas.height = Math.floor(img.height * scale);
-
-            const ctx = canvas.getContext('2d');
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-            const resized = canvas.toDataURL('image/jpeg', 0.95);
-            console.log(`📐 Resized image: ${img.width}x${img.height} → ${canvas.width}x${canvas.height}`);
-
-            resolve({ dataUrl: resized, width: canvas.width, height: canvas.height });
-          } catch (error) {
-            console.error('Image resize failed:', error);
-            resolve({ dataUrl: dataUrl, width: 600, height: 450 }); // Fallback with safe defaults
-          }
+    // Load local lib via chrome.runtime.getURL (CSP-safe)
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
+      return new Promise((resolve) => {
+        const localUrl = chrome.runtime.getURL('libs/jspdf.umd.min.js');
+        const script = document.createElement('script');
+        script.src = localUrl;
+        script.onload = () => resolve(true);
+        script.onerror = () => {
+          Logger.warn('[ExportService] Failed to load local jsPDF lib');
+          resolve(false);
         };
-
-        img.onerror = () => {
-          console.error('Failed to load image for resizing');
-          resolve({ dataUrl: dataUrl, width: 600, height: 450 }); // Fallback
-        };
-
-        img.src = dataUrl;
+        document.head.appendChild(script);
       });
+    }
+
+    return false;
+  }
+
+  /**
+   * Export to DOCX.
+   *
+   * EXP-IMG-005: prefer a real OOXML `.docx` built with the bundled `docx`
+   * library — images embed as binary `ImageRun` parts (no fragile base64
+   * data-URLs), sized in EMUs (deterministic across Word versions). Falls
+   * back to the legacy HTML `.doc` builder when the library can't load
+   * (e.g. a non-window/service-worker context).
+   *
+   * @returns {Promise<{ blob?: Blob, content?: string, filename: string, mimeType: string }>}
+   */
+  async _exportDOCX(exportData, sessionId, progressCallback) {
+    const notify = typeof progressCallback === 'function' ? progressCallback : () => { };
+    const loaded = await this._loadDocx();
+    if (loaded) {
+      try {
+        return await this._buildDocxBlob(exportData, sessionId, notify);
+      } catch (err) {
+        if (err && /cancelled/i.test(err.message || '')) throw err;
+        Logger.warn('[ExportService] docx-library build failed, falling back to HTML .doc:', err);
+      }
+    }
+    return this._exportDOCXHtml(exportData, sessionId, notify);
+  }
+
+  /**
+   * Load the bundled `docx` library via chrome.runtime.getURL (CSP-safe).
+   * Returns false in non-window contexts (no document to inject into) so the
+   * caller can fall back to the HTML `.doc` path.
+   * @private
+   * @returns {Promise<boolean>}
+   */
+  async _loadDocx() {
+    if (typeof window !== 'undefined' && window.docx && window.docx.Packer) return true;
+    if (typeof document === 'undefined' || typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.getURL) {
+      return false;
+    }
+    return new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = chrome.runtime.getURL('libs/docx.min.js');
+      script.onload = () => resolve(!!(window.docx && window.docx.Packer));
+      script.onerror = () => {
+        Logger.warn('[ExportService] Failed to load local docx lib');
+        resolve(false);
+      };
+      document.head.appendChild(script);
+    });
+  }
+
+  /**
+   * Build a true `.docx` Blob with the `docx` library (EXP-IMG-005).
+   * Mirrors the HTML builder's structure: numbered execution steps with inline
+   * manual screenshots, then an "Automated Screenshots" section. Each image is
+   * embedded as a binary ImageRun via {@link _docxImageParagraph}.
+   * @private
+   */
+  async _buildDocxBlob(exportData, sessionId, notify) {
+    const { session, steps } = exportData;
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel } = window.docx;
+
+    notify({ percent: 30, status: 'Building DOCX...' });
+
+    // stepId → asset index; images are loaded lazily as each step is reached.
+    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const assetIndex = new Map();
+    for (const asset of screenshotAssets) {
+      if (asset.stepId) assetIndex.set(asset.stepId, asset);
+    }
+    screenshotAssets.length = 0;
+
+    const automatedScreenshots = [];
+    const regularSteps = [];
+    steps.forEach(step => {
+      if (step.action === 'screenshot' && !step.isManual) automatedScreenshots.push(step);
+      else regularSteps.push(step);
+    });
+
+    const children = [];
+    children.push(new Paragraph({ text: `${session.name || 'Untitled Session'} - Test Document`, heading: HeadingLevel.HEADING_1 }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'Author: ', bold: true }), new TextRun(session.author || 'N/A')] }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'Start Time: ', bold: true }), new TextRun(this._formatExportTime(session.startTime))] }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'End Time: ', bold: true }), new TextRun(this._formatExportTime(session.endTime))] }));
+    children.push(new Paragraph({ children: [new TextRun({ text: 'Total Steps: ', bold: true }), new TextRun(String(session.stepCount))] }));
+    children.push(new Paragraph({ text: 'Test Execution Steps', heading: HeadingLevel.HEADING_2 }));
+
+    const total = regularSteps.length;
+    let stepNumber = 0;
+    for (const step of regularSteps) {
+      if (this._isCancelled(session.id)) { this._clearCancellation(session.id); throw new Error('Export cancelled by user'); }
+      stepNumber++;
+
+      let text;
+      if (step.action === 'screenshot') {
+        text = `${stepNumber}. Manual screenshot`;
+      } else if (step.description) {
+        text = `${stepNumber}. ${step.description}`;
+      } else {
+        text = `${stepNumber}. ${step.action.toUpperCase()}`;
+        if (step.fieldName && step.fieldName !== 'N/A') text += ` on "${step.fieldName}"`;
+        if (step.value && step.action !== 'navigate') text += ` with value "${step.value}"`;
+        if (step.action === 'navigate') text += ` to ${this._sanitizeUrl(step.value || step.url)}`;
+      }
+      children.push(new Paragraph({ children: [new TextRun(text)], spacing: { before: 120 } }));
+
+      const imgPara = await this._docxImageParagraph(assetIndex.get(step.id), this._imgOptsMap.get(sessionId));
+      if (imgPara) children.push(imgPara);
+      assetIndex.delete(step.id);
+
+      if (stepNumber % 10 === 0) {
+        notify({ percent: 30 + Math.floor((stepNumber / Math.max(total, 1)) * 55), status: `Processing step ${stepNumber}/${total}...` });
+      }
+    }
+
+    if (automatedScreenshots.length > 0) {
+      children.push(new Paragraph({ text: 'Automated Screenshots', heading: HeadingLevel.HEADING_2 }));
+      for (let i = 0; i < automatedScreenshots.length; i++) {
+        if (this._isCancelled(session.id)) { this._clearCancellation(session.id); throw new Error('Export cancelled by user'); }
+        const shot = automatedScreenshots[i];
+        children.push(new Paragraph({ children: [new TextRun({ text: `Auto Screenshot ${i + 1}`, bold: true }), new TextRun(` - ${new Date(shot.timestamp).toLocaleTimeString()}`)] }));
+        const imgPara = await this._docxImageParagraph(assetIndex.get(shot.id), this._imgOptsMap.get(sessionId));
+        if (imgPara) children.push(imgPara);
+        assetIndex.delete(shot.id);
+      }
+    }
+
+    assetIndex.clear();
+
+    notify({ percent: 90, status: 'Finalizing DOCX...' });
+    const doc = new Document({ sections: [{ children }] });
+    const blob = await Packer.toBlob(doc);
+    notify({ percent: 95, status: 'DOCX generated' });
+
+    const sessionName = (session.name || 'Untitled_Session').replace(/[^a-z0-9]/gi, '_');
+    return {
+      blob,
+      filename: `${sessionName}_${Date.now()}.docx`,
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    };
+  }
+
+  /**
+   * Build a docx Paragraph holding one screenshot as a binary ImageRun, or
+   * null if the asset has no usable image. Runs the image through the
+   * content-aware ImageProcessor (lossless PNG for text) and embeds the bytes
+   * directly. Display size is in pixels (docx converts px → EMU).
+   * @private
+   */
+  async _docxImageParagraph(asset, imgOpts) {
+    if (!asset) return null;
+    const rawUrl = await this._resolveAssetUrl(asset);
+    if (!rawUrl) return null;
+    try {
+      const { Paragraph, ImageRun } = window.docx;
+      const imgObj = await ImageProcessor.processForExport(rawUrl, {
+        maxWidth: 1920, maxHeight: 1080, displayWidth: 600, displayHeight: 450,
+        ...(imgOpts || { format: 'auto', quality: 0.92 })
+      });
+      // Decode the data URL to bytes WITHOUT fetch(): extension-page CSP
+      // (connect-src 'self') blocks fetching data: URLs, which silently
+      // dropped every screenshot from the Word export (PDF was unaffected
+      // because jsPDF decodes the data URL itself). atob-decode instead.
+      const type = /^data:image\/png/i.test(imgObj.dataUrl) ? 'png' : 'jpg';
+      const _commaIdx = imgObj.dataUrl.indexOf(',');
+      const bytes = Uint8Array.from(atob(imgObj.dataUrl.slice(_commaIdx + 1)), c => c.charCodeAt(0));
+      imgObj.dataUrl = null;
+      return new Paragraph({
+        children: [new ImageRun({ type, data: bytes, transformation: { width: imgObj.width, height: imgObj.height } })],
+        spacing: { after: 200 }
+      });
+    } catch (err) {
+      Logger.warn('[ExportService] docx image embed failed:', err);
+      return null;
     }
   }
 
-  async _exportDOCX(exportData, sessionId, progressCallback) {
+  /**
+   * Legacy HTML-based `.doc` export (fallback when the docx library is
+   * unavailable). Processes screenshots one at a time (PERF-003) and embeds
+   * them via the content-aware ImageProcessor pipeline. SEC-003: sanitizes URLs.
+   */
+  async _exportDOCXHtml(exportData, sessionId, progressCallback) {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
 
@@ -434,75 +675,53 @@ export class ExportService {
     li { margin: 15px 0; color: #333; font-size: 14px; }
     .screenshot-img {
       max-width: 7.29in !important;
-      max-height: 4.11in !important;
       height: auto !important;
       margin-top: 15px;
       border: 1px solid #ccc;
       display: block;
+      page-break-inside: avoid;
     }
     .automated-screenshots { margin-top: 40px; padding-top: 20px; border-top: 2px solid #3498db; }
-    .auto-screenshot { margin: 30px 0; text-align: center; }
+    .auto-screenshot { margin: 30px 0; text-align: center; page-break-inside: avoid; }
     .auto-screenshot img {
       max-width: 7.29in !important;
-      max-height: 4.11in !important;
       height: auto !important;
       margin: 15px auto;
       border: 1px solid #ccc;
       display: block;
+      page-break-inside: avoid;
     }
   </style>
 </head>
 <body>
   <h1>${this._escapeHtml(session.name)} - Test Document</h1>
-  
+
   <div class='info'>
-    <p><b>Created:</b> ${new Date(session.createdAt).toLocaleString()}</p>
-    <p><b>Created by:</b> </p>
+    <p><b>Author:</b> ${this._escapeHtml(session.author || 'N/A')}</p>
+    <p><b>Start Time:</b> ${this._formatExportTime(session.startTime)}</p>
+    <p><b>End Time:</b> ${this._formatExportTime(session.endTime)}</p>
     <p><b>Total Steps:</b> ${session.stepCount}</p>
   </div>
-  
+
   <div class='divider'></div>
-  
+
   <h2>Test Execution Steps</h2>
 `;
 
     // ------------------------------------------------------------------
-    // Load screenshots — use _resolveAssetUrl which checks dataUrl first,
-    // then data, then blob.  This is the line that was broken before: it
-    // only checked asset.blob, which is always {} after storage round-trip.
+    // Build a lookup: stepId -> asset (reference only, don't load yet)
+    // Load images one at a time as we encounter each step
     // ------------------------------------------------------------------
     const screenshotAssets = await this.storage.getAllAssets(session.id);
-    const screenshotMap = new Map();
-    const totalScreens = screenshotAssets.length || 1;
-    let processed = 0;
-
+    // Build a stepId → asset index (not the data URLs themselves)
+    const assetIndex = new Map();
     for (const asset of screenshotAssets) {
-      // BUG FIX: EXP-HIGH-001 - Check cancellation during processing
-      if (this._isCancelled(session.id)) {
-        this._clearCancellation(session.id);
-        throw new Error('Export cancelled by user');
+      if (asset.stepId) {
+        assetIndex.set(asset.stepId, asset);
       }
-
-      let url = await this._resolveAssetUrl(asset);
-      if (url) {
-        // 🔧 FIX: EXP-002 - Use higher resolution for better quality (increased from 400x900)
-        const imgObj = await this._resizeImageForExport(url, 600, 450);
-        screenshotMap.set(asset.stepId, imgObj);
-      } else {
-        console.warn('No usable image data for asset', asset.id, '(stepId:', asset.stepId + ')');
-      }
-
-      processed++;
-      // Progress: 40–80% during screenshot work
-      const pct = 40 + Math.floor((processed / totalScreens) * 40);
-      notify({
-        percent: Math.min(pct, 80),
-        status: `Processing screenshots… (${processed}/${totalScreens})`
-      });
-
-      // Yield to keep the UI responsive
-      await new Promise(resolve => setTimeout(resolve, 10));
     }
+    // screenshotAssets array no longer needed — release reference
+    screenshotAssets.length = 0;
     // ------------------------------------------------------------------
 
     const automatedScreenshots = [];
@@ -520,7 +739,6 @@ export class ExportService {
 
     html += `<ol>`;
 
-    // 🔧 FIX: EXP-001 - Process in chunks to avoid memory issues
     const CHUNK_SIZE = 50;
     const totalSteps = regularSteps.length;
     let processedCount = 0;
@@ -529,10 +747,7 @@ export class ExportService {
       const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, totalSteps);
       const chunk = regularSteps.slice(chunkStart, chunkEnd);
 
-      console.log(`Processing chunk ${chunkStart}-${chunkEnd} of ${totalSteps}`);
-
       for (const step of chunk) {
-        // BUG FIX: EXP-HIGH-001 - Check cancellation during step processing
         if (this._isCancelled(session.id)) {
           this._clearCancellation(session.id);
           throw new Error('Export cancelled by user');
@@ -541,12 +756,26 @@ export class ExportService {
         let oneliner;
 
         if (step.action === 'screenshot') {
-          oneliner = '📸 Manual screenshot captured';
+          oneliner = 'Manual screenshot captured';
           html += `<li>${oneliner}`;
 
-          const screenshotData = screenshotMap.get(step.id);
-          if (screenshotData && screenshotData.dataUrl) {
-            html += `<br><img src="${screenshotData.dataUrl}" width="${screenshotData.width}" height="${screenshotData.height}" class="screenshot-img" alt="Manual Screenshot"/>`;
+          // Load + process this one asset, then null it out
+          const asset = assetIndex.get(step.id);
+          if (asset) {
+            const rawUrl = await this._resolveAssetUrl(asset);
+            if (rawUrl) {
+              // EXP-IMG-002/003: content-aware, lossless-for-text pipeline.
+              // EXP-IMG-004: single unit — set display width only, omit height (aspect follows).
+              const imgObj = await ImageProcessor.processForExport(rawUrl, {
+                maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525,
+                ...(this._imgOptsMap.get(sessionId) || { format: 'auto', quality: 0.92 })
+              });
+              html += `<br><img src="${imgObj.dataUrl}" width="${imgObj.width}" class="screenshot-img" alt="Manual Screenshot"/>`;
+              // Null out immediately after use
+              imgObj.dataUrl = null;
+            }
+            // Remove from index so GC can collect
+            assetIndex.delete(step.id);
           }
 
           html += `</li>`;
@@ -565,7 +794,9 @@ export class ExportService {
             }
 
             if (step.action === 'navigate') {
-              oneliner += ` to ${this._escapeHtml(step.value || step.url)}`;
+              // SEC-003: sanitize navigate URL
+              const safeVal = this._sanitizeUrl(step.value || step.url);
+              oneliner += ` to ${this._escapeHtml(safeVal)}`;
             }
           }
 
@@ -585,7 +816,6 @@ export class ExportService {
       // Release chunk memory
       chunk.length = 0;
 
-      // Small delay to allow GC
       if (chunkEnd < totalSteps) {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
@@ -596,17 +826,32 @@ export class ExportService {
     if (automatedScreenshots.length > 0) {
       html += `
   <div class='automated-screenshots'>
-    <h2>📷 Automated Screenshots</h2>`;
+    <h2>Automated Screenshots</h2>`;
 
       for (let i = 0; i < automatedScreenshots.length; i++) {
+        if (this._isCancelled(session.id)) {
+          this._clearCancellation(session.id);
+          throw new Error('Export cancelled by user');
+        }
+
         const screenshot = automatedScreenshots[i];
-        const screenshotData = screenshotMap.get(screenshot.id);
-        if (screenshotData && screenshotData.dataUrl) {
-          html += `
+        const asset = assetIndex.get(screenshot.id);
+        if (asset) {
+          const rawUrl = await this._resolveAssetUrl(asset);
+          if (rawUrl) {
+            // EXP-IMG-002/003/004: lossless-for-text pipeline, display-width only.
+            const imgObj = await ImageProcessor.processForExport(rawUrl, {
+              maxWidth: 1920, maxHeight: 1080, displayWidth: 700, displayHeight: 525,
+              ...(this._imgOptsMap.get(sessionId) || { format: 'auto', quality: 0.92 })
+            });
+            html += `
     <div class='auto-screenshot'>
       <p><b>Auto Screenshot ${i + 1}</b> - ${new Date(screenshot.timestamp).toLocaleTimeString()}</p>
-      <img src="${screenshotData.dataUrl}" width="${screenshotData.width}" height="${screenshotData.height}" alt="Automated Screenshot ${i + 1}"/>
+      <img src="${imgObj.dataUrl}" width="${imgObj.width}" alt="Automated Screenshot ${i + 1}"/>
     </div>`;
+            imgObj.dataUrl = null;
+          }
+          assetIndex.delete(screenshot.id);
         }
       }
 
@@ -617,7 +862,8 @@ export class ExportService {
 </body>
 </html>`;
 
-    screenshotMap.clear();
+    // Clear the asset index map
+    assetIndex.clear();
 
     notify({ percent: 90, status: 'Finalizing DOCX content...' });
 
@@ -626,6 +872,16 @@ export class ExportService {
 
     notify({ percent: 95, status: 'DOCX generated' });
 
+    // Return a Blob — both callers (popup, background) consume result.blob and
+    // create their own object URL / data URL. Text fallback for non-Blob ctx.
+    if (typeof Blob !== 'undefined') {
+      return {
+        blob: new Blob([html], { type: 'application/msword' }),
+        filename,
+        mimeType: 'application/msword'
+      };
+    }
+
     return {
       content: html,
       filename,
@@ -633,17 +889,33 @@ export class ExportService {
     };
   }
 
+  /**
+   * Export to PDF using local jsPDF (FUNC-005).
+   *
+   * CDN loading has been removed — extension CSP (script-src 'self') always
+   * blocks it. Instead we load jsPDF from libs/jspdf.umd.min.js via
+   * chrome.runtime.getURL, which is CSP-safe.
+   *
+   * If the local lib is unavailable, returns a user-friendly error blob
+   * instead of a junk file containing "null".
+   *
+   * SEC-003: sanitizes step URLs.
+   */
   async _exportPDF(exportData, sessionId) {
     const { session, steps } = exportData;
 
-    if (typeof window.jspdf === 'undefined') {
-      await new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-      });
+    // Load local jsPDF, NOT CDN
+    const loaded = await this._loadJsPDF();
+    if (!loaded || typeof window === 'undefined' || !window.jspdf || !window.jspdf.jsPDF) {
+      Logger.error('[ExportService] jsPDF library not available. Ensure libs/jspdf.umd.min.js is present.');
+      // Return a user-friendly error text file rather than a junk "null" PDF
+      const errorMsg = 'PDF export failed: jsPDF library not found.\n\nPlease run "npm run setup-libs" to download the required library, then reload the extension.';
+      const sessionName = (session.name || 'Session').replace(/[^a-z0-9]/gi, '_');
+      return {
+        content: errorMsg,
+        filename: `${sessionName}_${Date.now()}_ERROR.txt`,
+        mimeType: 'text/plain'
+      };
     }
 
     const { jsPDF } = window.jspdf;
@@ -666,7 +938,11 @@ export class ExportService {
 
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Created: ${new Date(session.createdAt).toLocaleString()}`, margin, yPosition);
+    doc.text(`Author: ${session.author || 'N/A'}`, margin, yPosition);
+    yPosition += 6;
+    doc.text(`Start Time: ${this._formatExportTime(session.startTime)}`, margin, yPosition);
+    yPosition += 6;
+    doc.text(`End Time: ${this._formatExportTime(session.endTime)}`, margin, yPosition);
     yPosition += 6;
     doc.text(`Total Steps: ${session.stepCount}`, margin, yPosition);
     yPosition += 15;
@@ -676,49 +952,106 @@ export class ExportService {
     doc.text('Test Steps', margin, yPosition);
     yPosition += 10;
 
+    // EXP-IMG-001: build a stepId → asset index so every screenshot step can
+    // embed its image. PERF-003: keep only one asset's bytes live at a time —
+    // load + embed + null out + delete from the index as we go.
+    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const assetIndex = new Map();
+    for (const asset of screenshotAssets) {
+      if (asset.stepId) assetIndex.set(asset.stepId, asset);
+    }
+    screenshotAssets.length = 0;
+
     let stepNumber = 0;
     for (const step of steps) {
-      if (step.action !== 'screenshot' || step.isManual) {
-        stepNumber++;
+      const isScreenshot = step.action === 'screenshot';
+      stepNumber++;
 
-        if (yPosition > pageHeight - 30) {
-          doc.addPage();
-          yPosition = margin;
-        }
+      if (yPosition > pageHeight - 30) {
+        doc.addPage();
+        yPosition = margin;
+      }
 
-        doc.setFontSize(11);
-        doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(0, 0, 0);
 
-        const description = step.description ||
-          `${step.action.toUpperCase()} ${step.fieldName || ''}`;
+      const description = step.description ||
+        (isScreenshot
+          ? (step.isManual ? 'Manual screenshot' : 'Automated screenshot')
+          : `${step.action.toUpperCase()} ${step.fieldName || ''}`);
 
-        const lines = doc.splitTextToSize(`${stepNumber}. ${description}`, contentWidth);
-        lines.forEach(line => {
-          doc.text(line, margin, yPosition);
-          yPosition += 5;
-        });
+      const lines = doc.splitTextToSize(`${stepNumber}. ${description}`, contentWidth);
+      lines.forEach(line => {
+        doc.text(line, margin, yPosition);
+        yPosition += 5;
+      });
 
+      // Metadata (selector / URL) for action steps only
+      if (!isScreenshot) {
         doc.setFontSize(8);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(100, 100, 100);
 
-        if (step.selector?.css) {
-          doc.text(`Selector: ${step.selector.css}`, margin + 5, yPosition);
-          yPosition += 4;
+        // Unified export: no locator line (matches the Word doc).
+
+        // Sanitize URL shown in PDF
+        if (step.url) {
+          const safeUrl = this._sanitizeUrl(step.url);
+          const urlLines = doc.splitTextToSize(`URL: ${safeUrl}`, contentWidth - 5);
+          urlLines.forEach(line => {
+            doc.text(line, margin + 5, yPosition);
+            yPosition += 4;
+          });
         }
 
         doc.setTextColor(0, 0, 0);
         yPosition += 4;
       }
+
+      // EXP-IMG-001: embed this step's screenshot, if any
+      const asset = assetIndex.get(step.id);
+      if (asset) {
+        const rawUrl = await this._resolveAssetUrl(asset);
+        if (rawUrl) {
+          // Content-aware, lossless-for-text pipeline (PNG stays PNG)
+          const result = await ImageProcessor.processForExport(rawUrl, {
+            maxWidth: 1920, maxHeight: 1080,
+            ...(this._imgOptsMap.get(sessionId) || { format: 'auto', quality: 0.92 })
+          });
+          // jsPDF needs 'PNG' or 'JPEG'; derive from the actual mime type
+          const fmt = /^data:image\/png/i.test(result.dataUrl) ? 'PNG' : 'JPEG';
+          const ratio = result.actualHeight / result.actualWidth;
+          let imgW = contentWidth;
+          let imgH = imgW * ratio;
+          const maxImgH = pageHeight - (2 * margin);
+          if (imgH > maxImgH) { imgH = maxImgH; imgW = imgH / ratio; }
+          // Page-fit: don't split the image across a page boundary
+          if (yPosition + imgH > pageHeight - margin) {
+            doc.addPage();
+            yPosition = margin;
+          }
+          try {
+            doc.addImage(result.dataUrl, fmt, margin, yPosition, imgW, imgH, undefined, 'SLOW');
+            yPosition += imgH + 6;
+          } catch (err) {
+            Logger.warn('PDF addImage failed for step', step.id, err);
+          }
+          result.dataUrl = null;
+        }
+        assetIndex.delete(step.id);
+      }
     }
+
+    assetIndex.clear();
 
     const sessionName = (session.name || 'Session').replace(/[^a-z0-9]/gi, '_');
     const filename = `${sessionName}_${Date.now()}.pdf`;
 
-    doc.save(filename);
-
+    // Return a Blob — both callers (popup, background) consume result.blob and
+    // build their own object URL / data URL for chrome.downloads.
     return {
-      content: null,
+      blob: doc.output('blob'),
       filename,
       mimeType: 'application/pdf'
     };

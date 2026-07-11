@@ -4,14 +4,16 @@
  * Monospace-first, geometric, high-contrast
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Azeret+Mono:wght@400;500;600;700;800&display=swap');
+/* UX-018: Google Fonts removed — use system font stack for offline reliability */
 
 /* ==================== DESIGN TOKENS ==================== */
 
 :root {
-  /* Typography - Terminal aesthetic with monospace dominance */
-  --font-display: 'Share Tech Mono', 'Courier New', monospace;
-  --font-mono: 'Azeret Mono', 'Consolas', 'Monaco', monospace;
+  /* Typography (UX-018: no remote fonts).
+     Refresh: UI text uses a system SANS stack for readability; mono is reserved
+     for code, selectors, values, and timers. */
+  --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Azeret Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
 
   --text-xs: 10px;
   --text-sm: 11px;
@@ -78,54 +80,55 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.12);
-  --shadow-neon: 0 0 12px var(--accent-glow);
+  /* Refresh: emphasis shadow is a soft drop, not a neon glow. */
+  --shadow-neon: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-/* Dark Theme - True terminal */
+/* Dark Theme - Refined slate (refresh: unified steel-blue accent, no neon) */
 [data-theme="dark"] {
-  --bg-primary: #0a0a0a;
-  --bg-secondary: #121212;
-  --bg-tertiary: #1a1a1a;
-  --bg-hover: #262626;
-  --bg-glass: rgba(10, 10, 10, 0.85);
+  --bg-primary: #0f1216;
+  --bg-secondary: #161a20;
+  --bg-tertiary: #1d222b;
+  --bg-hover: #272e39;
+  --bg-glass: rgba(15, 18, 22, 0.85);
 
-  --border: #333333;
-  --border-light: #262626;
-  --border-accent: #00ffcc;
+  --border: #2a313c;
+  --border-light: #21272f;
+  --border-accent: #5b8fd0;
 
-  --text-primary: #f5f5f5;
-  --text-secondary: #d4d4d4;
-  --text-muted: #a3a3a3;
-  --text-disabled: #525252;
+  --text-primary: #e8eaed;
+  --text-secondary: #b8bec8;
+  --text-muted: #8b929e;
+  --text-disabled: #5a616b;
 
-  --accent: #00ffcc;
-  --accent-hover: #33ffdb;
-  --accent-subtle: rgba(0, 255, 204, 0.15);
-  --accent-border: #00ffcc;
-  --accent-glow: rgba(0, 255, 204, 0.6);
+  --accent: #5b8fd0;
+  --accent-hover: #74a2dc;
+  --accent-subtle: rgba(91, 143, 208, 0.16);
+  --accent-border: #5b8fd0;
+  --accent-glow: rgba(91, 143, 208, 0.28);
 
-  --secondary-accent: #ff00ff;
-  --secondary-glow: rgba(255, 0, 255, 0.5);
+  --secondary-accent: #8aa0bd;
+  --secondary-glow: rgba(138, 160, 189, 0.2);
 
-  --success: #00ff66;
-  --success-subtle: rgba(0, 255, 102, 0.15);
-  --success-glow: rgba(0, 255, 102, 0.6);
+  --success: #4caf78;
+  --success-subtle: rgba(76, 175, 120, 0.16);
+  --success-glow: rgba(76, 175, 120, 0.25);
 
-  --warning: #ffaa00;
-  --warning-subtle: rgba(255, 170, 0, 0.15);
-  --warning-glow: rgba(255, 170, 0, 0.6);
+  --warning: #d99a4e;
+  --warning-subtle: rgba(217, 154, 78, 0.16);
+  --warning-glow: rgba(217, 154, 78, 0.25);
 
-  --danger: #ff0055;
-  --danger-subtle: rgba(255, 0, 85, 0.15);
-  --danger-glow: rgba(255, 0, 85, 0.6);
+  --danger: #e0685f;
+  --danger-subtle: rgba(224, 104, 95, 0.16);
+  --danger-glow: rgba(224, 104, 95, 0.25);
 
-  --info: #00ccff;
-  --info-subtle: rgba(0, 204, 255, 0.15);
+  --info: #5b8fd0;
+  --info-subtle: rgba(91, 143, 208, 0.16);
 
-  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.7);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.8);
-  --shadow-neon: 0 0 20px var(--accent-glow), 0 0 40px var(--accent-glow);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-neon: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 /* ==================== BASE STYLES ==================== */
@@ -139,7 +142,7 @@
 body {
   width: 380px;
   min-height: 520px;
-  font-family: var(--font-mono);
+  font-family: var(--font-display);
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-size: var(--text-base);
@@ -825,26 +828,29 @@ header h1 {
   transform: translateY(-1px);
 }
 
+/* UX-003: Dark text on success/warning for WCAG AA contrast */
 .btn-success {
   background: var(--success);
-  color: #ffffff;
+  color: #14532d;
   border-color: var(--success);
 }
 
 .btn-success:not(:disabled):hover {
   background: #246238;
+  color: #14532d;
   box-shadow: var(--shadow-md), 0 0 0 3px var(--success-subtle);
   transform: translateY(-1px);
 }
 
 .btn-warning {
   background: var(--warning);
-  color: #ffffff;
+  color: #1a1a1f;
   border-color: var(--warning);
 }
 
 .btn-warning:not(:disabled):hover {
   background: #9a5e28;
+  color: #1a1a1f;
   box-shadow: var(--shadow-md), 0 0 0 3px var(--warning-subtle);
   transform: translateY(-1px);
 }
@@ -1311,6 +1317,19 @@ header h1 {
   clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
 }
 
+/* UX-013: the keyboard-shortcuts list reuses this toast but needs its \n
+   line breaks to actually render, and left-aligned text instead of the
+   centered single-line default. */
+.message.message-multiline {
+  text-align: left;
+  align-items: flex-start;
+  padding: var(--space-3);
+}
+.message.message-multiline .toast-text {
+  white-space: pre-line;
+  line-height: 1.7;
+}
+
 .message::before {
   content: '';
   position: absolute;
@@ -1577,9 +1596,14 @@ input[type="number"]:focus {
   animation-timing-function: ease-in-out;
 }
 
-/* Terminal-style focus rings */
+/* UX-007: Solid opaque focus rings for WCAG non-text contrast (≥3:1) */
 *:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid #4A7FB5;
+  outline-offset: 2px;
+}
+
+[data-theme="dark"] *:focus-visible {
+  outline: 2px solid #5EC8C0;
   outline-offset: 2px;
 }
 
@@ -1604,4 +1628,202 @@ input[type="number"]:focus {
   100% {
     content: '|';
   }
+}
+
+/* ==================================================================
+   SOFT CARDS — chosen design (v4). White cards on a soft grey page,
+   segmented tabs, filled primary, tasteful micro-motion. ONE design
+   shared by light + dark (dark is the same design, darker surfaces).
+   Structure/classes unchanged — JS untouched.
+   ================================================================== */
+:root { --ts-ease: cubic-bezier(0.4,0,0.2,1); --ts-fast: 0.15s var(--ts-ease); --ts: 0.2s var(--ts-ease); }
+/* UX-003: --accent (#4f7cbb light / #5b8fd0 dark) is ~4.26:1 / ~3.34:1 with
+   white text — both fail WCAG AA (4.5:1). Filled buttons use this dedicated,
+   theme-invariant pair instead; --accent itself stays as-is for borders,
+   rings, and other non-text-contrast uses. */
+:root { --accent-contrast: #3e6399; --accent-contrast-hover: #345583; }
+
+/* Typography: sans everywhere, mono only for real code */
+body, body * { font-family: var(--font-display) !important; letter-spacing: normal !important; text-transform: none !important; }
+code, pre, kbd, samp, .mono { font-family: var(--font-mono) !important; }
+
+/* Page = soft grey; cards = white. Dark: page darkest, cards one step up. */
+body { background: var(--bg-secondary) !important; }
+[data-theme="dark"] body { background: var(--bg-primary) !important; }
+
+/* Strip legacy terminal decorations (both themes); keep the recording pulse. */
+body::before, [data-theme="dark"] body::before,
+header::before, [data-theme="dark"] header::before,
+.stat-item::before, [data-theme="dark"] .stat-item::before,
+.stats::after, [data-theme="dark"] .stats::after,
+.tab::before, [data-theme="dark"] .tab::before, [data-theme="dark"] .tab.active::before,
+.export-section::after, [data-theme="dark"] .export-section::after,
+.storage-section::after, [data-theme="dark"] .storage-section::after {
+  content: none !important; animation: none !important; display: none !important;
+}
+[data-theme="dark"] * { clip-path: none !important; }
+
+/* Header — hairline divider, title left, actions right (fixes old overlap). */
+header {
+  background: transparent !important; border: none !important;
+  border-bottom: 1px solid var(--border) !important; border-radius: 0 !important;
+  box-shadow: none !important; padding: 2px 2px 12px !important; margin-bottom: 14px !important;
+}
+header h1 { position: static !important; transform: none !important; left: auto !important; width: auto !important;
+  color: var(--text-primary) !important; font-weight: 600 !important; font-size: 15px !important; }
+.header-icon { color: var(--accent) !important; }
+#keyboardShortcutsHelp { margin-left: auto !important; }
+.theme-toggle { border-radius: 8px !important; border: 1px solid var(--border) !important; background: var(--bg-primary) !important;
+  transition: background var(--ts-fast), border-color var(--ts-fast), color var(--ts-fast); }
+[data-theme="dark"] .theme-toggle { background: var(--bg-secondary) !important; }
+.theme-toggle:hover { border-color: var(--accent) !important; color: var(--accent) !important; }
+
+/* Segmented tabs — active is a raised pill with a soft shadow. */
+.tabs {
+  display: flex !important; gap: 3px !important; background: var(--bg-tertiary) !important;
+  border: none !important; border-radius: 10px !important; padding: 3px !important; margin-bottom: 16px !important;
+}
+.tab {
+  flex: 1 !important; text-align: center !important; background: transparent !important; border: none !important;
+  border-radius: 8px !important; color: var(--text-muted) !important; font-weight: 500 !important; padding: 7px 10px !important;
+  transition: color var(--ts-fast), background var(--ts-fast), box-shadow var(--ts-fast);
+}
+.tab:hover { color: var(--text-secondary) !important; }
+.tab.active { background: var(--bg-primary) !important; color: var(--accent) !important; box-shadow: var(--shadow-sm) !important; }
+[data-theme="dark"] .tab.active { background: var(--bg-hover) !important; }
+
+/* Cards — white, 12px, soft shadow. */
+.stats, .export-section, .storage-section, .steps-viewer {
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important;
+}
+[data-theme="dark"] .stats, [data-theme="dark"] .export-section,
+[data-theme="dark"] .storage-section, [data-theme="dark"] .steps-viewer { background: var(--bg-secondary) !important; }
+
+/* State indicator — card, with explicit state tints so text stays readable. */
+.state-indicator { background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important; transition: background var(--ts), border-color var(--ts); }
+[data-theme="dark"] .state-indicator { background: var(--bg-secondary) !important; }
+.state-indicator.is-recording { background: var(--danger-subtle) !important; border-color: var(--danger) !important; }
+.state-indicator.is-paused { background: var(--warning-subtle) !important; border-color: var(--warning) !important; }
+
+/* Stats internals. */
+.stat-item { background: transparent !important; border: none !important; border-radius: 0 !important; }
+.stat-value { color: var(--accent) !important; font-weight: 600 !important; }
+.stat-label { color: var(--text-muted) !important; }
+
+/* Buttons — filled primary, soft secondary, tasteful lift on hover. */
+.btn {
+  border-radius: 9px !important; font-weight: 500 !important; border: 1px solid transparent !important; box-shadow: none !important;
+  transition: background var(--ts-fast), border-color var(--ts-fast), color var(--ts-fast), transform var(--ts-fast), box-shadow var(--ts-fast);
+}
+.btn:hover:not(:disabled) { transform: translateY(-1px) !important; }
+.btn:active:not(:disabled) { transform: translateY(0) scale(0.99) !important; }
+.btn-primary { background: var(--accent-contrast) !important; color: #fff !important; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-contrast-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+.btn-danger { background: var(--danger) !important; color: #fff !important; }
+.btn-danger:hover:not(:disabled) { box-shadow: 0 4px 12px var(--danger-glow) !important; }
+.btn-secondary, .btn-warning, .btn-success, .btn-info {
+  background: var(--bg-tertiary) !important; color: var(--text-secondary) !important; border-color: transparent !important;
+}
+.btn-secondary:hover:not(:disabled), .btn-warning:hover:not(:disabled),
+.btn-success:hover:not(:disabled), .btn-info:hover:not(:disabled) { background: var(--bg-hover) !important; color: var(--text-primary) !important; }
+.btn:disabled { opacity: 0.45 !important; cursor: not-allowed !important; transform: none !important; box-shadow: none !important; }
+.btn-small { border-radius: 7px !important; }
+
+/* Inputs / selects — readable in both themes, soft focus ring.
+   Checkboxes/radios EXCLUDED so their native rendering isn't clobbered. */
+input:not([type="checkbox"]):not([type="radio"]), select, .select, textarea {
+  background: var(--bg-primary) !important; border: 1px solid var(--border) !important; border-radius: 9px !important;
+  color: var(--text-primary) !important; transition: border-color var(--ts-fast), box-shadow var(--ts-fast);
+}
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]), [data-theme="dark"] select,
+[data-theme="dark"] .select, [data-theme="dark"] textarea { background: var(--bg-tertiary) !important; }
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus, .select:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-subtle) !important; outline: none !important; }
+
+/* Checkboxes / radios — clean native control tinted with the accent. */
+input[type="checkbox"], input[type="radio"] {
+  appearance: auto !important; -webkit-appearance: auto !important;
+  width: 16px !important; height: 16px !important;
+  accent-color: var(--accent) !important; cursor: pointer !important;
+  background: none !important; border: none !important; border-radius: 0 !important;
+}
+
+/* Tasteful motion: gentle fade-in when switching tabs. */
+.tab-content.active { animation: ts-fade-in 0.22s var(--ts-ease); }
+@keyframes ts-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ==================== EXPORT TAB (Soft cards) ==================== */
+/* Section headers with an accent icon. */
+.export-section h3, .storage-section h3, .steps-viewer h3 {
+  display: flex !important; align-items: center !important; gap: 8px !important;
+  font-size: 13px !important; font-weight: 600 !important; color: var(--text-primary) !important;
+  margin-bottom: 12px !important;
+}
+.export-section h3 svg, .storage-section h3 svg, .steps-viewer h3 svg { color: var(--accent) !important; }
+
+/* Form groups + labels. */
+.form-group { margin-bottom: 14px !important; }
+.form-group > label { display: block !important; font-size: 12px !important; color: var(--text-muted) !important;
+  margin-bottom: 6px !important; font-weight: 500 !important; }
+
+/* Export format — selectable chips instead of raw radios. */
+.format-options { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
+.radio-label {
+  display: inline-flex !important; align-items: center !important; gap: 7px !important;
+  padding: 7px 12px !important; border: 1px solid var(--border) !important; border-radius: 8px !important;
+  background: var(--bg-primary) !important; cursor: pointer !important; font-size: 12px !important;
+  transition: border-color var(--ts-fast), background var(--ts-fast), color var(--ts-fast);
+}
+[data-theme="dark"] .radio-label { background: var(--bg-tertiary) !important; }
+.radio-label:hover { border-color: var(--accent-border) !important; }
+.radio-label input[type="radio"] { width: 14px !important; height: 14px !important; accent-color: var(--accent) !important; margin: 0 !important; }
+.radio-label input:checked + span { color: var(--accent) !important; font-weight: 600 !important; }
+
+/* Export is the primary action of this tab — make it prominent. */
+#exportBtn { background: var(--accent-contrast) !important; color: #fff !important; border-color: var(--accent-contrast) !important; margin-top: 4px !important; }
+#exportBtn:hover:not(:disabled) { background: var(--accent-contrast-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+
+/* Storage usage bar. */
+.storage-usage { margin-bottom: 10px !important; }
+.storage-bar-container { background: var(--bg-tertiary) !important; border-radius: 999px !important; height: 8px !important; overflow: hidden !important; }
+.storage-usage-bar { border-radius: 999px !important; height: 8px !important; transition: width var(--ts) !important; }
+.storage-usage-text { font-size: 11px !important; color: var(--text-muted) !important; display: block !important; margin-top: 6px !important; }
+.storage-actions { display: flex !important; gap: 8px !important; margin-top: 10px !important; }
+.storage-actions .btn { flex: 1 !important; }
+
+/* Selected format chip — highlighted on Chrome 105+ (:has); the visible radio
+   is the fallback indicator on older supported Chrome. */
+.radio-label:has(input:checked) { border-color: var(--accent) !important; background: var(--accent-subtle) !important; }
+.radio-label:has(input:checked) span { color: var(--accent) !important; font-weight: 600 !important; }
+
+/* ---- Export format: proper segmented chips (hide the raw radio) ----
+   The native radio rendered as an ugly box next to each label. Hide it and
+   make the whole chip the control; selection = highlighted chip (:has,
+   Chrome 105+ — matches minimum_chrome_version). */
+.format-options { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
+.radio-label {
+  position: relative !important;
+  display: inline-flex !important; align-items: center !important; justify-content: center !important;
+  min-width: 62px !important; padding: 9px 14px !important;
+  border: 1px solid var(--border) !important; border-radius: 9px !important;
+  background: var(--bg-primary) !important; color: var(--text-secondary) !important;
+  cursor: pointer !important; font-size: 12px !important; font-weight: 500 !important;
+  transition: border-color var(--ts-fast), background var(--ts-fast), color var(--ts-fast) !important;
+}
+[data-theme="dark"] .radio-label { background: var(--bg-tertiary) !important; }
+.radio-label input[type="radio"] {
+  position: absolute !important; opacity: 0 !important; width: 1px !important; height: 1px !important;
+  margin: 0 !important; pointer-events: none !important;
+}
+.radio-label span { color: inherit !important; font-weight: inherit !important; }
+.radio-label:hover { border-color: var(--accent-border) !important; color: var(--text-primary) !important; }
+.radio-label:has(input:checked) {
+  border-color: var(--accent) !important; background: var(--accent-subtle) !important; color: var(--accent) !important;
+}
+
+/* Remove the leftover terminal "[X]" / "[ ]" bracket decoration on format labels. */
+.radio-label span::before, .radio-label span::after,
+.radio-label input:checked + span::before, .radio-label input:checked + span::after {
+  content: none !important; display: none !important;
 }

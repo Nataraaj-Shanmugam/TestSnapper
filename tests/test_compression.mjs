@@ -1,119 +1,12 @@
 /**
  * Test file for compression utility
- * 
+ *
  * Run with: node tests/test_compression.mjs
  */
 
-// Mock browser APIs for Node.js environment
-import { Readable, Writable } from 'stream';
-import zlib from 'zlib';
-
-// Polyfill CompressionStream and DecompressionStream for Node.js
-if (typeof globalThis.CompressionStream === 'undefined') {
-    globalThis.CompressionStream = class CompressionStream {
-        constructor(format) {
-            this.format = format;
-            const gzip = zlib.createGzip();
-
-            let resolveReadable;
-            const readablePromise = new Promise(r => resolveReadable = r);
-
-            const chunks = [];
-            gzip.on('data', chunk => chunks.push(chunk));
-            gzip.on('end', () => {
-                resolveReadable({
-                    getReader() {
-                        let read = false;
-                        return {
-                            async read() {
-                                if (read) return { done: true };
-                                read = true;
-                                return { done: false, value: Buffer.concat(chunks) };
-                            }
-                        };
-                    }
-                });
-            });
-
-            this.writable = {
-                getWriter() {
-                    return {
-                        write(data) { gzip.write(data); },
-                        close() { gzip.end(); }
-                    };
-                }
-            };
-
-            this.readable = {
-                getReader() {
-                    let resolved = false;
-                    return {
-                        async read() {
-                            if (resolved) return { done: true };
-                            const result = await readablePromise;
-                            resolved = true;
-                            const reader = result.getReader();
-                            return reader.read();
-                        }
-                    };
-                }
-            };
-        }
-    };
-}
-
-if (typeof globalThis.DecompressionStream === 'undefined') {
-    globalThis.DecompressionStream = class DecompressionStream {
-        constructor(format) {
-            this.format = format;
-            const gunzip = zlib.createGunzip();
-
-            let resolveReadable;
-            const readablePromise = new Promise(r => resolveReadable = r);
-
-            const chunks = [];
-            gunzip.on('data', chunk => chunks.push(chunk));
-            gunzip.on('end', () => {
-                resolveReadable({
-                    getReader() {
-                        let read = false;
-                        return {
-                            async read() {
-                                if (read) return { done: true };
-                                read = true;
-                                return { done: false, value: Buffer.concat(chunks) };
-                            }
-                        };
-                    }
-                });
-            });
-
-            this.writable = {
-                getWriter() {
-                    return {
-                        write(data) { gunzip.write(data); },
-                        close() { gunzip.end(); }
-                    };
-                }
-            };
-
-            this.readable = {
-                getReader() {
-                    let resolved = false;
-                    return {
-                        async read() {
-                            if (resolved) return { done: true };
-                            const result = await readablePromise;
-                            resolved = true;
-                            const reader = result.getReader();
-                            return reader.read();
-                        }
-                    };
-                }
-            };
-        }
-    };
-}
+// Import shared polyfill
+import { installCompressionPolyfill } from './helpers/compression-polyfill.js';
+installCompressionPolyfill();
 
 // Polyfill TextEncoder/TextDecoder
 if (typeof globalThis.TextEncoder === 'undefined') {

@@ -1,9 +1,17 @@
 /**
  * Enhanced Selector Engine - Multi-Strategy Locator Generation
- * UPDATED: Added deduplication check method
- * Mimics: SelectorsHub, ChroPath, Truepath, Scraper
  * Generates multiple selector candidates with scoring
  */
+
+// Guard against re-injection SyntaxError — class declaration is lexical (not hoisted),
+// so re-running this script in the same context would throw "Identifier already declared".
+// Wrap with a guard so injection is idempotent.
+if (typeof window !== 'undefined' && window.SelectorEngine) {
+  // Already defined — skip re-declaration entirely.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { SelectorEngine: window.SelectorEngine };
+  }
+} else {
 
 class SelectorEngine {
   constructor() {
@@ -29,8 +37,8 @@ class SelectorEngine {
   }
 
   /**
-   * NEW: Check if this step is a duplicate of recent steps
-   * Helps prevent duplicate entries from rapid interactions
+   * Check if this step is a duplicate of recent steps.
+   * Helps prevent duplicate entries from rapid interactions.
    */
   isStepDuplicate(newStep, existingSteps, timeWindow = 3000) {
     if (!existingSteps || existingSteps.length === 0) return false;
@@ -65,41 +73,103 @@ class SelectorEngine {
 
     const candidates = [];
 
+    // Wrap each strategy in try/catch so one failing strategy
+    // degrades gracefully without aborting the others. Also break early after finding
+    // a high-confidence unique candidate to avoid unnecessary DOM work.
+
     // Strategy 1: ID-based (highest priority)
-    this._addIdSelectors(element, candidates);
+    try { this._addIdSelectors(element, candidates); } catch(e) { /* ignore */ }
+
+    // Early exit: if we found a unique, non-generated ID selector, skip remaining strategies
+    if (candidates.some(c => c.isUnique && c.type === 'css-id' && !c.penalty)) {
+      // Still score and return early
+      candidates.forEach(c => { c.score = this._scoreSelector(c, element); });
+      candidates.sort((a, b) => b.score - a.score);
+      const earlyResult = {
+        primary: candidates[0] || this._getFallbackSelector(element),
+        alternatives: candidates.slice(0, 5),
+        all: candidates,
+        element: {
+          tag: element.tagName.toLowerCase(),
+          text: this.getElementText(element),
+          role: element.getAttribute('role') || element.tagName.toLowerCase(),
+          path: this._getElementPath(element)
+        }
+      };
+      this.selectorCache.set(element, earlyResult);
+      return earlyResult;
+    }
 
     // Strategy 2: data-testid
-    this._addTestIdSelectors(element, candidates);
+    try { this._addTestIdSelectors(element, candidates); } catch(e) { /* ignore */ }
+
+    // Early exit: unique data-testid is almost as good as ID
+    if (candidates.some(c => c.isUnique && c.type === 'css-testid')) {
+      candidates.forEach(c => { c.score = this._scoreSelector(c, element); });
+      candidates.sort((a, b) => b.score - a.score);
+      const earlyResult = {
+        primary: candidates[0] || this._getFallbackSelector(element),
+        alternatives: candidates.slice(0, 5),
+        all: candidates,
+        element: {
+          tag: element.tagName.toLowerCase(),
+          text: this.getElementText(element),
+          role: element.getAttribute('role') || element.tagName.toLowerCase(),
+          path: this._getElementPath(element)
+        }
+      };
+      this.selectorCache.set(element, earlyResult);
+      return earlyResult;
+    }
 
     // Strategy 3: name attribute
-    this._addNameSelectors(element, candidates);
+    try { this._addNameSelectors(element, candidates); } catch(e) { /* ignore */ }
+
+    // Early exit: unique name attribute
+    if (candidates.some(c => c.isUnique && c.type === 'css-name')) {
+      candidates.forEach(c => { c.score = this._scoreSelector(c, element); });
+      candidates.sort((a, b) => b.score - a.score);
+      const earlyResult = {
+        primary: candidates[0] || this._getFallbackSelector(element),
+        alternatives: candidates.slice(0, 5),
+        all: candidates,
+        element: {
+          tag: element.tagName.toLowerCase(),
+          text: this.getElementText(element),
+          role: element.getAttribute('role') || element.tagName.toLowerCase(),
+          path: this._getElementPath(element)
+        }
+      };
+      this.selectorCache.set(element, earlyResult);
+      return earlyResult;
+    }
 
     // Strategy 4: aria-label
-    this._addAriaSelectors(element, candidates);
+    try { this._addAriaSelectors(element, candidates); } catch(e) { /* ignore */ }
 
     // Strategy 5: placeholder + type
-    this._addPlaceholderSelectors(element, candidates);
+    try { this._addPlaceholderSelectors(element, candidates); } catch(e) { /* ignore */ }
 
     // Strategy 5.5: Framework attributes (React/Vue/Angular)
-    this._addFrameworkSelectors(element, candidates);
+    try { this._addFrameworkSelectors(element, candidates); } catch(e) { /* ignore */ }
 
     // Strategy 6: class-based
-    this._addClassSelectors(element, candidates);
+    try { this._addClassSelectors(element, candidates); } catch(e) { /* ignore */ }
 
     // Strategy 7: text-based (for buttons, links)
-    this._addTextSelectors(element, candidates);
+    try { this._addTextSelectors(element, candidates); } catch(e) { /* ignore */ }
 
     // Strategy 8: relative CSS (parent context)
-    this._addRelativeCssSelectors(element, candidates);
+    try { this._addRelativeCssSelectors(element, candidates); } catch(e) { /* ignore */ }
 
     // Strategy 9: XPath absolute
-    this._addXPathAbsolute(element, candidates);
+    try { this._addXPathAbsolute(element, candidates); } catch(e) { /* ignore */ }
 
     // Strategy 10: XPath relative (smart parent)
-    this._addXPathRelative(element, candidates);
+    try { this._addXPathRelative(element, candidates); } catch(e) { /* ignore */ }
 
     // Strategy 11: nth-of-type fallback
-    this._addNthSelectors(element, candidates);
+    try { this._addNthSelectors(element, candidates); } catch(e) { /* ignore */ }
 
     // Score and sort candidates
     candidates.forEach(c => {
@@ -166,11 +236,12 @@ class SelectorEngine {
       }
 
       // XPath version
+      const xpathId = `//*[@id=${this._escapeXPathValue(element.id)}]`;
       candidates.push({
-        selector: `//*[@id="${element.id}"]`,
+        selector: xpathId,
         type: 'xpath-id',
         strategy: 'ID (XPath)',
-        isUnique: true,
+        isUnique: this._isUniqueXPath(xpathId, element), // verify — pages may have duplicate IDs (LOW-017)
         length: 8 + element.id.length,
         penalty: this._isGeneratedId(element.id) ? 30 : 0
       });
@@ -178,10 +249,7 @@ class SelectorEngine {
   }
 
   /**
-   * NEW: Detect if ID looks auto-generated
-   */
-  /**
-   * SEL-HIGH-001: Refined auto-generated ID detection
+   * Detect if ID looks auto-generated
    * Less aggressive - only matches clearly generated patterns.
    * Short IDs (< 4 chars) are never considered generated.
    * Human-readable IDs with hyphens/underscores are allowed.
@@ -212,25 +280,31 @@ class SelectorEngine {
   }
 
   _addTestIdSelectors(element, candidates) {
-    const testId = element.dataset.testid || element.getAttribute('data-test-id') ||
-      element.getAttribute('data-cy') || element.getAttribute('data-testid');
+    const attrs = [
+      ['data-testid', element.getAttribute('data-testid') || element.dataset.testid],
+      ['data-test-id', element.getAttribute('data-test-id')],
+      ['data-cy', element.getAttribute('data-cy')],
+    ];
 
-    if (testId) {
+    for (const [attrName, testId] of attrs) {
+      if (!testId) continue;
+      const cssSelector = `[${attrName}="${testId}"]`;
+      const xpathSelector = `//*[@${attrName}=${this._escapeXPathValue(testId)}]`;
       candidates.push({
-        selector: `[data-testid="${testId}"]`,
+        selector: cssSelector,
         type: 'css-testid',
-        strategy: 'data-testid',
-        isUnique: this._isUnique(`[data-testid="${testId}"]`, element),
-        length: 17 + testId.length
+        strategy: attrName,
+        isUnique: this._isUnique(cssSelector, element),
+        length: cssSelector.length
       });
-
       candidates.push({
-        selector: `//*[@data-testid="${testId}"]`,
+        selector: xpathSelector,
         type: 'xpath-testid',
-        strategy: 'data-testid (XPath)',
-        isUnique: true,
-        length: 20 + testId.length
+        strategy: `${attrName} (XPath)`,
+        isUnique: this._isUniqueXPath(xpathSelector, element),
+        length: xpathSelector.length
       });
+      break; // use the first matched attribute
     }
   }
 
@@ -247,7 +321,7 @@ class SelectorEngine {
       });
 
       candidates.push({
-        selector: `//${tag}[@name="${element.name}"]`,
+        selector: `//${tag}[@name=${this._escapeXPathValue(element.name)}]`,
         type: 'xpath-name',
         strategy: 'name (XPath)',
         isUnique: this._isUnique(selector, element),
@@ -308,24 +382,14 @@ class SelectorEngine {
   }
 
   /**
-   * 🔧 FIX: SEL-001 - Framework attribute support
+   * Framework attribute support
    */
   _addFrameworkSelectors(element, candidates) {
     // React detection
     const hasReactProps = Object.keys(element).some(k => k.startsWith('__react'));
     if (hasReactProps) {
-      // Check for React-specific attributes
-      ['data-reactid', 'data-react-checksum', 'data-reactroot'].forEach(attr => {
-        if (element.hasAttribute(attr)) {
-          candidates.push({
-            selector: `[${attr}="${element.getAttribute(attr)}"]`,
-            type: 'react-attr',
-            strategy: 'React',
-            isUnique: this._isUnique(`[${attr}="${element.getAttribute(attr)}"]`, element),
-            length: attr.length + element.getAttribute(attr).length + 4
-          });
-        }
-      });
+      // React 15 attributes (data-reactid, data-reactroot) are obsolete since React 16 (2017).
+      // Modern React uses __reactFiber — detected above; no attribute candidates needed (LOW-012).
     }
 
     // Vue detection
@@ -344,15 +408,16 @@ class SelectorEngine {
         });
       }
 
-      // Other v- attributes
+      // Other v- attributes (skip `:` shorthand — colon is invalid in CSS selectors)
       Array.from(element.attributes).forEach(attr => {
-        if (attr.name.startsWith('v-') || attr.name.startsWith(':')) {
+        if (attr.name.startsWith('v-') && !attr.name.startsWith(':')) {
+          const sel = `[${attr.name}="${attr.value}"]`;
           candidates.push({
-            selector: `[${attr.name}="${attr.value}"]`,
+            selector: sel,
             type: 'vue-attr',
             strategy: 'Vue',
-            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
-            length: attr.name.length + attr.value.length + 4
+            isUnique: this._isUnique(sel, element),
+            length: sel.length
           });
         }
       });
@@ -364,67 +429,75 @@ class SelectorEngine {
       element.hasAttribute('ng-click') ||
       element.hasAttribute('(click)');
     if (hasAngular) {
-      // ng-model / [ngModel] is most stable
+      // ng-model / [ngModel] is most stable — escape brackets for valid CSS
       const ngModel = element.getAttribute('ng-model') || element.getAttribute('[ngModel]');
       if (ngModel) {
+        const sel = `[ng-model="${ngModel}"]`;
         candidates.push({
-          selector: `[ng-model="${ngModel}"], [[ngModel]="${ngModel}"]`,
+          selector: sel,
           type: 'angular-model',
           strategy: 'Angular',
-          isUnique: true, // ng-model is usually unique
-          length: ngModel.length + 14
+          isUnique: this._isUnique(sel, element),
+          length: sel.length
         });
       }
 
-      // Other ng- attributes
+      // Other ng- attributes (escape special chars using CSS.escape)
+      const cssEscape = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape.bind(CSS) : (s) => s;
       Array.from(element.attributes).forEach(attr => {
-        if (attr.name.startsWith('ng-') || attr.name.startsWith('[ng') ||
-          attr.name.startsWith('(') || attr.name.startsWith('*ng')) {
+        // Skip bracket-syntax (e.g. [ngModel]) and event-binding (e.g. (click)) —
+        // these contain [ ] ( ) which produce invalid CSS selectors.
+        if (attr.name.startsWith('ng-') || attr.name.startsWith('*ng')) {
+          const sel = `[${cssEscape(attr.name)}="${attr.value}"]`;
           candidates.push({
-            selector: `[${attr.name}="${attr.value}"]`,
+            selector: sel,
             type: 'angular-attr',
             strategy: 'Angular',
-            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
-            length: attr.name.length + attr.value.length + 4
+            isUnique: this._isUnique(sel, element),
+            length: sel.length
           });
         }
       });
     }
 
-    // SEL-MED-002: Svelte detection
+    // Svelte detection — escape colon in attribute names for valid CSS
     const hasSvelte = element.__svelte_meta ||
       element.hasAttribute('bind:value') ||
       element.hasAttribute('on:click') ||
       element.hasAttribute('use:');
     if (hasSvelte) {
+      const cssEscSvelte = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape.bind(CSS) : (s) => s;
       Array.from(element.attributes).forEach(attr => {
         if (attr.name.startsWith('bind:') || attr.name.startsWith('on:') ||
             attr.name.startsWith('use:') || attr.name.startsWith('class:')) {
+          const sel = `[${cssEscSvelte(attr.name)}="${attr.value}"]`;
           candidates.push({
-            selector: `[${attr.name}="${attr.value}"]`,
+            selector: sel,
             type: 'svelte-attr',
             strategy: 'Svelte',
-            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
-            length: attr.name.length + attr.value.length + 4
+            isUnique: this._isUnique(sel, element),
+            length: sel.length
           });
         }
       });
     }
 
-    // SEL-MED-002: Solid.js detection
+    // Solid.js detection — escape colon in attribute names for valid CSS
     const hasSolid = element._$owner || // Solid's internal marker
       element.hasAttribute('use:') ||
       Array.from(element.attributes).some(attr => attr.name.startsWith('prop:'));
     if (hasSolid) {
+      const cssEscSolid = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape.bind(CSS) : (s) => s;
       Array.from(element.attributes).forEach(attr => {
         if (attr.name.startsWith('use:') || attr.name.startsWith('prop:') ||
             attr.name.startsWith('on:') || attr.name.startsWith('attr:')) {
+          const sel = `[${cssEscSolid(attr.name)}="${attr.value}"]`;
           candidates.push({
-            selector: `[${attr.name}="${attr.value}"]`,
+            selector: sel,
             type: 'solid-attr',
             strategy: 'Solid',
-            isUnique: this._isUnique(`[${attr.name}="${attr.value}"]`, element),
-            length: attr.name.length + attr.value.length + 4
+            isUnique: this._isUnique(sel, element),
+            length: sel.length
           });
         }
       });
@@ -432,7 +505,7 @@ class SelectorEngine {
   }
 
   _addClassSelectors(element, candidates) {
-    // SEL-MED-003: Handle both regular elements and SVG elements
+    // Handle both regular elements and SVG elements
     let className = '';
     if (typeof element.className === 'string') {
       className = element.className;
@@ -443,8 +516,10 @@ class SelectorEngine {
 
     if (!className) return;
 
+    // Case-insensitive, unanchored filter to catch state classes in compound names (LOW-018)
+    const STATE_CLASS_RE = /(ng-|is-|has-|active|selected|focus|hover|disabled)/i;
     const classes = className.trim().split(/\s+/)
-      .filter(c => c && !c.match(/^(ng-|is-|has-|active|selected|focus|hover|disabled)/));
+      .filter(c => c && !STATE_CLASS_RE.test(c));
 
     if (classes.length === 0) return;
 
@@ -482,9 +557,10 @@ class SelectorEngine {
 
     if (!text || text.length > 50) return;
 
-    if (['button', 'a', 'span', 'div'].includes(tag)) {
+    // Broadened tag list: rely on 50-char limit for quality control (LOW-019)
+    if (['button', 'a', 'span', 'div', 'li', 'td', 'th', 'label', 'p', 'h1', 'h2', 'h3'].includes(tag)) {
       // CSS with :contains-like approach (not standard, but documented)
-      const xpathText = `//${tag}[contains(text(), "${text.substring(0, 30)}")]`;
+      const xpathText = `//${tag}[contains(text(), ${this._escapeXPathValue(text.substring(0, 30))})]`;
       candidates.push({
         selector: xpathText,
         type: 'xpath-text',
@@ -494,7 +570,7 @@ class SelectorEngine {
       });
 
       // Exact text match
-      const xpathExact = `//${tag}[text()="${text}"]`;
+      const xpathExact = `//${tag}[text()=${this._escapeXPathValue(text)}]`;
       candidates.push({
         selector: xpathExact,
         type: 'xpath-text-exact',
@@ -560,17 +636,20 @@ class SelectorEngine {
 
   _addXPathAbsolute(element, candidates) {
     const xpath = this._generateAbsoluteXPath(element);
+    // CAUTION (LOW-020): positional indexes ([2]) break when siblings are added/removed.
+    // Presented as last-resort fallback only — use attribute-based selectors when available.
     candidates.push({
       selector: xpath,
       type: 'xpath-absolute',
       strategy: 'absolute-xpath',
       isUnique: true,
+      isStable: false, // positional XPath is fragile
       length: xpath.length
     });
   }
 
   /**
-   * 🔧 FIX: SEL-003 - Semantic XPath with attributes over positions
+   * Semantic XPath with attributes over positions
    */
   _addXPathRelative(element, candidates) {
     const parts = [];
@@ -593,7 +672,11 @@ class SelectorEngine {
       } else if (current.getAttribute('data-testid')) {
         part = `${tag}[@data-testid='${current.getAttribute('data-testid')}']`;
       } else if (current.className && !this._isGeneratedClass(current.className)) {
-        const firstClass = current.className.trim().split(' ')[0];
+        // Normalize SVGAnimatedString to plain string before calling .trim()
+        const clsStr = typeof current.className === 'string'
+          ? current.className
+          : (current.className.baseVal || current.getAttribute('class') || '');
+        const firstClass = clsStr.trim().split(' ')[0];
         part = `${tag}[contains(@class, '${firstClass}')]`;
       } else if (current.getAttribute('type')) {
         part = `${tag}[@type='${current.getAttribute('type')}']`;
@@ -650,14 +733,27 @@ class SelectorEngine {
     }
   }
 
-  // _isGeneratedId: single definition at line 183 (SEL-HIGH-001 fix - removed duplicate)
+  /**
+   * Safely wrap a value for use in an XPath string literal (MED-011).
+   * Handles values containing single quotes, double quotes, or both.
+   */
+  _escapeXPathValue(str) {
+    if (!str.includes("'")) return `'${str}'`;
+    if (!str.includes('"')) return `"${str}"`;
+    return "concat('" + str.split("'").join("',\"'\",'") + "')";
+  }
 
   /**
-   * Check if class looks generated/dynamic
+   * Check if class looks generated/dynamic (MED-012).
+   * Checks each class individually; catches CSS Modules, emotion, styled-components,
+   * MUI, Ant Design, and hash-suffixed class names.
    */
   _isGeneratedClass(className) {
-    // Check for CSS modules, emotion, styled-components patterns
-    return /^(_|css-|sc-|makeStyles|jss\d)/.test(className);
+    const clsStr = typeof className === 'string' ? className : (className.baseVal || '');
+    return clsStr.trim().split(/\s+/).some(cls =>
+      /^(_|css-|sc-|makeStyles|jss\d|emotion-|chakra-|ant-|Mui[A-Z])/.test(cls) ||
+      /^[a-zA-Z][a-zA-Z0-9_-]*_[a-zA-Z0-9]{5,}$/.test(cls) // CSS Modules: Name_class__hash
+    );
   }
 
   _addNthSelectors(element, candidates) {
@@ -809,7 +905,7 @@ class SelectorEngine {
     // Uniqueness is most important
     if (candidate.isUnique) score += 100;
 
-    // SEL-MED-001: Comprehensive strategy priority scores
+    // Comprehensive strategy priority scores
     const strategyScores = {
       'ID': 95,
       'data-testid': 90,
@@ -874,8 +970,8 @@ class SelectorEngine {
       () => element.getAttribute('aria-label'),
       () => element.getAttribute('aria-labelledby') && this._getTextFromId(element.getAttribute('aria-labelledby')),
       () => element.placeholder,
-      () => element.name && !this._isGeneratedId(element.name) ? element.name : null,  // UPDATED: Skip generated names
-      () => element.id && !this._isGeneratedId(element.id) ? element.id : null,        // UPDATED: Skip generated IDs
+      () => element.name && !this._isGeneratedId(element.name) ? element.name : null,
+      () => element.id && !this._isGeneratedId(element.id) ? element.id : null,
       () => this._getLabelText(element),
       () => element.title,
       () => this.getElementText(element),
@@ -915,11 +1011,27 @@ class SelectorEngine {
   getElementText(element) {
     if (!element) return '';
 
-    if (element.tagName.toLowerCase() === 'input') {
-      return element.value || element.placeholder || '';
+    const tag = element.tagName.toLowerCase();
+
+    if (tag === 'input') {
+      const type = (element.type || '').toLowerCase();
+      // Button-like inputs: value is an author-provided label, not user data.
+      if (type === 'button' || type === 'submit' || type === 'reset') {
+        return element.value || '';
+      }
+      // PRIVACY (P0-4): never return element.value for data-entry inputs —
+      // this string flows into step.targetLabel and step.selector.text
+      // UNREDACTED (passwords, SSNs, emails). Use author-provided text only.
+      return element.placeholder || element.getAttribute('aria-label') || '';
     }
 
-    if (element.tagName.toLowerCase() === 'button') {
+    if (tag === 'textarea') {
+      // textContent of a textarea is its (possibly user-edited) value — same
+      // privacy rule as inputs: author-provided text only.
+      return element.placeholder || element.getAttribute('aria-label') || '';
+    }
+
+    if (tag === 'button') {
       return (element.innerText || element.textContent || '').trim();
     }
 
@@ -979,14 +1091,14 @@ class SelectorEngine {
   }
 
   /**
-   * 🔧 FIX: SEL-002 - Cache management
+   * Cache management
    */
   clearCache() {
     const stats = this.getCacheStats();
     this.selectorCache = new WeakMap();
     this.cacheHits = 0;
     this.cacheMisses = 0;
-    console.log('Selector cache cleared:', stats);
+    window.Logger?.info('Selector cache cleared:', stats);
   }
 
   getCacheStats() {
@@ -1003,11 +1115,11 @@ class SelectorEngine {
 
 // Make globally available for content script
 if (typeof window !== 'undefined') {
-  if (!window.SelectorEngine) {
-    window.SelectorEngine = SelectorEngine;
-  }
+  window.SelectorEngine = SelectorEngine;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { SelectorEngine };
 }
+
+} // end of FUNC-001 guard: if (!window.SelectorEngine)
