@@ -1,3 +1,9 @@
+CLAUDE.md               merge=ours
+playwright-report/**        merge=ours
+release/**        merge=ours
+ApplicationDocs/**        merge=ours
+test-results/**        merge=ours
+
 # SEC-004: vendored third-party bundles under libs/ are integrity-checked by
 # SHA-384 SRI hash (see scripts/download-libs.js) against their pristine
 # upstream bytes. Git's core.autocrlf was silently rewriting LF to CRLF on

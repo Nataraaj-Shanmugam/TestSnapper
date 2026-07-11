@@ -361,8 +361,6 @@ During export, the filename includes:
 ## 🔗 Additional Resources
 
 - **Full Documentation:** [README.md](README.md)
-- **Bug Reports:** [BUG_ENHANCEMENT_REPORT.md](BUG_ENHANCEMENT_REPORT.md)
-- **Developer Guide:** [CLAUDE.md](CLAUDE.md)
 - **Architecture:** README.md → Architecture Section
 - **Contributing:** GitHub Issues
 

@@ -90,3 +90,6 @@ playwright-report/*
 Observations/
 _smoke_out/
 _smoke_settings.cjs
+release/
+/CLAUDE.md
+ApplicationDocs/
