@@ -226,6 +226,14 @@
             <option value="jpeg-high">JPEG — high (smaller files)</option>
           </select>
         </div>
+
+        <!-- SEC-002: typed values are redacted before storage, but a
+             screenshot is an exact raster capture of whatever is on screen —
+             it does not go through the same redaction. -->
+        <p style="font-size: 11px; color: var(--text-muted); margin: 4px 0 0;">
+          Screenshots capture the page exactly as rendered. Unlike typed values, on-screen text is not
+          redacted, so avoid capturing screens showing passwords, tokens, or other sensitive data.
+        </p>
       </div>
 
       <div class="export-section">

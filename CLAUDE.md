@@ -36,8 +36,7 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
   - `src/core/fs-storage.js` — Hybrid storage abstraction (chrome.storage + filesystem) with Proxy pattern
   - `src/core/logger.js` — Configurable logging with levels (debug, info, warn, error)
   - `src/core/compression.js` — GZIP compression via CompressionStream
-  - `src/core/utils.js` — Shared pure utilities (UUID, escapeHtml, blobToDataURL)
-  - `src/core/dom-utils.js` — DOM-dependent utilities (downloadFile, showMessage)
+  - `src/core/utils.js` — Shared pure utilities (UUID, escapeHtml, blobToDataURL) plus DOM-dependent helpers (downloadFile, showMessage) — dom-utils.js was merged in here (FUNC-021)
   - `src/core/flush-utils.js` — Shared flush coordination between storage and filesystem
 
 ### Build System
@@ -95,11 +94,10 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
 - Versions are single-sourced from `package.json` and injected into `manifest.json` at build time
 
 ## Architecture Review & Refactoring
-- `arch-review.md` — Comprehensive architecture audit (12 high/medium issues identified and resolved)
-- `TODO.md` — Completion summary of all architectural fixes
-- **All 12 high/medium severity issues resolved:**
+An early architecture audit (arch-review.md/TODO.md, since removed once the work landed) resolved 12
+high/medium severity issues:
   - HIGH-001: Image compression logic unified (ImageProcessor)
-  - HIGH-002: Utility functions deduplicated (Utils, dom-utils)
+  - HIGH-002: Utility functions deduplicated (Utils, dom-utils — dom-utils was later merged into utils.js, FUNC-021)
   - HIGH-003: Storage layer inconsistency resolved (flush-utils)
   - HIGH-004: Content script global coupling protected (defensive guards)
   - MED-001: Orphan export.js removed
@@ -110,6 +108,9 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
   - MED-006: Utils fan-in reduced (split into utils + dom-utils)
   - MED-007: Theme duplication resolved (theme.js)
   - MED-008: Console logging abstraction added (Logger)
+
+A later full-repo review (Observations/, 65 findings) has also been worked through; see that folder for
+current fix status per item.
 
 ## Documentation
 - **Inline JSDoc Coverage:** ~95% (150+ methods documented across 7 core files)

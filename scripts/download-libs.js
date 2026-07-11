@@ -5,10 +5,14 @@
  *
  * SRI hash policy (SEC-004):
  *   Each entry below documents the known SHA-384 SRI hash for that library
- *   version. After downloading we compute and log the actual hash so you
- *   can compare against the known value. A mismatch logs a warning but
- *   does NOT fail the build (SRI enforcement is a browser-side mechanism;
- *   at download time we can only warn).
+ *   version. After downloading (or finding an existing file in libs/) we
+ *   compute the actual hash and compare it against the known value. A
+ *   mismatch aborts the script (non-zero exit) instead of just warning —
+ *   a changed hash means either the upstream CDN content shifted
+ *   unexpectedly or the file was tampered with, and shipping it either way
+ *   is exactly the supply-chain risk this check exists to catch. A missing
+ *   `knownSha384` (null) is a deliberate TOFU exception for a brand-new
+ *   entry with no pin recorded yet — that case is only logged, not enforced.
  *
  *   To compute the SRI hash yourself:
  *     openssl dgst -sha384 -binary <file> | openssl base64 -A
@@ -105,26 +109,33 @@ function computeSha384(buffer) {
 }
 
 /**
- * Verify downloaded bytes against the known SRI hash.
- * Logs a warning on mismatch — does NOT throw (enforcement is build-time advisory).
+ * Verify bytes against the known SRI hash.
+ * Throws on a real mismatch (SEC-004) — a missing knownHash is a deliberate
+ * TOFU exception and only gets logged, not enforced.
  */
 function verifySri(name, buffer, knownHash) {
   const actual = computeSha384(buffer);
   const sriValue = `sha384-${actual}`;
   console.log(`  SRI hash: ${sriValue}`);
 
-  if (knownHash) {
-    if (actual === knownHash) {
-      console.log(`  Integrity check PASSED`);
-    } else {
-      console.warn(`  WARNING: SRI mismatch for ${name}!`);
-      console.warn(`    Expected: sha384-${knownHash}`);
-      console.warn(`    Actual:   ${sriValue}`);
-      console.warn(`  The file may have changed upstream. Verify before using in production.`);
-    }
-  } else {
+  if (!knownHash) {
     console.log(`  (No known SRI hash on record — record the above for future verification)`);
+    return;
   }
+
+  if (actual === knownHash) {
+    console.log(`  Integrity check PASSED`);
+    return;
+  }
+
+  throw new Error(
+    `SRI mismatch for ${name}!\n` +
+    `    Expected: sha384-${knownHash}\n` +
+    `    Actual:   ${sriValue}\n` +
+    `  The file differs from its pinned hash — it may have changed upstream ` +
+    `or been tampered with. If this change is expected, update knownSha384 ` +
+    `in scripts/download-libs.js after verifying the new content yourself.`
+  );
 }
 
 // Download all libraries
@@ -137,27 +148,34 @@ async function downloadAllLibs() {
     // Skip if already exists
     if (fs.existsSync(dest)) {
       const existingBytes = fs.readFileSync(dest);
-      const existingHash = computeSha384(existingBytes);
       console.log(`${lib.name} already exists (${(existingBytes.length / 1024 / 1024).toFixed(2)} MB)`);
-      console.log(`  SRI hash: sha384-${existingHash}`);
-      if (lib.knownSha384 && existingHash !== lib.knownSha384) {
-        console.warn(`  WARNING: existing file hash does not match known SRI for ${lib.name}`);
-        console.warn(`    Expected: sha384-${lib.knownSha384}`);
-        console.warn(`    Actual:   sha384-${existingHash}`);
-      }
+      // SEC-004: a mismatch here throws (fatal) — see verifySri doc comment.
+      verifySri(lib.name, existingBytes, lib.knownSha384);
       continue;
     }
 
     console.log(`Downloading ${lib.name} from ${lib.url} ...`);
+    let bytes;
     try {
-      const bytes = await downloadFile(lib.url, dest);
-      const stats = fs.statSync(dest);
-      const sizeMB = (stats.size / 1024 / 1024).toFixed(2);
-      console.log(`Downloaded ${lib.name} (${sizeMB} MB)`);
-      verifySri(lib.name, bytes, lib.knownSha384);
+      bytes = await downloadFile(lib.url, dest);
     } catch (err) {
+      // Network/HTTP failures are non-fatal — the dev can retry or grab it manually.
       console.error(`Failed to download ${lib.name}:`, err.message);
       console.log(`   You can manually download from: ${lib.url}`);
+      console.log('');
+      continue;
+    }
+
+    const stats = fs.statSync(dest);
+    const sizeMB = (stats.size / 1024 / 1024).toFixed(2);
+    console.log(`Downloaded ${lib.name} (${sizeMB} MB)`);
+
+    try {
+      verifySri(lib.name, bytes, lib.knownSha384);
+    } catch (err) {
+      // SEC-004: integrity failure IS fatal — discard the untrusted file and abort.
+      try { fs.unlinkSync(dest); } catch { /* ignore */ }
+      throw err;
     }
     console.log('');
   }

@@ -365,8 +365,14 @@ var FieldNameResolver = (function () {
       false
     );
 
+    // PERF-015: getBoundingClientRect() forces a synchronous layout; calling
+    // it per text node on a large subtree (no cap previously) is expensive
+    // on every event this strategy runs for. Capping the number of *measured*
+    // candidates bounds the cost — nearby label text is almost always close
+    // in document order too, so this rarely changes the winning candidate.
+    var MAX_CANDIDATES = 40;
     var node;
-    while (node = walker.nextNode()) {
+    while ((node = walker.nextNode()) && candidates.length < MAX_CANDIDATES) {
       // Skip text nodes that belong to the element itself (MED-032)
       if (element.contains(node.parentElement)) continue;
       var text = node.textContent.trim();

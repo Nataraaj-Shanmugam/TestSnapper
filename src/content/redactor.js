@@ -114,11 +114,15 @@ class Redactor {
    * .replace() is a no-op when the pattern doesn't match, so no .test()
    * guard is needed.
    */
-  maskValue(value, element) {
+  // PERF-017: callers that also need to know whether the field itself is
+  // "ignored" (fully sensitive) can pass that as isIgnored so it's computed
+  // once per event instead of once here and again by the caller. Omit it to
+  // have this method compute it itself.
+  maskValue(value, element, isIgnored) {
     if (!value) return '';
 
     // Fully redact sensitive fields
-    if (this.shouldIgnoreField(element)) {
+    if (isIgnored === undefined ? this.shouldIgnoreField(element) : isIgnored) {
       return '\u2022'.repeat(Math.min(value.length, 8)); // •••••••• (up to 8)
     }
 

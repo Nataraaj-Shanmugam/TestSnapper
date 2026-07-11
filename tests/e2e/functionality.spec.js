@@ -552,8 +552,11 @@ test('review page: step count displays correctly in sidebar', async () => {
   const stepCountEl = reviewPage.locator('#sessionStepCount');
   await expect(stepCountEl).toBeVisible({ timeout: 3_000 });
 
+  // The "Steps:" label lives in a separate sibling element (.meta-label);
+  // this element holds only the count itself (fixed to stop it rendering as
+  // the duplicated "Steps: Steps: 3").
   const stepCountText = await stepCountEl.textContent().catch(() => '');
-  expect(stepCountText).toMatch(/steps?/i);
+  expect(stepCountText.trim()).toMatch(/^\d+$/);
   console.log('Step count text:', stepCountText);
 
   await reviewPage.close().catch(() => {});

@@ -650,12 +650,15 @@ export class FSStorageManager {
 
   /**
    * Delete multiple steps by ID.
-   * PERF-007: groups by session to minimize file rewrites.
+   * PERF-007: groups by session to minimize file rewrites. If the caller
+   * already knows the session (the review page always does), pass it to
+   * skip reading every other session's file looking for a match.
    * @async
    * @param {Array<string>} stepIds - Array of step IDs to delete
+   * @param {string} [sessionId] - Optional session identifier for direct lookup
    * @returns {Promise<number>} Total number of steps deleted
    */
-  async batchDeleteSteps(stepIds) {
+  async batchDeleteSteps(stepIds, sessionId) {
     if (this._isServiceWorker) {
       return await this._buffer.batchDeleteSteps(stepIds);
     }
@@ -665,36 +668,57 @@ export class FSStorageManager {
 
     const fsReady = await this.isFilesystemReady();
     if (fsReady) {
-      const allSessions = await this._fileSync.readSessionIndex();
-      for (const sessionMeta of allSessions) {
-        const data = await this._fileSync.readSession(sessionMeta.sessionId);
-        if (!data) continue;
-        const steps = data.steps || [];
-        const toDelete = steps.filter(s => stepIdSet.has(s.id));
-        if (toDelete.length === 0) continue;
+      // PERF-007: try the hinted session directly first — no full scan.
+      if (sessionId) {
+        totalDeleted += await this._batchDeleteStepsInSession(sessionId, stepIdSet);
+      }
 
-        // Delete screenshot files for removed steps (PERF-007)
-        const handle = await this._fileSync.getHandle();
-        if (handle) {
-          const sessionDir = await this._fileSync._findSessionFolder(handle, sessionMeta.sessionId);
-          if (sessionDir) {
-            for (const step of toDelete) {
-              if (step.screenshotFile) {
-                await this._fileSync._deleteScreenshot(sessionDir, step.screenshotFile);
-              }
-            }
-          }
+      // Fallback: only scan remaining (not-yet-found) ids, and skip the
+      // session we already checked above.
+      if (stepIdSet.size > 0) {
+        const allSessions = await this._fileSync.readSessionIndex();
+        for (const sessionMeta of allSessions) {
+          if (sessionMeta.sessionId === sessionId) continue;
+          if (stepIdSet.size === 0) break;
+          totalDeleted += await this._batchDeleteStepsInSession(sessionMeta.sessionId, stepIdSet);
         }
-
-        const filtered = steps.filter(s => !stepIdSet.has(s.id));
-        const session = { ...data.session, stepCount: filtered.length };
-        const assets = this._extractAssets(sessionMeta.sessionId, filtered);
-        await this._fileSync.writeSession(session, filtered, assets);
-        totalDeleted += toDelete.length;
       }
     }
 
     return totalDeleted;
+  }
+
+  /**
+   * Delete every step in `stepIdSet` found within one session's file,
+   * removing matched ids from the set as they're found. @private
+   */
+  async _batchDeleteStepsInSession(sessionId, stepIdSet) {
+    const data = await this._fileSync.readSession(sessionId);
+    if (!data) return 0;
+    const steps = data.steps || [];
+    const toDelete = steps.filter(s => stepIdSet.has(s.id));
+    if (toDelete.length === 0) return 0;
+
+    // Delete screenshot files for removed steps (PERF-007)
+    const handle = await this._fileSync.getHandle();
+    if (handle) {
+      const sessionDir = await this._fileSync._findSessionFolder(handle, sessionId);
+      if (sessionDir) {
+        for (const step of toDelete) {
+          if (step.screenshotFile) {
+            await this._fileSync._deleteScreenshot(sessionDir, step.screenshotFile);
+          }
+        }
+      }
+    }
+
+    const filtered = steps.filter(s => !stepIdSet.has(s.id));
+    const session = { ...data.session, stepCount: filtered.length };
+    const assets = this._extractAssets(sessionId, filtered);
+    await this._fileSync.writeSession(session, filtered, assets);
+
+    for (const step of toDelete) stepIdSet.delete(step.id);
+    return toDelete.length;
   }
 
   // ════════════════════════════════════════════════════════════════

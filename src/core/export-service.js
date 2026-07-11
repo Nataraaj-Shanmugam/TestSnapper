@@ -53,6 +53,16 @@ export class ExportService {
   }
 
   /**
+   * FUNC-009: release a cancellation flag once an export attempt has settled
+   * (succeeded, failed, or been cancelled). Without this, a cancelExport()
+   * that lands after the last internal _isCancelled() checkpoint would leak
+   * into — and silently kill — the caller's *next* export of this session.
+   */
+  resetCancellation(sessionId) {
+    this._clearCancellation(sessionId);
+  }
+
+  /**
    * Check if export was cancelled
    */
   _isCancelled(sessionId) {
@@ -86,9 +96,6 @@ export class ExportService {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
 
-    // Resolve per-session so concurrent exports don't share state (MED-020).
-    this._imgOptsMap.set(sessionId, await this._resolveExportImageOpts());
-
     Logger.info('Starting export:', format, 'for session:', sessionId);
 
     // Check pre-cancellation (must come before _clearCancellation so
@@ -105,6 +112,12 @@ export class ExportService {
 
     let steps = await this.storage.getSteps(sessionId);
     steps.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+
+    // PERF-003: resolve per-session so concurrent exports don't share state
+    // (MED-020) — done after steps load so a large session can cap its own
+    // resolution/format regardless of the user's quality setting.
+    const screenshotCount = steps.filter(s => s.hasScreenshot).length;
+    this._imgOptsMap.set(sessionId, await this._resolveExportImageOpts(screenshotCount));
 
     notify({
       percent: 20,
@@ -156,10 +169,18 @@ export class ExportService {
    *   'auto'     → content-aware PNG/JPEG, quality 0.92 (sharp text, balanced)
    *   'high'     → content-aware, quality 0.95 (largest, best fidelity)
    *   'standard' → JPEG ~0.85 (smallest files)
+   *
+   * PERF-003: for sessions with more than LARGE_SESSION_THRESHOLD
+   * screenshots, this overrides the user's preference to a smaller
+   * resolution/format regardless of setting — every screenshot still has to
+   * be held in memory at some point during export, so a 100+ screenshot
+   * session at "high" quality risks an OOM crash the setting itself can't
+   * protect against.
    * @private
-   * @returns {Promise<{format: string, quality: number}>}
+   * @param {number} [screenshotCount=0]
+   * @returns {Promise<{format: string, quality: number, maxWidth?: number, maxHeight?: number}>}
    */
-  async _resolveExportImageOpts() {
+  async _resolveExportImageOpts(screenshotCount = 0) {
     let pref = 'auto';
     try {
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
@@ -173,12 +194,24 @@ export class ExportService {
     const ALLOWED = ['auto', 'high', 'standard'];
     if (!ALLOWED.includes(pref)) pref = 'auto';
 
+    let opts;
     switch (pref) {
-      case 'high': return { format: 'auto', quality: 0.95 };
-      case 'standard': return { format: 'jpeg-standard', quality: 0.85 };
+      case 'high': opts = { format: 'auto', quality: 0.95 }; break;
+      case 'standard': opts = { format: 'jpeg-standard', quality: 0.85 }; break;
       case 'auto':
-      default: return { format: 'auto', quality: 0.92 };
+      default: opts = { format: 'auto', quality: 0.92 };
     }
+
+    const LARGE_SESSION_THRESHOLD = 25;
+    if (screenshotCount > LARGE_SESSION_THRESHOLD) {
+      Logger.warn(
+        `Export has ${screenshotCount} screenshots (>${LARGE_SESSION_THRESHOLD}); ` +
+        `capping resolution/format to reduce peak memory regardless of the ${pref} quality setting.`
+      );
+      return { format: 'jpeg-standard', quality: 0.85, maxWidth: 1280, maxHeight: 720 };
+    }
+
+    return opts;
   }
 
   _formatSessionData(session, stepCount) {

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -15,80 +15,14 @@
 
 <body>
     <div class="app-wrapper">
-        <!-- Mobile sidebar toggle -->
-        <button id="sidebarToggle" class="sidebar-toggle" title="Toggle Sidebar" aria-label="Toggle sidebar">
-            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
-        <!-- Sidebar overlay for mobile -->
-        <div id="sidebarOverlay" class="sidebar-overlay"></div>
-        <!-- Sidebar for Settings and Metadata -->
-        <aside class="sidebar" id="sidebar">
-            <div class="header-logo">
-                <h1 style="font-size: 20px; color: var(--accent);">
-                    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> TestSnapper
-                </h1>
-            </div>
-
-            <div class="session-settings-card">
-                <div class="field-group">
-                    <label>Session Name</label>
-                    <input type="text" id="sessionName" class="input-styled" placeholder="Session name..."
-                        autocomplete="off">
-                </div>
-
-                <div class="field-group">
-                    <label>Author</label>
-                    <input type="text" id="sessionAuthor" class="input-styled" placeholder="Your name..."
-                        autocomplete="off">
-                </div>
-
-                <div class="field-group">
-                    <label>Start Time</label>
-                    <input type="datetime-local" id="sessionStartTime" class="input-styled">
-                </div>
-
-                <div class="field-group">
-                    <label>End Time</label>
-                    <input type="datetime-local" id="sessionEndTime" class="input-styled">
-                </div>
-
-                <div class="field-group">
-                    <label>Export Format</label>
-                    <select id="exportFormat" class="select-styled">
-                        <option value="docx">Microsoft Word (.docx)</option>
-                        <option value="json">JSON Format (Data)</option>
-                        <option value="csv">Excel / CSV (.csv)</option>
-                        <option value="pdf">PDF Document (.pdf)</option>
-                    </select>
-                </div>
-
-                <div class="meta-info"
-                    style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); margin-bottom: 24px;">
-                    <div class="meta-item">
-                        <span class="meta-label">Steps:</span>
-                        <span id="sessionStepCount" style="font-size: 13px;">-</span>
-                    </div>
-                </div>
-
-                <div class="sidebar-actions" style="display: flex; flex-direction: column; gap: 12px;">
-                    <button id="saveExportBtn" class="btn btn-primary" style="width: 100%;">
-                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Documentation
-                    </button>
-
-                    <button id="cancelBtn" class="btn btn-secondary" style="width: 100%;">
-                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Close
-                    </button>
-                </div>
-            </div>
-
-
-        </aside>
-
         <!-- Main Review Area -->
         <main class="main-content">
             <header class="page-header">
                 <div>
-                    <h1>Review & Refine</h1>
+                    <h1 class="page-title">
+                        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+                        Review & Refine
+                    </h1>
                     <p style="color: var(--text-muted); font-size: 14px;">Review your captured interactions and export
                         your documentation.</p>
                 </div>
@@ -108,6 +42,67 @@
                 </div>
             </header>
 
+            <!-- Session Settings / Export bar — sits between the header and the search toolbar -->
+            <aside class="sidebar" id="sidebar">
+            <div class="session-settings-card">
+                <div class="settings-fields">
+                    <div class="settings-row">
+                        <div class="field-group">
+                            <label>Session Name</label>
+                            <input type="text" id="sessionName" class="input-styled" placeholder="Session name..."
+                                autocomplete="off">
+                        </div>
+
+                        <div class="field-group">
+                            <label>Author</label>
+                            <input type="text" id="sessionAuthor" class="input-styled" placeholder="Your name..."
+                                autocomplete="off">
+                        </div>
+                    </div>
+
+                    <div class="settings-row">
+                        <div class="field-group">
+                            <label>Start Time</label>
+                            <input type="datetime-local" id="sessionStartTime" class="input-styled">
+                        </div>
+
+                        <div class="field-group">
+                            <label>End Time</label>
+                            <input type="datetime-local" id="sessionEndTime" class="input-styled">
+                        </div>
+
+                        <div class="field-group">
+                            <label>Export Format</label>
+                            <select id="exportFormat" class="select-styled">
+                                <option value="docx">Microsoft Word (.docx)</option>
+                                <option value="pdf">PDF Document (.pdf)</option>
+                                <option value="csv">Excel / CSV (.csv)</option>
+                                <option value="json">JSON Format (Data)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-footer">
+                    <div class="meta-info">
+                        <div class="meta-item">
+                            <span class="meta-label">Steps:</span>
+                            <span id="sessionStepCount">-</span>
+                        </div>
+                    </div>
+
+                    <div class="sidebar-actions">
+                        <button id="saveExportBtn" class="btn btn-primary">
+                            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Documentation
+                        </button>
+
+                        <button id="cancelBtn" class="btn btn-secondary">
+                            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+            </aside>
             <!-- Notification Area -->
             <div id="message" class="message hidden" style="margin-bottom: 20px;"></div>
 

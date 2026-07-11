@@ -190,41 +190,8 @@ body::before {
 /* ==================== SIDEBAR ==================== */
 
 .sidebar {
-    width: 320px;
-    background-color: var(--bg-secondary);
-    border-right: 3px solid var(--border);
-    padding: var(--space-4);
-    height: 100vh;
-    position: sticky;
-    top: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    z-index: 10;
-    position: relative;
-}
-
-.sidebar::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    right: -3px;
-    width: 3px;
-    height: 100%;
-    background: linear-gradient(180deg, var(--accent) 0%, transparent 20%, transparent 80%, var(--accent) 100%);
-    opacity: 0.3;
-    pointer-events: none;
-}
-
-.header-logo h1 {
-    font-family: var(--font-display);
-    font-size: var(--text-xl);
-    font-weight: 400;
-    color: var(--accent);
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    text-shadow: 0 0 8px var(--accent-glow);
-    margin-bottom: var(--space-3);
+    width: 100%;
+    margin-bottom: var(--space-4);
 }
 
 /* ==================== SESSION SETTINGS CARD ==================== */
@@ -251,8 +218,33 @@ body::before {
     clip-path: polygon(0 100%, 0 0, 100% 100%);
 }
 
+.settings-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+.settings-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+
+.settings-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+}
+
 .field-group {
-    margin-bottom: var(--space-3);
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 140px;
 }
 
 .field-group label {
@@ -294,21 +286,26 @@ body::before {
 }
 
 .meta-info {
-    margin-top: var(--space-4);
-    padding-top: var(--space-3);
-    border-top: 2px solid var(--border);
-    margin-bottom: var(--space-4);
+    flex-shrink: 0;
 }
 
 .meta-item {
     font-family: var(--font-display);
-    font-size: var(--text-xs);
-    color: var(--text-muted);
+    font-size: var(--text-md);
+    color: var(--text-secondary);
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-1) 0;
+    padding: var(--space-2) var(--space-3);
     letter-spacing: 1px;
+    white-space: nowrap;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+}
+
+.meta-item #sessionStepCount {
+    font-weight: 600;
+    color: var(--text-primary);
 }
 
 .meta-label {
@@ -321,9 +318,14 @@ body::before {
 
 .sidebar-actions {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
     gap: var(--space-2);
-    margin-top: auto;
+    flex-shrink: 0;
+}
+
+.sidebar-actions .btn {
+    white-space: nowrap;
 }
 
 /* ==================== MAIN CONTENT ==================== */
@@ -377,6 +379,12 @@ body::before {
     text-transform: uppercase;
     color: var(--accent);
     text-shadow: 0 0 8px var(--accent-glow);
+}
+
+.page-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
 }
 
 .page-header p {
@@ -648,10 +656,9 @@ body::before {
     transform: scale(0.98);
 }
 
-.step-card.drag-over {
-    border: 3px dashed var(--accent);
-    box-shadow: 0 0 30px var(--accent-glow);
-    background: var(--accent-subtle);
+/* PERF-008: search/filter toggles this instead of rebuilding the DOM. */
+.step-card.is-filtered-out {
+    display: none;
 }
 
 .step-top {
@@ -859,7 +866,7 @@ body::before {
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
+    opacity: 0.45;
     transition: opacity var(--transition-base);
     margin: -10px 0;
     z-index: 5;
@@ -876,11 +883,12 @@ body::before {
     height: 2px;
     width: 100%;
     background: var(--accent);
+    opacity: 0.5;
 }
 
 .add-between .btn-add {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border-radius: 0;
     background: var(--accent);
     color: var(--bg-primary);
@@ -890,7 +898,7 @@ body::before {
     justify-content: center;
     cursor: pointer;
     box-shadow: 0 0 20px var(--accent-glow);
-    font-size: var(--text-lg);
+    font-size: var(--text-md);
     font-family: var(--font-display);
     position: relative;
     z-index: 1;
@@ -901,7 +909,26 @@ body::before {
 .add-between .btn-add:hover {
     background: var(--accent-hover);
     box-shadow: 0 0 30px var(--accent-glow);
-    transform: scale(1.1);
+    transform: scale(1.15);
+}
+
+/* Drag-and-drop insertion overlay: the add-between strip nearest the cursor
+   lights up as the drop target, replacing the old whole-card dashed swap
+   highlight so the insertion point is unambiguous. */
+.add-between.drag-target {
+    opacity: 1;
+    height: var(--space-4);
+    margin: calc(-1 * var(--space-2)) 0;
+}
+
+.add-between.drag-target::before {
+    height: 3px;
+    opacity: 1;
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.add-between.drag-target .btn-add {
+    transform: scale(1.2);
 }
 
 /* ==================== MODALS ==================== */
@@ -1061,76 +1088,25 @@ body::before {
     letter-spacing: 1.5px;
 }
 
-/* ==================== SIDEBAR TOGGLE (hidden on desktop) ==================== */
-
-.sidebar-toggle {
-    display: none;
-    position: fixed;
-    top: var(--space-4);
-    left: var(--space-4);
-    z-index: 20;
-    width: 40px;
-    height: 40px;
-    border-radius: 0;
-    border: 2px solid var(--border);
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    box-shadow: 4px 4px 0 var(--bg-tertiary);
-    padding: 0;
-    transition: all var(--transition-base);
-    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
-}
-
-.sidebar-toggle:hover {
-    background: var(--bg-hover);
-    color: var(--accent);
-    border-color: var(--accent);
-    box-shadow: 0 0 20px var(--accent-glow), 6px 6px 0 var(--bg-tertiary);
-    transform: translateY(-2px);
-}
-
-.sidebar-overlay {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 9;
-}
-
 /* ==================== RESPONSIVE: < 768px ==================== */
 
 @media (max-width: 768px) {
-    .sidebar-toggle {
-        display: flex;
+    .settings-row {
+        flex-direction: column;
     }
 
-    .sidebar-overlay.active {
-        display: block;
+    .settings-footer {
+        flex-direction: column;
+        align-items: flex-start;
     }
 
-    .sidebar {
-        position: fixed;
-        left: -280px;
-        top: 0;
-        height: 100vh;
-        transition: left 0.2s ease;
-        z-index: 15;
-        overflow-y: auto;
-    }
-
-    .sidebar.open {
-        left: 0;
+    .sidebar-actions {
+        flex-direction: column;
+        width: 100%;
     }
 
     .main-content {
         padding: var(--space-4);
-        padding-top: 64px;
     }
 
     .page-header {
@@ -1250,17 +1226,6 @@ body::before {
     clip-path: polygon(0 100%, 0 0, 100% 100%);
 }
 
-/* Geometric accent lines */
-.sidebar::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: linear-gradient(90deg, var(--accent) 0%, transparent 50%);
-    opacity: 0.3;
-}
 
 .page-header::after {
     content: '';
@@ -1300,7 +1265,7 @@ body::before {
     content: '';
     position: fixed;
     top: 0;
-    left: 320px;
+    left: 0;
     right: 0;
     bottom: 0;
     background-image:
@@ -1372,6 +1337,11 @@ body::before {
    Structure/classes unchanged — JS untouched.
    ================================================================== */
 :root { --ts-ease: cubic-bezier(0.4,0,0.2,1); --ts-fast: 0.15s var(--ts-ease); --ts: 0.2s var(--ts-ease); }
+/* UX-003: --accent (#4f7cbb light / #5b8fd0 dark) is ~4.26:1 / ~3.34:1 with
+   white text — both fail WCAG AA (4.5:1). Filled buttons use this dedicated,
+   theme-invariant pair instead; --accent itself stays as-is for borders,
+   rings, and other non-text-contrast uses. */
+:root { --accent-contrast: #3e6399; --accent-contrast-hover: #345583; }
 
 /* Typography: sans everywhere, mono only for real code. */
 body, body * { font-family: var(--font-display) !important; letter-spacing: normal !important; text-transform: none !important; }
@@ -1387,19 +1357,20 @@ body::before, [data-theme="dark"] body::before,
 .page-header::after, [data-theme="dark"] .page-header::after,
 .step-card::before, [data-theme="dark"] .step-card::before,
 .sidebar::after, [data-theme="dark"] .sidebar::after,
-.session-settings-card::before, [data-theme="dark"] .session-settings-card::before {
+.session-settings-card::before, [data-theme="dark"] .session-settings-card::before,
+.session-settings-card::after, [data-theme="dark"] .session-settings-card::after {
   content: none !important; animation: none !important; display: none !important;
 }
 [data-theme="dark"] * { clip-path: none !important; }
 
-/* Sidebar + main surfaces. */
-.sidebar { background: var(--bg-primary) !important; border-right: 1px solid var(--border) !important; }
-[data-theme="dark"] .sidebar { background: var(--bg-secondary) !important; }
 
-/* Cards — page header, settings, toolbar, step cards. */
+/* Cards — page header, settings, toolbar, step cards. clip-path is reset
+   here too (not just under [data-theme="dark"] above) because the legacy
+   diagonal corner-cut was only ever stripped in dark mode, leaving light
+   mode — the default theme — with jagged corners fighting the 12px radius. */
 .page-header, .session-settings-card, .toolbar {
   background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
-  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important; clip-path: none !important;
 }
 [data-theme="dark"] .page-header, [data-theme="dark"] .session-settings-card, [data-theme="dark"] .toolbar { background: var(--bg-secondary) !important; }
 .page-header h1, .page-header h2 { color: var(--text-primary) !important; font-weight: 600 !important; }
@@ -1407,7 +1378,7 @@ body::before, [data-theme="dark"] body::before,
 /* Step cards — white, soft, gentle hover lift. */
 .step-card {
   background: var(--bg-primary) !important; border: 1px solid var(--border) !important;
-  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important;
+  border-radius: 12px !important; box-shadow: var(--shadow-sm) !important; clip-path: none !important;
   transition: box-shadow var(--ts), border-color var(--ts), transform var(--ts);
   animation: ts-card-in 0.25s var(--ts-ease);
 }
@@ -1416,14 +1387,17 @@ body::before, [data-theme="dark"] body::before,
 .step-number-badge { background: var(--accent-subtle) !important; color: var(--accent) !important; border-radius: 8px !important; font-weight: 600 !important; }
 
 /* Buttons — one calm system, tasteful lift. */
+.btn, .icon-btn, .add-between .btn-add {
+  clip-path: none !important;
+}
 .btn {
   border-radius: 9px !important; font-weight: 500 !important; border: 1px solid transparent !important; box-shadow: none !important;
   transition: background var(--ts-fast), border-color var(--ts-fast), color var(--ts-fast), transform var(--ts-fast), box-shadow var(--ts-fast);
 }
 .btn:hover:not(:disabled) { transform: translateY(-1px) !important; }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.99) !important; }
-.btn-primary { background: var(--accent) !important; color: #fff !important; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+.btn-primary { background: var(--accent-contrast) !important; color: #fff !important; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-contrast-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
 .btn-danger { background: var(--danger) !important; color: #fff !important; }
 .btn-secondary { background: var(--bg-tertiary) !important; color: var(--text-secondary) !important; border-color: transparent !important; }
 .btn-secondary:hover:not(:disabled) { background: var(--bg-hover) !important; color: var(--text-primary) !important; }
@@ -1436,7 +1410,7 @@ body::before, [data-theme="dark"] body::before,
 .input-styled, .select-styled, .search-input, textarea,
 input:not([type="checkbox"]):not([type="radio"]), select {
   background: var(--bg-primary) !important; border: 1px solid var(--border) !important; border-radius: 9px !important;
-  color: var(--text-primary) !important; transition: border-color var(--ts-fast), box-shadow var(--ts-fast);
+  color: var(--text-primary) !important; transition: border-color var(--ts-fast), box-shadow var(--ts-fast); clip-path: none !important;
 }
 [data-theme="dark"] .input-styled, [data-theme="dark"] .select-styled, [data-theme="dark"] .search-input,
 [data-theme="dark"] textarea,
