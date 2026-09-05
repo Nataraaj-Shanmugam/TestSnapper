@@ -37,8 +37,8 @@ class SelectorEngine {
   }
 
   /**
-   * Check if this step is a duplicate of recent steps.
-   * Helps prevent duplicate entries from rapid interactions.
+   * NEW: Check if this step is a duplicate of recent steps
+   * Helps prevent duplicate entries from rapid interactions
    */
   isStepDuplicate(newStep, existingSteps, timeWindow = 3000) {
     if (!existingSteps || existingSteps.length === 0) return false;

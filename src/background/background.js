@@ -588,22 +588,16 @@ async function captureScreenshot(tabId, isManual = true, forceAnyTab = false, tr
     return { success: false, error: 'Rate limited' };
   }
 
-  // SEC-002: this used to only guard auto-screenshots — a manual capture
-  // (Ctrl+Shift+S) taken while a password/token field is focused recorded
-  // the plaintext value on-screen just as unredacted as an auto one. Manual
-  // captures still get a clear toast explaining the skip, since silently
-  // doing nothing to an explicit user action reads as broken.
-  try {
-    const sensitiveCheck = await chrome.tabs.sendMessage(tabId, { action: 'isSensitiveFieldActive' });
-    if (sensitiveCheck?.sensitive) {
-      Logger.debug(`🔒 ${isManual ? 'Manual' : 'Auto'}-screenshot suppressed — sensitive field is active`);
-      if (isManual) {
-        chrome.tabs.sendMessage(tabId, { action: 'screenshotBlockedSensitive' }).catch(() => {});
+  if (!isManual) {
+    try {
+      const sensitiveCheck = await chrome.tabs.sendMessage(tabId, { action: 'isSensitiveFieldActive' });
+      if (sensitiveCheck?.sensitive) {
+        Logger.debug('🔒 Auto-screenshot suppressed — sensitive field is active');
+        return { success: false, error: 'Sensitive field active' };
       }
-      return { success: false, error: 'Sensitive field active' };
+    } catch (_) {
+      // Content script not yet ready; allow capture to proceed
     }
-  } catch (_) {
-    // Content script not yet ready; allow capture to proceed
   }
 
   try {
@@ -1075,11 +1069,108 @@ async function addStep(stepData, senderTabId) {
 }
 
 // ==================== Export Management ====================
-// FUNC-017: there is no background export path. Both the popup and the
-// review page export locally through their own ExportService instance
-// (src/core/export-service.js); nothing in this file's message handler is
-// ever invoked for exports. The dead exportSession()/getScreenshot()
-// handlers and the write-only 'activeExport' key were removed here.
+
+/**
+ * BUG FIX: BG-004 - Improved error handling
+ * BUG FIX: BG-005 - Export cancellation support
+ */
+async function exportSession(sessionId, format = 'json') {
+  try {
+    stateManager.setExporting();
+
+    await chrome.storage.local.set({
+      activeExport: { sessionId, format, startedAt: Date.now() }
+    });
+
+    const progressCallback = (update = {}) => {
+      chrome.runtime.sendMessage({
+        action: 'exportProgress',
+        sessionId,
+        ...update
+      }).catch(() => {
+        // No listeners, that's okay
+      });
+    };
+
+    progressCallback({
+      percent: 0,
+      status: 'Preparing export...'
+    });
+
+    try {
+      const steps = await storage.getSteps(sessionId);
+      progressCallback({
+        status: 'Preparing export...',
+        totalSteps: steps.length
+      });
+    } catch (e) {
+      Logger.warn('Unable to load steps for progress metadata', e);
+    }
+
+    const result = await exportService.exportSession(sessionId, format, progressCallback);
+
+    let downloadUrl;
+    let filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+
+    if (result.blob) {
+      // Binary format (docx) – convert Blob → dataUrl for the Downloads API
+      downloadUrl = await Utils.blobToDataURL(result.blob);
+    } else {
+      // Text format (json / csv / markdown) – encode as before
+      const utf8Bytes = new TextEncoder().encode(result.content);
+
+      let binaryString = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < utf8Bytes.length; i += chunkSize) {
+        const chunk = utf8Bytes.subarray(i, i + chunkSize);
+        binaryString += String.fromCharCode.apply(null, chunk);
+      }
+
+      const base64Content = btoa(binaryString);
+      downloadUrl = `data:${result.mimeType};charset=utf-8;base64,${base64Content}`;
+    }
+
+    progressCallback({
+      percent: 95,
+      status: 'Preparing download...'
+    });
+
+    await chrome.downloads.download({
+      url: downloadUrl,
+      filename: filename,
+      saveAs: false,
+      conflictAction: 'uniquify'
+    });
+
+    stateManager.state = 'idle';
+
+    await chrome.storage.local.remove('activeExport');
+
+    progressCallback({
+      percent: 100,
+      status: 'Download started',
+      done: true
+    });
+
+    return { success: true, filename };
+  } catch (error) {
+    Logger.error('Export failed:', error);
+    stateManager.state = 'idle';
+
+    await chrome.storage.local.remove('activeExport').catch(() => {});
+
+    chrome.runtime.sendMessage({
+      action: 'exportProgress',
+      sessionId,
+      error: error.message,
+      done: true
+    }).catch(() => {
+      // No listeners
+    });
+
+    return { success: false, error: error.message };
+  }
+}
 
 // ==================== Message Handler Helpers ====================
 
@@ -1094,26 +1185,25 @@ async function addStep(stepData, senderTabId) {
 async function getSenderTabId(sender, message) {
   // Extension page hosted in a TAB (popup.html or review page opened/pinned as
   // a tab, or e2e tests): it has sender.tab like a content script, but it is
-  // our own trusted UI. This check must come BEFORE the "trust sender.tab.id"
-  // branch below — otherwise a popup/review page that happens to be hosted in
-  // a real tab gets misread as "a content script reporting on itself", and a
-  // tabId-less call like getState() resolves to the popup's OWN tab instead
-  // of the recorded tab (FUNC-002 regression: a fresh popup polling getState()
-  // saw its own idle tab instead of the actual recording).
+  // our own trusted UI — honor its explicit tabId. Without this, its messages
+  // were mis-attributed to its own tab (recording would target the popup tab
+  // and capture zero steps). Content scripts can never match this check:
+  // their sender.url is the web page URL, not chrome-extension://.
   const extensionOrigin = chrome.runtime.getURL('');
-  const isExtensionUI = sender?.id === chrome.runtime.id && sender?.url?.startsWith(extensionOrigin);
-  if (isExtensionUI) {
-    // Honor an explicit tabId (e.g. startRecording targeting a specific tab).
-    if (message?.tabId) return message.tabId;
-    // No explicit tabId (e.g. getState()) — fall back to the recorded tab
-    // rather than this page's own hosting tab.
-    if (stateManager.session?.tabId) return stateManager.session.tabId;
-    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    return activeTab?.id;
+  if (sender?.tab?.id && message?.tabId &&
+      sender?.id === chrome.runtime.id &&
+      sender?.url?.startsWith(extensionOrigin)) {
+    return message.tabId;
   }
 
   // Content script — always trust the sender's own tab (never message.tabId — SEC-005)
   if (sender?.tab?.id) return sender.tab.id;
+
+  // Popup or review page from the same extension
+  if (sender?.id === chrome.runtime.id) {
+    // Explicit tabId from the popup is allowed for popup senders (no sender.tab)
+    if (message?.tabId) return message.tabId;
+  }
 
   // Fall back to the recorded tab instead of the active tab to avoid FUNC-016 issues
   if (stateManager.session?.tabId) return stateManager.session.tabId;
@@ -1169,19 +1259,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           try {
             stateSettings = await settingsManager.get();
           } catch (_) { /* defaults */ }
-
-          // FUNC-002: a content script in a tab that isn't the recorded tab
-          // must not be told a session is active — addStep already rejects
-          // its steps server-side, but without this check its panel/heartbeat
-          // would still light up first. The popup has no real tabId of its
-          // own (getSenderTabId falls back to the recorded tab for it), so
-          // this only ever filters out foreign content-script tabs.
-          const rawState = stateManager.getState();
-          const isRecordedTab = !rawState.session || rawState.session.tabId === tabId;
-          response = {
-            ...(isRecordedTab ? rawState : { state: 'idle', session: null, stepCount: 0, screenshotCount: 0 }),
-            settings: stateSettings
-          };
+          response = { ...stateManager.getState(), settings: stateSettings };
           break;
         }
 
@@ -1190,6 +1268,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           // message.isManual is false for auto/navigation captures, true (default) for manual.
           // message.trigger ('navigation') distinguishes the automatic sources for labeling.
           response = await captureScreenshot(tabId, message.isManual !== false, false, message.trigger || null);
+          break;
+
+        // Both UIs export locally via their own ExportService instance — there is no
+        // background export path. The exportSession() function is kept for backward-compat.
+
+        case 'cancelExport':
+          if (typeof exportService.cancelExport === 'function') {
+            await exportService.cancelExport(message.sessionId);
+          }
+          stateManager.state = 'idle';
+          chrome.runtime.sendMessage({
+            action: 'exportProgress',
+            status: 'Export cancelled',
+            done: true,
+            canceled: true,
+            sessionId: message.sessionId
+          }).catch(() => { });
+          response = { success: true };
           break;
 
         case 'getAllSessions': {
@@ -1215,6 +1311,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = { success: true, steps };
           break;
         }
+
+        case 'getScreenshot':
+          response = await getScreenshot(message.stepId);
+          break;
 
         case 'deleteSession':
           await storage.clearSession(message.sessionId);
@@ -1283,6 +1383,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           response = { success: true };
           break;
 
+        case 'exportSession': {
+          const result = await exportService.exportSession(message.sessionId, message.format || 'json');
+          let dataUrl;
+          if (result.blob) {
+            // FileReader not available in SW — convert via arrayBuffer
+            const buffer = await result.blob.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i += 0x8000) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            }
+            dataUrl = `data:${result.blob.type};base64,${btoa(binary)}`;
+          }
+          response = { success: true, dataUrl, content: result.content, filename: result.filename, mimeType: result.mimeType };
+          break;
+        }
+
         // Filesystem storage: clear buffer after successful flush to disk
         case 'clearBuffer':
           await clearBufferForSession(message.sessionId);
@@ -1340,6 +1457,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+// ==================== Screenshot Retrieval (display only) ====================
+
+/**
+ * BUG FIX: BUG-006 - Validated screenshot retrieval (using dataUrl)
+ * Kept for review UI display; not exposed via message handler export pipeline (FUNC-017).
+ */
+async function getScreenshot(stepId) {
+  try {
+    const assets = await storage.getAssetsByStepId(stepId);
+    const screenshot = assets.find(a => a.type === 'screenshot');
+
+    if (screenshot && screenshot.dataUrl) {
+      return { success: true, dataUrl: screenshot.dataUrl };
+    }
+
+    return { success: false, error: 'Screenshot not found' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
 
 // ==================== Keyboard Shortcut Handler ====================
 

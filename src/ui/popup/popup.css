@@ -1317,19 +1317,6 @@ header h1 {
   clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
 }
 
-/* UX-013: the keyboard-shortcuts list reuses this toast but needs its \n
-   line breaks to actually render, and left-aligned text instead of the
-   centered single-line default. */
-.message.message-multiline {
-  text-align: left;
-  align-items: flex-start;
-  padding: var(--space-3);
-}
-.message.message-multiline .toast-text {
-  white-space: pre-line;
-  line-height: 1.7;
-}
-
 .message::before {
   content: '';
   position: absolute;
@@ -1637,11 +1624,6 @@ input[type="number"]:focus {
    Structure/classes unchanged — JS untouched.
    ================================================================== */
 :root { --ts-ease: cubic-bezier(0.4,0,0.2,1); --ts-fast: 0.15s var(--ts-ease); --ts: 0.2s var(--ts-ease); }
-/* UX-003: --accent (#4f7cbb light / #5b8fd0 dark) is ~4.26:1 / ~3.34:1 with
-   white text — both fail WCAG AA (4.5:1). Filled buttons use this dedicated,
-   theme-invariant pair instead; --accent itself stays as-is for borders,
-   rings, and other non-text-contrast uses. */
-:root { --accent-contrast: #3e6399; --accent-contrast-hover: #345583; }
 
 /* Typography: sans everywhere, mono only for real code */
 body, body * { font-family: var(--font-display) !important; letter-spacing: normal !important; text-transform: none !important; }
@@ -1719,8 +1701,8 @@ header h1 { position: static !important; transform: none !important; left: auto 
 }
 .btn:hover:not(:disabled) { transform: translateY(-1px) !important; }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.99) !important; }
-.btn-primary { background: var(--accent-contrast) !important; color: #fff !important; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-contrast-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+.btn-primary { background: var(--accent) !important; color: #fff !important; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
 .btn-danger { background: var(--danger) !important; color: #fff !important; }
 .btn-danger:hover:not(:disabled) { box-shadow: 0 4px 12px var(--danger-glow) !important; }
 .btn-secondary, .btn-warning, .btn-success, .btn-info {
@@ -1781,8 +1763,8 @@ input[type="checkbox"], input[type="radio"] {
 .radio-label input:checked + span { color: var(--accent) !important; font-weight: 600 !important; }
 
 /* Export is the primary action of this tab — make it prominent. */
-#exportBtn { background: var(--accent-contrast) !important; color: #fff !important; border-color: var(--accent-contrast) !important; margin-top: 4px !important; }
-#exportBtn:hover:not(:disabled) { background: var(--accent-contrast-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
+#exportBtn { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; margin-top: 4px !important; }
+#exportBtn:hover:not(:disabled) { background: var(--accent-hover) !important; box-shadow: 0 4px 12px var(--accent-glow) !important; }
 
 /* Storage usage bar. */
 .storage-usage { margin-bottom: 10px !important; }

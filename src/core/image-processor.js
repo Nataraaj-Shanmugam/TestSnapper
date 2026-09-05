@@ -4,7 +4,7 @@
  * Centralises all image processing logic that was previously duplicated
  * across export-service.js and storage.js.
  *
- * Exports a single `ImageProcessor` object with two public methods:
+ * Exports a single `ImageProcessor` object with three public methods:
  *
  *   detectContentType(ctx, width, height)
  *     Edge-density heuristic — returns 'png' for text/UI content or
@@ -14,6 +14,11 @@
  *     Full export pipeline used by ExportService.  Handles
  *     OffscreenCanvas (service-worker) and DOM (page) contexts.
  *     Returns { dataUrl, width, height, actualWidth, actualHeight, format }.
+ *
+ *   compressForStorage(dataUrl, options)
+ *     Lightweight compression pipeline used by StorageManager.  Handles
+ *     OffscreenCanvas and DOM contexts.
+ *     Returns a compressed dataUrl string.
  */
 
 import { Utils } from './utils.js';
@@ -120,6 +125,109 @@ export const ImageProcessor = {
     result.height = Math.floor(result.height * scale);
 
     return result;
+  },
+
+  /**
+   * Compress a dataUrl for storage.
+   * Equivalent to the former StorageManager._compressImage().
+   *
+   * @param {string} dataUrl - Original image data URL
+   * @param {Object} [options]
+   * @param {number} [options.maxWidth=1920]
+   * @param {number} [options.maxHeight=1080]
+   * @param {number} [options.quality=0.95]
+   * @returns {Promise<string>} Compressed dataUrl (falls back to original on error)
+   */
+  async compressForStorage(dataUrl, options = {}) {
+    const {
+      maxWidth = 1920,
+      maxHeight = 1080,
+      quality = 0.95
+    } = options;
+
+    // Helper to check if we are in a Service Worker or similar context
+    const useOffscreen = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined';
+
+    if (useOffscreen) {
+      try {
+        // Decode data URL directly to avoid fetch() memory double (HIGH-017)
+        const blob = ImageProcessor._dataUrlToBlob(dataUrl);
+        const bitmap = await createImageBitmap(blob);
+
+        let { width, height } = bitmap;
+
+        // Resize if too large
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = Math.floor(width * ratio);
+          height = Math.floor(height * ratio);
+        }
+
+        const canvas = new OffscreenCanvas(width, height);
+        const ctx = canvas.getContext('2d'); // alpha:false removed — blackens transparent pixels
+        ctx.drawImage(bitmap, 0, 0, width, height);
+
+        const compressedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+
+        // Convert blob to dataUrl without FileReader (unavailable in SW)
+        const buf = await compressedBlob.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        const compressedDataUrl = `data:image/jpeg;base64,${btoa(binary)}`;
+
+        bitmap.close();
+        Logger.debug(`🗜️ Image compressed (Offscreen): ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
+
+        return compressedDataUrl;
+      } catch (error) {
+        Logger.error('Offscreen image compression failed:', error);
+        return dataUrl; // Fallback
+      }
+    } else {
+      // Standard DOM implementation
+      return new Promise((resolve) => {
+        const img = new Image();
+
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            let { width, height } = img;
+
+            // Resize if too large
+            if (width > maxWidth || height > maxHeight) {
+              const ratio = Math.min(maxWidth / width, maxHeight / height);
+              width = Math.floor(width * ratio);
+              height = Math.floor(height * ratio);
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+
+            Logger.debug(`🗜️ Image compressed: ${(dataUrl.length / 1024).toFixed(1)}KB → ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
+
+            resolve(compressedDataUrl);
+          } catch (error) {
+            Logger.error('Image compression failed:', error);
+            resolve(dataUrl); // Fallback to original
+          }
+        };
+
+        img.onerror = () => {
+          Logger.error('Failed to load image for compression');
+          resolve(dataUrl); // Fallback to original
+        };
+
+        img.src = dataUrl;
+      });
+    }
   },
 
   // ──────────────────────────────────────────────────────────────────
