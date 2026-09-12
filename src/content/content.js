@@ -568,19 +568,17 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
       }
     });
 
-    // Reset auto-close timeout on input; submit typed value on timeout (not null)
-    function resetTimeout() {
-      if (state.timeout) clearTimeout(state.timeout);
-      state.timeout = setTimeout(function() {
-        window.Logger?.warn('Modal auto-closed after timeout:', modalId);
-        var typedValue = input ? input.value.trim() : '';
-        closeWithRestore(typedValue || null);
-      }, 30000);
-    }
-
-    if (input) {
-      input.addEventListener('input', function() { resetTimeout(); });
-    }
+    // A-5 (WCAG 2.2.1 Timing Adjustable): this dialog used to self-destruct
+    // after 30s and DISCARD the step. The timer reset only on 'input' events,
+    // so a screen-reader user reading the dialog with a virtual cursor — or
+    // anyone who simply read it carefully — fired none and lost their work
+    // mid-sentence, with nothing announced. There is no warning, no extend, and
+    // no way to switch it off, which is a Level A failure.
+    //
+    // The dialog already has Skip, Escape and Confirm; a timer adds nothing but
+    // data loss, so it is gone. resetTimeout() is kept as a no-op shim because
+    // it is called from several places below.
+    function resetTimeout() { /* intentionally empty — see A-5 above */ }
 
     confirmBtn.onclick = function() {
       var value = input ? input.value.trim() : '';
@@ -590,6 +588,18 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     cancelBtn.onclick = function() {
       closeWithRestore(null);
     };
+
+    // A-8 (WCAG 2.1.2): Escape was bound only to the input, so tabbing to Skip
+    // or Confirm disarmed it and the only way out was a mouse. Bind it to the
+    // whole overlay in the capture phase so it works from any focused control
+    // and the host page cannot swallow it first.
+    overlayDiv.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelBtn.click();
+      }
+    }, true);
 
     if (input) {
       input.onkeydown = function(e) {
@@ -736,10 +746,29 @@ function isInputElement(element) {
   return tag === 'input' || tag === 'textarea' || tag === 'select';
 }
 
+/**
+ * Q-3: event.target is the deepest node under the pointer. In any icon-button
+ * design system that is an <svg> or its <path>, which has no id, no name, no
+ * data-testid and an empty SVGAnimatedString className — so every attribute
+ * strategy in the selector engine contributes nothing and the winner is a
+ * positional absolute XPath, while the perfectly good [data-testid="save-btn"]
+ * one node up is never considered. Normalize to the interactive ancestor.
+ */
+var INTERACTIVE_ANCESTOR_SELECTOR =
+  'button, a, input, select, textarea, label, summary, ' +
+  '[role="button"], [role="link"], [role="menuitem"], [role="tab"], ' +
+  '[role="option"], [role="checkbox"], [role="radio"], [role="switch"], ' +
+  '[onclick], [tabindex]:not([tabindex="-1"])';
+
+function resolveInteractiveTarget(node) {
+  if (!node || typeof node.closest !== 'function') return node;
+  return node.closest(INTERACTIVE_ANCESTOR_SELECTOR) || node;
+}
+
 async function handleClick(event) {
   if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
   try {
-    const element = event.target;
+    const element = resolveInteractiveTarget(event.target);
 
     if (element.id?.startsWith('testsnapper-')) return;
 
@@ -878,6 +907,14 @@ function handleInput(event) {
     }
 
     const timeoutId = setTimeout(async () => {
+      // P2-11: the entry was only deleted on the success path, so the two
+      // early returns below (duplicate input, and a skipped/timed-out
+      // field-name modal) orphaned it. pendingInputs is keyed by the element
+      // OBJECT, so each orphan pinned a live DOM node for the rest of the
+      // session — nodes an SPA had since re-rendered away could never be
+      // collected. The timer has already fired here; release it first.
+      pendingInputs.delete(elementKey);
+
       // generateSelector is now called here (deferred), not in the outer scope.
       const selector = selectorEngine.generateSelector(element);
       const fieldName = getEnhancedFieldName(element);
@@ -941,10 +978,21 @@ async function handleChange(event) {
     let action;
     let isSensitive = false;
 
+    // Q-1: these two used to `return` outright, on the assumption that the
+    // click handler already covers them. It only covers *mouse* toggles — a
+    // keyboard user pressing Space, a label-click routed oddly, or a
+    // programmatic "Select all" fired change with no click, and the
+    // interaction vanished from the recording. isDuplicateInteraction()
+    // downstream suppresses the double-record when a click did also fire.
     if (element.type === 'checkbox') {
-      return;
+      action = 'check';
+      value = element.checked ? 'checked' : 'unchecked';
     } else if (element.type === 'radio') {
-      return;
+      // Must match handleClick's action/value for this element exactly, or
+      // isDuplicateInteraction() below won't recognise the mouse-driven pair
+      // and every clicked radio would be recorded twice.
+      action = 'select_radio';
+      value = element.value;
     } else if (element.tagName.toLowerCase() === 'select') {
       action = 'select';
       value = element.options[element.selectedIndex]?.text || element.value;
@@ -1112,6 +1160,15 @@ function sendStepToBackground(stepData, isRetry) {
           showToastNotification('TestSnapper: Session lost — stopping recording', 'warning');
           stopRecording();
         }
+      } else if (response.error === 'Wrong tab') {
+        // P0-2: this branch previously fell through to silence, so a whole
+        // session's worth of interactions could be dropped without a word.
+        // Tear the panel down here too — this tab should never have armed.
+        showToastNotification(
+          'TestSnapper is recording a different tab — this page is not being captured.',
+          'warning'
+        );
+        stopRecording();
       }
     }
   });
@@ -1597,6 +1654,16 @@ function removeRecordingIndicator() {
   }
 }
 
+// P1-3: this registration sits OUTSIDE the __testSnapperInitialized guard, so
+// a double injection (manifest static injection at document_end racing the
+// programmatic injection from background.js:846 when the ping fails) bound the
+// handler twice. Both copies then ran 'beforeScreenshot', and the second pass
+// recorded the already-hidden display:'none' as the "original" — so
+// afterScreenshot restored the panel to hidden and it never came back for the
+// rest of the session. State vars survive re-injection; the listener must too.
+if (!window.__testSnapperListenerBound) {
+  window.__testSnapperListenerBound = true;
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   window.Logger?.debug('Content script received message:', message.action);
 
@@ -1652,6 +1719,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case 'beforeScreenshot': {
+      // P1-3 belt-and-braces: if a snapshot is already outstanding, do not take
+      // a second one — it would capture display:'none' as the original and
+      // afterScreenshot would restore the panel to hidden permanently.
+      if (window.__testSnapperHiddenEls && window.__testSnapperHiddenEls.length) {
+        sendResponse({ success: true });
+        break;
+      }
       var hiddenEls = [];
       document.querySelectorAll('[id^="testsnapper-"]').forEach(function(el) {
         hiddenEls.push({ el: el, display: el.style.display });
@@ -1675,6 +1749,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Visual feedback when rate limited
     case 'screenshotRateLimited':
       showRateLimitFeedback();
+      sendResponse({ success: true });
+      break;
+
+    // P0-5: a manual capture was refused because a sensitive field is focused.
+    // Say so — an ignored keypress otherwise reads as a broken shortcut.
+    case 'screenshotBlockedSensitive':
+      showToastNotification('Screenshot skipped — a password or payment field is focused.', 'warning');
       sendResponse({ success: true });
       break;
 
@@ -1705,6 +1786,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+} // end __testSnapperListenerBound guard (P1-3)
+
 function formatTime(totalSeconds) {
   const mins = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
   const secs = (totalSeconds % 60).toString().padStart(2, '0');
@@ -1714,11 +1797,19 @@ function formatTime(totalSeconds) {
 window.Logger?.info('TestSnapper content script loaded');
 
 // Check for active recording on load to restore overlay and state.
-// Gate auto-restore to the top frame only — iframes must not capture
-// events or add their own panel/heartbeat.
-if (window !== window.top) {
-  window.Logger?.debug('TestSnapper: skipping restore in sub-frame');
-} else {
+//
+// P1-2: this used to return early in every sub-frame, which directly
+// contradicted FD-2 in _finishStartRecording ("event capture must run in every
+// frame — clicks inside iframes are only visible to the iframe's own
+// listeners"). Frames present when Record was pressed got listeners via the
+// startRecording broadcast; after any navigation, or for a lazy-loaded iframe,
+// nothing re-armed them — so every click and keystroke inside an iframe was
+// silently dropped while the top-frame panel still read RECORDING.
+//
+// Sub-frames now restore too. _finishStartRecording keeps its own top-frame
+// gate, so they attach capture listeners and nothing else: no panel, no
+// heartbeat, no navigation polling, no auto-screenshot interval.
+{
   chrome.runtime.sendMessage({ action: 'getState' }, function(response) {
     if (chrome.runtime.lastError) {
       window.Logger?.debug('Background connection error:', chrome.runtime.lastError);
@@ -1726,6 +1817,22 @@ if (window !== window.top) {
     }
 
     if (response && response.session) {
+      // P0-2: a session is active, but it may belong to a DIFFERENT tab. Steps
+      // from this tab would be rejected by handleAddStep ('Wrong tab') and the
+      // rejection is swallowed, so mounting the normal panel here showed a live
+      // red RECORDING indicator over work that was silently discarded.
+      if (response.isRecordedTab === false) {
+        window.Logger?.debug('TestSnapper: session belongs to another tab — not capturing here');
+        // Only the top frame gets UI; a toast inside an ad iframe is noise.
+        if (window === window.top) {
+          showToastNotification(
+            'TestSnapper is recording a different tab — nothing on this page is being captured.',
+            'warning'
+          );
+        }
+        return;
+      }
+
       window.Logger?.info('Restoring session state:', response.state, response.session);
       // Pass settings so auto-screenshot continues after page load.
       var settings = response.settings || response.session?.settings || {};

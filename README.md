@@ -84,7 +84,7 @@ Protects **21 types of sensitive information**:
 - ✅ **Content Security Policy (CSP)** - Prevents XSS attacks on all extension pages
 - ✅ **Input Sanitization** - Session names cleaned of control characters
 - ✅ **Data Validation** - Settings, screenshots, filenames validated before storage
-- ✅ **Subresource Integrity (SRI)** - Infrastructure ready for CDN libraries with integrity hashes
+- ✅ **Subresource Integrity (SRI)** - Vendored libraries are pinned and verified by SHA-384 hash at download time
 - ✅ **Secure Storage** - Chrome storage API with quota management, no external servers
 - ✅ **GZIP Compression** - Step data compressed using native CompressionStream API
 
@@ -131,7 +131,7 @@ Protects **21 types of sensitive information**:
 - Metadata header (session name, date, step count, duration)
 - Structured step-by-step format with numbered sections
 - Compatible with Word 2016+, Google Docs, LibreOffice
-- CDN fallback with manual ZIP generation if library unavailable
+- Manual ZIP generation if the bundled library is unavailable (no network fallback)
 
 #### PDF (Portable Document)
 - Print-ready professional layout
@@ -329,7 +329,7 @@ npm run build
 - **Storage**: chrome.storage.local (split-key architecture with 40-60% compression)
 - **Compression**: Native CompressionStream API (GZIP)
 - **File System**: File System Access API (Manifest V3)
-- **Export Libraries**: docx.js 7.8.2, html2pdf.js 0.10.1 (CDN with local fallback, SRI integrity)
+- **Export Libraries**: docx.js 7.8.2, jsPDF 2.5.1 — both vendored in `libs/`, SHA-384 verified, loaded only via `chrome.runtime.getURL()`
 - **Documentation**: JSDoc (150+ methods documented, ~95% coverage)
 
 ### File Structure
@@ -424,7 +424,7 @@ Orchestrates export operations with performance optimization:
 - Progress tracking (0-100%)
 - Cancellation support mid-export
 - Screenshot processing with `ImageProcessor`
-- CDN fallback for DOCX/PDF libraries with SRI integrity
+- DOCX/PDF libraries are bundled locally; no remote code is ever loaded (MV3 requirement)
 - Manual ZIP generation fallback for DOCX
 - 13+ fully documented methods
 
@@ -457,7 +457,7 @@ Configurable logging abstraction:
 ### Data Handling
 - ✅ **Local-Only Storage** - All data stored in chrome.storage.local, never sent to external servers
 - ✅ **No Analytics** - Zero tracking, no telemetry, no data collection
-- ✅ **No External Connections** - Except CDN fallback for export libraries (user-initiated)
+- ✅ **No External Connections** - The extension makes no network requests of any kind
 - ✅ **Sensitive Data Redaction** - Automatic masking of 21 types of sensitive information
 - ✅ **Content Security Policy** - XSS protection on all extension pages
 

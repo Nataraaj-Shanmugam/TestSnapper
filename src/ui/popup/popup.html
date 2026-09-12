@@ -35,7 +35,12 @@
       <button class="tab"        id="tab-settings"  role="tab" aria-controls="settings-tab"  aria-selected="false" data-tab="settings">Settings</button>
     </div>
 
-    <div class="message" id="message"></div>
+    <!-- A-1 (WCAG 4.1.3): this was a bare div, so every status the product
+         emits — "Recording started", export progress, quota warnings — was
+         silent to assistive tech. Polite region for status, assertive for
+         errors so they are not queued behind a status message. -->
+    <div class="message" id="message" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="a11yAlerts" role="alert" aria-live="assertive" class="visually-hidden"></div>
 
     <!-- File sync banners (shown/hidden by updateSyncUI) -->
     <div id="storageOnboarding" style="display:none; align-items:center; gap:8px; padding:8px 12px; background:var(--accent-subtle); border-bottom:1px solid var(--border); color:var(--text-primary); font-size:12px;">
@@ -112,15 +117,15 @@
         <h3><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Session</h3>
 
         <div class="form-group">
-          <label>Select Session:</label>
+          <label for="sessionDropdown">Select Session:</label>
           <select id="sessionDropdown" class="select" data-testid="session-dropdown">
             <option value="">Select a session...</option>
           </select>
         </div>
 
         <div class="form-group">
-          <label>Export Format:</label>
-          <div class="format-options">
+          <label id="exportFormatLabel">Export Format:</label>
+          <div class="format-options" role="radiogroup" aria-labelledby="exportFormatLabel">
             <label class="radio-label">
               <input type="radio" name="format" value="docx" checked data-testid="format-docx">
               <span>DOCX</span>
@@ -190,8 +195,9 @@
 
           <div class="sub-settings" id="screenshotInterval" style="display: none; margin-left: 24px; margin-top: 8px;">
             <div class="input-group">
-              <label style="font-size: 12px;">Every</label>
+              <label style="font-size: 12px;" for="screenshotSeconds">Every</label>
               <input type="number" id="screenshotSeconds" min="1" max="60" value="5"
+                aria-label="Auto-capture interval in seconds"
                 style="width: 60px; margin: 0 8px; padding: 4px;">
               <label style="font-size: 12px;">seconds</label>
             </div>
@@ -220,7 +226,7 @@
         </div>
 
         <div class="form-group">
-          <label>Screenshot Capture Format:</label>
+          <label for="screenshotFormat">Screenshot Capture Format:</label>
           <select id="screenshotFormat" class="select">
             <option value="png" selected>PNG — lossless (best quality)</option>
             <option value="jpeg-high">JPEG — high (smaller files)</option>
@@ -256,15 +262,21 @@
       <div class="storage-section">
         <h3><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Storage Settings</h3>
 
+        <!-- P0-1: was "Auto-save Sessions", which reads as "save automatically
+             vs. save manually" — but there is no manual save, and unchecking it
+             makes Stop delete the recording outright. Named for what it does. -->
         <div class="setting-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="autoSave" checked>
-            <span>Auto-save Sessions</span>
+          <label class="checkbox-label" for="autoSave">
+            <input type="checkbox" id="autoSave" checked aria-describedby="autoSaveHint">
+            <span>Keep recordings after stopping</span>
           </label>
+          <p id="autoSaveHint" class="setting-hint">
+            If unchecked, each recording is permanently deleted the moment you press Stop.
+          </p>
         </div>
 
         <div class="form-group">
-          <label>Max Sessions to Keep:</label>
+          <label for="maxSessions">Delete oldest recordings beyond:</label>
           <select id="maxSessions" class="select">
             <option value="10">10 sessions</option>
             <option value="25" selected>25 sessions</option>
@@ -274,7 +286,7 @@
         </div>
 
         <div class="form-group">
-          <label>Export Image Quality (DOCX/PDF):</label>
+          <label for="exportImageQuality">Export Image Quality (DOCX/PDF):</label>
           <select id="exportImageQuality" class="select">
             <option value="auto" selected>Auto — sharp text, balanced</option>
             <option value="high">High — best fidelity (largest)</option>

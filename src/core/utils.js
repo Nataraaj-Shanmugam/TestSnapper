@@ -77,12 +77,28 @@ export const Utils = {
     messageDiv.className = `message ${type}`;
     messageDiv.style.display = 'block';
 
+    // A-1 (WCAG 4.1.3): errors go to the assertive region as well, so they are
+    // announced immediately rather than queued behind whatever polite status
+    // message is already pending.
+    if (type === 'error' || type === 'warning') {
+      const alerts = document.getElementById('a11yAlerts');
+      if (alerts) {
+        // Reassigning identical text does not re-announce; clear first.
+        alerts.textContent = '';
+        setTimeout(() => { alerts.textContent = text; }, 50);
+      }
+    }
+
     // Default durations per type if not specified
     const effectiveDuration = duration > 0 ? duration :
       (type === 'success' ? 4000 :
        type === 'error'   ? 6000 :
        type === 'warning' ? 8000 :
        type === 'info'    ? 5000 : 3000);
+
+    // A-1 (WCAG 2.2.1): errors and warnings no longer self-dismiss. A message
+    // the user must act on must not disappear on a timer they cannot adjust.
+    if (type === 'error' || type === 'warning') return;
 
     messageDiv._msgTimer = setTimeout(() => {
       messageDiv.style.display = 'none';

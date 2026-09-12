@@ -1423,3 +1423,82 @@ input[type="checkbox"], input[type="radio"], .step-checkbox {
 
 /* Motion keyframe for step cards. */
 @keyframes ts-card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ============================================================
+   Accessibility, motion & scale corrections
+   (findings A-1, A-6, A-9, P2-2, P2-3)
+   Appended last so these win without further !important escalation.
+   ============================================================ */
+
+/* A-1: screen-reader-only live regions. */
+.visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A-6 (WCAG 2.4.7): `outline: none !important` at :1419 beat the correct
+   *:focus-visible ring this file already defines at :1187. Step checkboxes
+   ended up with no indicator whatsoever. */
+:focus-visible {
+  outline: 2px solid var(--accent-hover, var(--accent)) !important;
+  outline-offset: 2px !important;
+}
+input[type="checkbox"]:focus-visible,
+.step-checkbox:focus-visible,
+.step-handle:focus-visible {
+  outline: 2px solid var(--accent-hover, var(--accent)) !important;
+  outline-offset: 2px !important;
+}
+
+/* A-9 (WCAG 2.5.8): both controls sat under the 24px minimum — the handle at
+   ~20px, and the checkbox forced to 18px by an !important rule that also
+   overrode the 22px the JS author set inline. The checkbox gates the page's
+   destructive "Delete Selection" action. Keep the visual size, grow the target. */
+.step-handle {
+  min-width: 24px !important;
+  min-height: 24px !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+}
+.step-checkbox,
+input[type="checkbox"].step-checkbox {
+  width: 18px !important;
+  height: 18px !important;
+  padding: 3px !important;
+  box-sizing: content-box !important;
+}
+
+/* P2-3: `.screenshot-container img { width: 100% }` had no height cap, so each
+   card ran ~550px and a 200-step session was ~110,000px of scroll. Cap and
+   let the existing click-to-expand handle full size. */
+.screenshot-container {
+  max-height: 260px;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.screenshot-container img {
+  max-height: 260px;
+  object-fit: cover;
+  object-position: top;
+}
+
+/* P2-2 (WCAG 2.3.3): no reduced-motion support existed, and every step badge
+   ran an infinite box-shadow animation — 200 simultaneous compositor
+   animations on a 200-step session. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+.step-number-badge { animation: none !important; }
+.toolbar .icon { animation: none !important; }

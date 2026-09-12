@@ -239,6 +239,13 @@ function setupEventListeners() {
       e.preventDefault();
       closeAddStepModal();
     }
+
+    // A-7 (WCAG 2.1.2): Escape was scoped to the Add Step modal only, so during
+    // an export the user was inside a dialog with no keyboard way out.
+    if (e.key === 'Escape' && progressModal && progressModal.classList.contains('active')) {
+      e.preventDefault();
+      cancelExportBtn?.click();
+    }
   });
 
   // UX-012: Focus trap inside modal
@@ -271,8 +278,17 @@ function setupEventListeners() {
   // incorrectly resets recording state to 'idle'. Simply dismiss the UI.
   // The background export will complete/fail naturally (file download is suppressed
   // since the user won't be waiting for it).
+  // P1-9: this only dismissed the overlay — the export kept running and the
+  // file still downloaded. This page owns its own ExportService instance, so
+  // cancel it directly; exportSession() checks the flag at each stage and
+  // throws, which handleSaveAndExport now reports as "Export cancelled."
   if (cancelExportBtn) {
     cancelExportBtn.addEventListener('click', () => {
+      try {
+        exportService.cancelExport(sessionId);
+      } catch (err) {
+        console.error('Cancel export failed:', err);
+      }
       hideProgressModal();
       showMessage('Export cancelled.', 'info');
     });
@@ -480,9 +496,21 @@ async function restoreFromHistory(targetIndex) {
   updateHistoryButtons();
 }
 
-function undo() {
-  if (historyIndex <= 0) return;
-  restoreFromHistory(historyIndex - 1);
+async function undo() {
+  // P1-1: saveToHistory() snapshots state BEFORE each mutation and leaves
+  // historyIndex pointing at that snapshot — so history[historyIndex] IS the
+  // one-step-back state. Restoring historyIndex - 1 went one further and
+  // reverted TWO operations, then persisted the result via updateAllSteps().
+  // It looked correct only because history[0] and history[1] are duplicates.
+  //
+  // restoreFromHistory() sets historyIndex = targetIndex, so we walk the
+  // pointer back afterwards; otherwise a second Undo would replay the same
+  // snapshot forever.
+  if (historyIndex <= 0 || !history[historyIndex]) return;
+  const snapshotIndex = historyIndex;
+  await restoreFromHistory(snapshotIndex);
+  historyIndex = snapshotIndex - 1;
+  updateHistoryButtons();
 }
 
 // ==================== Asset Cache ====================
@@ -615,7 +643,7 @@ async function renderSteps() {
             <input type="checkbox" class="step-checkbox" data-step-id="${safeId}"
                    ${step.selected ? 'checked' : ''}
                    draggable="false"
-                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--primary);">
+                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--accent);">
           </div>
 
           <!-- main content (textarea + optional screenshot) -->
@@ -1077,18 +1105,39 @@ async function resequenceAndPersist() {
 
 // ==================== Export + Progress ====================
 
+// A-7: remembers what to hand focus back to when the export modal closes.
+let _progressTriggerElement = null;
+
 function showProgressModal() {
   if (!progressModal) return;
+  _progressTriggerElement = document.activeElement;
   progressModal.classList.add('active');
   const circle = document.getElementById('progressCircle');
   if (circle) circle.style.strokeDashoffset = '125.6';
   if (progressStatus) progressStatus.textContent = 'Starting export...';
-  if (progressPercent) progressPercent.textContent = '0%';
+  if (progressPercent) {
+    progressPercent.textContent = '0%';
+    progressPercent.setAttribute('aria-valuenow', '0');
+    progressPercent.setAttribute('aria-valuetext', '0 percent');
+  }
+
+  // A-7 (WCAG 2.4.3/2.1.2): focus stayed on the Export button BEHIND the scrim,
+  // and Tab walked every step textarea underneath the overlay. Move focus in
+  // and make the rest of the page inert for the duration.
+  const appWrapper = document.querySelector('.app-wrapper') || document.querySelector('main');
+  if (appWrapper) appWrapper.inert = true;
+  if (cancelExportBtn) cancelExportBtn.focus();
 }
 
 function hideProgressModal() {
   if (!progressModal) return;
   progressModal.classList.remove('active');
+  const appWrapper = document.querySelector('.app-wrapper') || document.querySelector('main');
+  if (appWrapper) appWrapper.inert = false;
+  if (_progressTriggerElement && typeof _progressTriggerElement.focus === 'function') {
+    _progressTriggerElement.focus();
+  }
+  _progressTriggerElement = null;
 }
 
 function handleExportProgress(message) {
@@ -1100,7 +1149,12 @@ function handleExportProgress(message) {
   const status = message.status || 'Exporting...';
   const circle = document.getElementById('progressCircle');
 
-  if (progressPercent) progressPercent.textContent = `${percent}%`;
+  if (progressPercent) {
+    progressPercent.textContent = `${percent}%`;
+    // A-7: expose progress to assistive tech, not just to sighted users.
+    progressPercent.setAttribute('aria-valuenow', String(Math.round(percent)));
+    progressPercent.setAttribute('aria-valuetext', `${Math.round(percent)} percent`);
+  }
   if (progressStatus) progressStatus.textContent = status;
 
   if (circle) {
@@ -1123,15 +1177,26 @@ function handleExportProgress(message) {
 }
 
 async function handleSaveAndExport() {
+  // P1-9: saveExportBtn was never disabled, so the natural response to an
+  // apparently-hung export (click it again) launched a SECOND concurrent export
+  // of the same session.
+  if (saveExportBtn.disabled) return;
+  saveExportBtn.disabled = true;
+
   try {
     showMessage('Saving changes...', 'info');
     await saveSessionName();
 
     const format = exportFormatSelect.value;
-    showMessage(`Exporting as ${format.toUpperCase()}...`, 'info');
+
+    // P1-9: showProgressModal() was defined and never called — the whole modal,
+    // its ring and its Cancel button were dead UI. The only feedback was a
+    // toast that auto-dismissed after 5s, leaving a silent page for minutes on
+    // a large DOCX.
+    showProgressModal();
 
     const result = await exportService.exportSession(sessionId, format, (progress) => {
-      if (progress.status) showMessage(progress.status, 'info');
+      handleExportProgress(progress);
     });
 
     let downloadUrl;
@@ -1149,12 +1214,26 @@ async function handleSaveAndExport() {
     }
 
     await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
-    if (result.blob) URL.revokeObjectURL(downloadUrl);
+    // P1-9: revoking on the next line races the download's own read of the
+    // blob. chrome.downloads.download resolves when the item is CREATED, not
+    // when the bytes have been consumed.
+    if (result.blob) setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000);
 
+    hideProgressModal();
     showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
   } catch (error) {
-    console.error('Save and export failed:', error);
-    showMessage('Failed: ' + error.message, 'error');
+    hideProgressModal();
+    if (/cancel/i.test(error?.message || '')) {
+      showMessage('Export cancelled.', 'info');
+    } else {
+      console.error('Save and export failed:', error);
+      showMessage(
+        `Export failed — ${error.message}. Your session is safe; CSV and JSON don't need the Word/PDF libraries.`,
+        'error'
+      );
+    }
+  } finally {
+    saveExportBtn.disabled = false;
   }
 }
 

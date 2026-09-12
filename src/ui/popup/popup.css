@@ -1809,3 +1809,63 @@ input[type="checkbox"], input[type="radio"] {
 .radio-label input:checked + span::before, .radio-label input:checked + span::after {
   content: none !important; display: none !important;
 }
+
+/* ============================================================
+   Accessibility & motion corrections (findings A-1, A-6, A-9, P2-2)
+   Appended last so these win without needing !important escalation.
+   ============================================================ */
+
+/* A-1: screen-reader-only live regions. Neither stylesheet defined this. */
+.visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* P0-1: help text under the "keep recordings" checkbox. */
+.setting-hint {
+  margin: 4px 0 0 24px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* A-6 (WCAG 2.4.7): the stylesheet killed its own focus ring with
+   `outline: none !important` and replaced it with a ~1.07:1 glow. Restore a
+   real indicator. Checkboxes and radios are included — they had none at all. */
+:focus-visible {
+  outline: 2px solid var(--accent-hover, var(--accent)) !important;
+  outline-offset: 2px !important;
+}
+
+/* A-6: the export-format chips hide their radio at 1x1px, so the ring was
+   drawn around an invisible speck. Move it to the visible label. */
+.radio-label:has(input[type="radio"]:focus-visible) {
+  outline: 2px solid var(--accent-hover, var(--accent)) !important;
+  outline-offset: 2px;
+}
+.radio-label input[type="radio"]:focus-visible { outline: none !important; }
+
+/* P2-2 (WCAG 2.3.3): zero prefers-reduced-motion blocks existed repo-wide,
+   while ~9 infinite animations ran — including one that jittered the word
+   "Recording" by 2px every 5s. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* P2-2: the "Recording" label physically twitched via glitchText, and
+   gradientShift repainted forever on an element with no gradient in light
+   mode. The pulsing state dot already signals live recording. */
+.state-dot.recording ~ #stateText,
+#stateText {
+  animation: none !important;
+}

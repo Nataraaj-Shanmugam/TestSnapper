@@ -449,10 +449,24 @@ async function handleStop() {
   try {
     const response = await chrome.runtime.sendMessage({ action: "stopRecording" });
     if (response.success) {
-      showMessage("Recording stopped!", "success");
+      // P0-1: stopRecording returns { success: true, discarded: true } when the
+      // "keep recordings" setting is off — it has already deleted the session.
+      // Reporting "Recording stopped!" for that was a flat lie, and the review
+      // tab then failed with "Session not found".
+      if (response.discarded) {
+        showMessage("Recording discarded — \"Keep recordings after stopping\" is off. Turn it on in Settings to keep future recordings.", "warning");
+      } else if (response.prunedCount > 0) {
+        // P2-12: pruning was previously silent.
+        showMessage(
+          `Recording stopped. Storage limit reached — ${response.prunedCount} oldest recording${response.prunedCount === 1 ? " was" : "s were"} deleted.`,
+          "warning"
+        );
+      } else {
+        showMessage("Recording stopped!", "success");
+      }
       liveStepsViewer.style.display = "none";
       await updateStorageUsage(); // Update storage after stop
-      setTimeout(() => window.close(), 800);
+      setTimeout(() => window.close(), response.discarded ? 4000 : 800);
     } else {
       showMessage("Failed to stop: " + (response.error || "Unknown error"), "error");
     }

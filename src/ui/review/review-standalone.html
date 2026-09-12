@@ -48,13 +48,13 @@
                 <div class="settings-fields">
                     <div class="settings-row">
                         <div class="field-group">
-                            <label>Session Name</label>
+                            <label for="sessionName">Session Name</label>
                             <input type="text" id="sessionName" class="input-styled" placeholder="Session name..."
                                 autocomplete="off">
                         </div>
 
                         <div class="field-group">
-                            <label>Author</label>
+                            <label for="sessionAuthor">Author</label>
                             <input type="text" id="sessionAuthor" class="input-styled" placeholder="Your name..."
                                 autocomplete="off">
                         </div>
@@ -62,22 +62,26 @@
 
                     <div class="settings-row">
                         <div class="field-group">
-                            <label>Start Time</label>
+                            <label for="sessionStartTime">Start Time</label>
                             <input type="datetime-local" id="sessionStartTime" class="input-styled">
                         </div>
 
                         <div class="field-group">
-                            <label>End Time</label>
+                            <label for="sessionEndTime">End Time</label>
                             <input type="datetime-local" id="sessionEndTime" class="input-styled">
                         </div>
 
                         <div class="field-group">
-                            <label>Export Format</label>
+                            <label for="exportFormat">Export Format</label>
                             <select id="exportFormat" class="select-styled">
                                 <option value="docx">Microsoft Word (.docx)</option>
                                 <option value="pdf">PDF Document (.pdf)</option>
                                 <option value="csv">Excel / CSV (.csv)</option>
                                 <option value="json">JSON Format (Data)</option>
+                                <!-- _exportMarkdown() has always worked; it was simply
+                                     absent from both pickers, so the format the README
+                                     advertises was unreachable. -->
+                                <option value="markdown">Markdown (.md)</option>
                             </select>
                         </div>
                     </div>
@@ -104,16 +108,18 @@
             </div>
             </aside>
             <!-- Notification Area -->
-            <div id="message" class="message hidden" style="margin-bottom: 20px;"></div>
+            <!-- A-1 (WCAG 4.1.3): see popup.html — status vs. assertive split. -->
+            <div id="message" class="message hidden" role="status" aria-live="polite" aria-atomic="true" style="margin-bottom: 20px;"></div>
+            <div id="a11yAlerts" role="alert" aria-live="assertive" class="visually-hidden"></div>
 
             <!-- Toolbar -->
             <section class="toolbar">
                 <div class="search-wrapper">
                     <span class="icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
-                    <input type="text" id="stepSearch" class="input-styled search-input"
+                    <input type="text" id="stepSearch" class="input-styled search-input" aria-label="Search steps"
                         placeholder="Search steps, actions, or values...">
                 </div>
-                <select id="actionFilter" class="select-styled" style="width: 180px;">
+                <select id="actionFilter" class="select-styled" aria-label="Filter by action type" style="width: 180px;">
                     <option value="all">All Actions</option>
                     <option value="click">Click</option>
                     <option value="type">Type</option>
@@ -195,21 +201,30 @@
     </div>
 
     <!-- Export Progress -->
+    <!-- A-7 (WCAG 4.1.2/2.4.3/2.1.2): this was a bare <div> — no role, no
+         aria-modal, no label, focus never entered it, and Escape was scoped to
+         the Add Step modal only. It guards the product's terminal action. -->
     <div class="modal-overlay" id="progressModal">
-        <div class="modal-card" style="max-width: 400px; text-align: center;">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="progressTitle"
+            aria-describedby="progressStatus" style="max-width: 400px; text-align: center;">
+            <h3 id="progressTitle" class="visually-hidden">Exporting session</h3>
             <div id="exportLoader" style="margin-bottom: 24px;">
-                <svg width="50" height="50" viewBox="0 0 50 50">
+                <svg width="50" height="50" viewBox="0 0 50 50" aria-hidden="true">
                     <circle cx="25" cy="25" r="20" fill="none" stroke="var(--border)" stroke-width="4" />
-                    <circle id="progressCircle" cx="25" cy="25" r="20" fill="none" stroke="var(--primary)"
+                    <circle id="progressCircle" cx="25" cy="25" r="20" fill="none" stroke="var(--accent)"
                         stroke-width="4" stroke-dasharray="125.6" stroke-dashoffset="125.6" stroke-linecap="round"
                         style="transition: stroke-dashoffset 0.3s ease;" />
                 </svg>
             </div>
-            <h3 id="progressPercent" style="font-size: 24px;">0%</h3>
+            <h3 id="progressPercent" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                aria-valuetext="0 percent" style="font-size: 24px;">0%</h3>
             <p id="progressStatus" style="color: var(--text-muted); margin-top: 8px; margin-bottom: 24px;">Preparing
                 export...</p>
 
-            <button id="cancelExportBtn" class="btn btn-danger" style="width: 100%;">Cancel Export</button>
+            <!-- P2-... : cancelling an export destroys nothing, so it is not a
+                 destructive action and should not wear the danger colour that
+                 the genuine bulk-delete uses. -->
+            <button id="cancelExportBtn" class="btn btn-secondary" style="width: 100%;">Cancel Export</button>
         </div>
     </div>
 

@@ -258,11 +258,6 @@ class SelectorEngine {
     // Short IDs are almost always human-authored
     if (id.length < 4) return false;
 
-    // IDs with meaningful words are likely human-authored
-    if (/^(header|footer|nav|main|sidebar|content|menu|form|login|search|modal|dialog|btn|button|input|container|wrapper)[-_]/i.test(id)) {
-      return false;
-    }
-
     const patterns = [
       /^[a-f0-9]{12,}$/i,          // Long hex strings (12+ chars, was 8)
       /^ember\d+$/,                 // Ember.js (exact match)
@@ -274,9 +269,35 @@ class SelectorEngine {
       /^mui-\d+$/,                  // Material-UI
       /^[a-z]{1,3}\d{6,}$/i,       // 1-3 letter prefix + 6+ digits
       /^_[a-f0-9]{8,}$/i,          // Underscore + hex (CSS modules)
-      /^css-[a-z0-9]{6,}$/         // Emotion/styled-components
+      /^css-[a-z0-9]{6,}$/,        // Emotion/styled-components
+
+      // Q-6: the two schemes that churn hardest were both missed. Radix and
+      // Headless UI emit a useId suffix behind a readable prefix, so the bare
+      // /^:r…:$/ rule never fired; Angular Material's mat-input-3 has only one
+      // number group, so the two-group rule never fired either. Both scored the
+      // engine's maximum of 200 and are dead on the next mount.
+      /^(?:radix|headlessui|reach|rc)[-_]/i,            // Radix, Headless UI, Reach, rc-*
+      /^mat-[a-z-]+-\d+$/i,                             // Angular Material
+      /^downshift-\d+/i,                                // Downshift
+      /^(?:svelte|v)-[a-z0-9]{6,}$/i,                   // Svelte / Vue scope hashes
+      /:r[a-z0-9]+:/,                                   // any embedded useId token
+      /[-_][a-f0-9]{8,}$/i,                             // trailing hash after a readable prefix
+      /[-_]\d{10,}$/                                    // trailing epoch timestamp
     ];
-    return patterns.some(pattern => pattern.test(id));
+
+    // Q-6: this allowlist used to run BEFORE the pattern list and return early,
+    // so ids like "input-a1b2c3d4e5f6", "modal-9f8e7d6c5b4a" and
+    // "menu-1738294857392" were classified as human-authored purely because of
+    // their prefix — even though the very next block would have caught the
+    // hash. Patterns win; the allowlist now only rescues ids nothing matched.
+    if (patterns.some(pattern => pattern.test(id))) return true;
+
+    // IDs with meaningful words are likely human-authored
+    if (/^(header|footer|nav|main|sidebar|content|menu|form|login|search|modal|dialog|btn|button|input|container|wrapper)[-_]/i.test(id)) {
+      return false;
+    }
+
+    return false;
   }
 
   _addTestIdSelectors(element, candidates) {
@@ -517,7 +538,13 @@ class SelectorEngine {
     if (!className) return;
 
     // Case-insensitive, unanchored filter to catch state classes in compound names (LOW-018)
-    const STATE_CLASS_RE = /(ng-|is-|has-|active|selected|focus|hover|disabled)/i;
+    // Q-5: this was unanchored, so substring matching silently deleted ordinary
+    // semantic classes — "ng-" matches inside booki[ng-]form, prici[ng-]card,
+    // rati[ng-]stars, shippi[ng-]address; "active" matches inside
+    // interactive-card. Those elements lost every class and fell through to
+    // XPath. Anchor the framework prefixes and require exact matches for the
+    // state words.
+    const STATE_CLASS_RE = /^(?:ng-|is-|has-)|^(?:active|selected|focus|focused|hover|hovered|disabled)$/i;
     const classes = className.trim().split(/\s+/)
       .filter(c => c && !STATE_CLASS_RE.test(c));
 
@@ -904,6 +931,15 @@ class SelectorEngine {
 
     // Uniqueness is most important
     if (candidate.isUnique) score += 100;
+
+    // Q-4: _addXPathAbsolute pushes isUnique:true unconditionally and so
+    // collected the full +100, making the most brittle possible locator
+    // (/html/body/div[1]/div[3]/form/button[2]/svg/path) outrank every honest
+    // candidate that admits it is not unique. It is explicitly a last-resort
+    // fallback — `isStable: false` was set on it and read by nothing. Penalize
+    // positional selectors so they rank below any attribute-based option while
+    // still remaining available when nothing else resolves.
+    if (candidate.isStable === false) score -= 90;
 
     // Comprehensive strategy priority scores
     const strategyScores = {
