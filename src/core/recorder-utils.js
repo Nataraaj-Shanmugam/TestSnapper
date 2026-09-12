@@ -40,6 +40,19 @@
 export function _isConsecutiveDuplicate(stepData, lastStep) {
   if (!lastStep) return false;
 
+  // Q-2 (KNOWN LIMITATION, deliberately left as-is): clicks carry
+  // `value: null` and this check has no time bound, so three clicks on
+  // "Next page", a quantity stepper's "+", or "Add row" collapse into one
+  // recorded step — the exported document then claims one interaction where
+  // the user performed several.
+  //
+  // This is NOT an accidental bug: tests/background/recorder-utils.test.js
+  // ("returns true for click actions with identical selector even without
+  // value") asserts exactly this behaviour, so it was an intentional choice.
+  // Changing it is a product decision about which matters more — suppressing
+  // accidental double-fire, or faithfully recording deliberate repetition.
+  // A time-bounded rule would satisfy both but needs a step timestamp here.
+
   // Same action + same fieldName + same selector CSS + same URL = duplicate
   if (lastStep.action !== stepData.action) return false;
   if (lastStep.fieldName !== stepData.fieldName) return false;

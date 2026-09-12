@@ -780,28 +780,56 @@ function attachStepEventListeners() {
       e.preventDefault();
       const card = handle.closest('.step-card');
       if (!card) return;
-      const stepId = card.dataset.stepId;
-      const currentIndex = stepsData.findIndex(s => s.id === stepId);
-      if (currentIndex === -1) return;
-
-      const targetIndex = e.key === 'ArrowUp' ? currentIndex - 1 : currentIndex + 1;
-      if (targetIndex < 0 || targetIndex >= stepsData.length) return;
-
-      saveToHistory('reorder');
-      const [moved] = stepsData.splice(currentIndex, 1);
-      stepsData.splice(targetIndex, 0, moved);
-      await resequenceAndPersist();
-
-      // Restore focus to the moved handle
-      setTimeout(() => {
-        const handles = document.querySelectorAll('.step-handle');
-        if (handles[targetIndex]) handles[targetIndex].focus();
-      }, 50);
+      await moveStep(card.dataset.stepId, e.key === 'ArrowUp' ? -1 : 1);
     });
   });
 
   // UX-009: dragover/drop are handled once at the container level (see
   // setupEventListeners) so dropping past the last card still works.
+}
+
+/**
+ * A-4: move one step relative to its neighbours in the VISIBLE list.
+ *
+ * The previous inline handler took `currentIndex` from the full `stepsData`
+ * but then focused `handles[targetIndex]` from `querySelectorAll`, which only
+ * returns the cards a filter left on screen. With any search term or action
+ * filter active the two index spaces diverge: the move swapped against hidden
+ * neighbours (so the visible order appeared not to change) and focus landed on
+ * an unrelated step or was dropped to <body> entirely. Nothing was announced.
+ *
+ * Operating on the filtered list makes "up" and "down" mean what the user sees,
+ * and re-querying by data-step-id removes the index/DOM race the 50ms
+ * setTimeout was papering over.
+ *
+ * @param {string} stepId - id of the step to move
+ * @param {number} delta  - -1 to move up, +1 to move down
+ */
+async function moveStep(stepId, delta) {
+  const visible = filterSteps();
+  const vIdx = visible.findIndex(s => s.id === stepId);
+  if (vIdx === -1) return;
+
+  const neighbour = visible[vIdx + delta];
+  if (!neighbour) return; // already at the edge of the visible list
+
+  const from = stepsData.findIndex(s => s.id === stepId);
+  const to = stepsData.findIndex(s => s.id === neighbour.id);
+  if (from === -1 || to === -1) return;
+
+  saveToHistory('reorder');
+  const [moved] = stepsData.splice(from, 1);
+  stepsData.splice(to, 0, moved);
+  await resequenceAndPersist();
+
+  // Re-query by identity, never by index — the list has just re-rendered.
+  const handle = document.querySelector(
+    `.step-card[data-step-id="${CSS.escape(stepId)}"] .step-handle`
+  );
+  if (handle) handle.focus();
+
+  // A-4 (WCAG 4.1.3): the move used to be completely silent.
+  showMessage(`Step moved to position ${vIdx + delta + 1} of ${visible.length}.`, 'info');
 }
 
 // ==================== Add Step Modal ====================
