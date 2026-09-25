@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/content/content.js"
+        ],
+        "createdAt": "2026-09-12T17:06:55.417Z",
+        "reason": "Claude: toast severity indicator, not card trim. content.js:855 maps accentColor by type (info/success/warning/error) and :871 binds it to border-left on .toast; message text carries the meaning independently, so it is not color-only signaling. Pre-existing published code, outside the scope of the v1.1.7 findings fix."
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "src/ui/review/review-standalone.html"
+        ],
+        "createdAt": "2026-09-25T11:31:02.120Z",
+        "reason": "Claude: #screenshotPreview is a JS-populated upload preview, not a placeholder. It ships with the hidden attribute and review-standalone.js only sets hidden=false after FileReader assigns src, so it never renders as a broken box."
+      }
+    ]
+  }
+}

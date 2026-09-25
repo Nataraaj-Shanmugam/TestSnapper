@@ -41,6 +41,7 @@ export class ExportService {
     this.storage = storage;
     this.cancelledExports = new Set();
     this._imgOptsMap = new Map(); // per-session imgOpts, prevents cross-export races (MED-020)
+    this._exportOptsMap = new Map(); // per-session export options (v1.2 R-004)
     Logger.debug('ExportService initialized');
   }
 
@@ -82,12 +83,30 @@ export class ExportService {
   /**
    * Main export orchestrator
    */
-  async exportSession(sessionId, format, progressCallback) {
+  async exportSession(sessionId, format, progressCallback, options = {}) {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
 
     // Resolve per-session so concurrent exports don't share state (MED-020).
-    this._imgOptsMap.set(sessionId, await this._resolveExportImageOpts());
+    //
+    // v1.2 "Configure Export" (R-004): the review page offers "Include
+    // screenshots" and a screenshot size. On the v1.2 branch those controls
+    // were threaded through an options param this method never had on the
+    // current line — porting the UI alone would have shipped checkboxes that
+    // did nothing. Size rides on the existing per-session image options, which
+    // every image call site already spreads AFTER its hardcoded defaults, so a
+    // maxWidth here wins everywhere (DOCX, DOCX-HTML fallback, PDF).
+    const imgOpts = await this._resolveExportImageOpts();
+    const SIZE_CAPS = { full: null, medium: 800, small: 400 };
+    const cap = SIZE_CAPS[options.screenshotSize];
+    if (cap) {
+      imgOpts.maxWidth = cap;
+      imgOpts.displayWidth = Math.min(600, cap);
+    }
+    this._imgOptsMap.set(sessionId, imgOpts);
+    this._exportOptsMap.set(sessionId, {
+      includeScreenshots: options.includeScreenshots !== false
+    });
 
     Logger.info('Starting export:', format, 'for session:', sessionId);
 
@@ -144,6 +163,7 @@ export class ExportService {
     } finally {
       this._clearCancellation(sessionId);
       this._imgOptsMap.delete(sessionId);
+      this._exportOptsMap.delete(sessionId);
     }
   }
 
@@ -159,6 +179,23 @@ export class ExportService {
    * @private
    * @returns {Promise<{format: string, quality: number}>}
    */
+  /**
+   * Screenshot assets for an export, honouring "Include screenshots".
+   *
+   * All three document builders (DOCX, DOCX-HTML fallback, PDF) index assets
+   * by stepId from this one call, so returning [] here omits every screenshot
+   * uniformly without touching each builder's layout code.
+   *
+   * @param {string} sessionId - export key for the per-session option maps
+   * @param {string} storageSessionId - id used by the storage layer
+   * @returns {Promise<Array>}
+   */
+  async _getExportAssets(sessionId, storageSessionId) {
+    const opts = this._exportOptsMap.get(sessionId);
+    if (opts && opts.includeScreenshots === false) return [];
+    return this.storage.getAllAssets(storageSessionId);
+  }
+
   async _resolveExportImageOpts() {
     let pref = 'auto';
     try {
@@ -500,7 +537,7 @@ export class ExportService {
     notify({ percent: 30, status: 'Building DOCX...' });
 
     // stepId → asset index; images are loaded lazily as each step is reached.
-    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const screenshotAssets = await this._getExportAssets(sessionId, session.id);
     const assetIndex = new Map();
     for (const asset of screenshotAssets) {
       if (asset.stepId) assetIndex.set(asset.stepId, asset);
@@ -679,7 +716,7 @@ export class ExportService {
     // Build a lookup: stepId -> asset (reference only, don't load yet)
     // Load images one at a time as we encounter each step
     // ------------------------------------------------------------------
-    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const screenshotAssets = await this._getExportAssets(sessionId, session.id);
     // Build a stepId → asset index (not the data URLs themselves)
     const assetIndex = new Map();
     for (const asset of screenshotAssets) {
@@ -922,7 +959,7 @@ export class ExportService {
     // EXP-IMG-001: build a stepId → asset index so every screenshot step can
     // embed its image. PERF-003: keep only one asset's bytes live at a time —
     // load + embed + null out + delete from the index as we go.
-    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const screenshotAssets = await this._getExportAssets(sessionId, session.id);
     const assetIndex = new Map();
     for (const asset of screenshotAssets) {
       if (asset.stepId) assetIndex.set(asset.stepId, asset);

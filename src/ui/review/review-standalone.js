@@ -96,6 +96,20 @@ function debounce(fn, delay = 300) {
   };
 }
 
+/**
+ * Grow a textarea to fit its content.
+ *
+ * The previous version set `height = scrollHeight`. scrollHeight excludes the
+ * border, but these textareas are `box-sizing: border-box`, so the height it
+ * set included the border and left the content permanently 2px short — every
+ * description was clipped by exactly its border width. Add the border back.
+ */
+function autosizeTextarea(textarea) {
+  textarea.style.height = 'auto';
+  const border = textarea.offsetHeight - textarea.clientHeight;
+  textarea.style.height = (textarea.scrollHeight + border) + 'px';
+}
+
 // ==================== Initialization ====================
 
 async function init() {
@@ -123,6 +137,7 @@ async function init() {
 }
 
 function setupEventListeners() {
+  setupV12Features();
   bulkDeleteBtn.addEventListener('click', handleBulkDelete);
   saveExportBtn.addEventListener('click', handleSaveAndExport);
   cancelBtn.addEventListener('click', () => window.close());
@@ -321,6 +336,14 @@ async function loadSession() {
     sessionNameInput.value = sessionData.sessionName ||
       `Session ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionStepCount.textContent = stepsData.length;
+    // v1.2 sidebar: when the session was recorded.
+    const sessionDateEl = document.getElementById('sessionDate');
+    if (sessionDateEl) {
+      const created = sessionData.createdAt ? new Date(sessionData.createdAt) : null;
+      sessionDateEl.textContent = created && !isNaN(created)
+        ? created.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+        : '-';
+    }
 
     // Author — default to the last-used author (convenience) when this
     // session doesn't have one set yet.
@@ -607,6 +630,20 @@ async function renderSteps() {
     }
   }
 
+  // R-001: table view renders the SAME filtered list the cards use, so search
+  // and the action filter behave identically in both views.
+  const tableContainer = document.getElementById('tableContainer');
+  if (currentView === 'table') {
+    container.hidden = true;
+    if (tableContainer) {
+      tableContainer.hidden = false;
+      renderTableView(visibleSteps);
+    }
+    return;
+  }
+  container.hidden = false;
+  if (tableContainer) tableContainer.hidden = true;
+
   if (visibleSteps.length === 0) {
     container.innerHTML = '';
     return;
@@ -661,28 +698,38 @@ async function renderSteps() {
                    style="cursor: pointer; accent-color: var(--accent);">
           </div>
 
-          <!-- main content (textarea + optional screenshot) -->
+          <!-- main content: description + meta line (v1.2 design) -->
           <div class="step-main">
             <textarea
               class="step-description-area"
               data-step-id="${safeId}"
               placeholder="Describe this step..."
+              aria-label="Description for step ${badgeNum}"
               draggable="false"
               rows="1">${safeDescription}</textarea>
 
-            ${screenshotData ? `
-              <div class="screenshot-container" id="img-${safeId}" data-step-id="${safeId}">
-                <img src="${screenshotData}" alt="Interaction Screenshot" loading="lazy">
-              </div>
-            ` : ''}
+            <!-- P2-4: the card used to show none of what was captured — action,
+                 field and URL were stored on every step and rendered nowhere,
+                 so filtering to "Navigate" looked identical to "Click". The
+                 selector is deliberately NOT shown (acd82c4, reconfirmed for
+                 this port). -->
+            ${renderStepMeta(step)}
           </div>
 
-          <!-- delete button – top-aligned -->
-          <div class="step-actions" style="flex-shrink: 0; padding-top: 4px;">
-            <button class="icon-btn delete-btn" title="Delete Step" aria-label="Delete step ${badgeNum}"
-                    data-step-id="${safeId}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
-              ✕
+          <!-- v1.2: screenshot as a right-hand thumbnail instead of a
+               full-width block. This also resolves P2-3 — full-width images
+               made a 200-step session ~110,000px tall. -->
+          ${screenshotData ? `
+            <button type="button" class="step-thumb" data-step-id="${safeId}"
+                    aria-label="View screenshot for step ${badgeNum}" title="View screenshot">
+              <img src="${screenshotData}" alt="" loading="lazy">
             </button>
+          ` : ''}
+
+          <!-- delete button – top-aligned -->
+          <div class="step-actions">
+            <button class="icon-btn delete-btn" title="Delete Step" aria-label="Delete step ${badgeNum}"
+                    data-step-id="${safeId}">✕</button>
           </div>
         </div>
       </div>
@@ -695,6 +742,74 @@ async function renderSteps() {
   }).join('');
 
   attachStepEventListeners();
+}
+
+/**
+ * v1.2 design: the badge/label shown for each recorded action.
+ *
+ * A fixed map rather than interpolating step.action, for two reasons: the
+ * value feeds a CSS attribute selector and visible text, so it must never be
+ * attacker-influenced; and several raw actions intentionally share one visual
+ * style (select, select_radio and check are all "a choice was made").
+ */
+const ACTION_BADGES = {
+  click:        { style: 'click',      label: 'Click' },
+  type:         { style: 'type',       label: 'Type' },
+  navigate:     { style: 'navigate',   label: 'Navigate' },
+  select:       { style: 'select',     label: 'Select' },
+  select_radio: { style: 'select',     label: 'Radio' },
+  check:        { style: 'select',     label: 'Check' },
+  submit:       { style: 'submit',     label: 'Submit' },
+  screenshot:   { style: 'screenshot', label: 'Screenshot' },
+  apicall:      { style: 'apicall',    label: 'API call' }
+};
+
+/** Path + query of a URL, for a compact meta line. Falls back to the raw string. */
+function shortUrl(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  try {
+    const u = new URL(raw);
+    return (u.pathname + u.search) || '/';
+  } catch (_) {
+    return raw;
+  }
+}
+
+/**
+ * The meta line under a step's description: action badge, field, URL and —
+ * when the value was masked — a redaction marker.
+ *
+ * UX F-22: every step carries isSensitive, but no UI read it, so a compliance
+ * user exporting audit evidence could neither confirm masking happened nor
+ * spot a value that should have been masked and wasn't. The marker also warns
+ * that screenshots are NOT redacted, since the text column looking clean makes
+ * the screenshot beside it look trustworthy when it is not.
+ */
+function renderStepMeta(step) {
+  const badge = ACTION_BADGES[step.action] || { style: 'default', label: 'Step' };
+  const parts = [
+    `<span class="step-action" data-action="${badge.style}">${badge.label}</span>`
+  ];
+
+  if (step.fieldName && step.action !== 'navigate' && step.action !== 'screenshot') {
+    parts.push(`<span class="step-field">${Utils.escapeHtml(step.fieldName)}</span>`);
+  }
+
+  const url = step.action === 'navigate' ? (step.value || step.url) : step.url;
+  const path = shortUrl(url);
+  if (path) {
+    parts.push(`<span class="step-url" title="${Utils.escapeHtml(url)}">${Utils.escapeHtml(path)}</span>`);
+  }
+
+  if (step.isSensitive) {
+    parts.push(
+      `<span class="step-redacted" title="This value was masked before saving. Screenshots are not redacted — check them before sharing.">` +
+      `<svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>` +
+      `Redacted</span>`
+    );
+  }
+
+  return `<div class="step-meta">${parts.join('')}</div>`;
 }
 
 function generateStepDescription(step) {
@@ -754,12 +869,8 @@ function attachStepEventListeners() {
 
   // Auto-resize textareas
   document.querySelectorAll('.step-description-area').forEach(textarea => {
-    const resize = () => {
-      textarea.style.height = 'auto';
-      textarea.style.height = (textarea.scrollHeight) + 'px';
-    };
-    textarea.addEventListener('input', resize);
-    resize(); // Initial
+    textarea.addEventListener('input', () => autosizeTextarea(textarea));
+    autosizeTextarea(textarea); // Initial
 
     textarea.addEventListener('blur', async (e) => {
       const stepId = e.target.dataset.stepId;
@@ -812,6 +923,11 @@ function attachStepEventListeners() {
       );
       if (moved) moved.focus();
     });
+  });
+
+  // v1.2: thumbnails open the full-size screenshot.
+  document.querySelectorAll('.step-thumb').forEach(btn => {
+    btn.addEventListener('click', () => openScreenshotViewer(btn.dataset.stepId));
   });
 
   // A-3: the first card cannot move up and the last cannot move down. Use
@@ -882,8 +998,10 @@ function openAddStepModal(afterStepId, triggerElement) {
   newStepDescription.value = '';
   newStepAction.value = 'click';
   newStepScreenshotBlob = null;
-  screenshotPreview.style.display = 'none';
-  screenshotPreview.src = '';
+  // v1.2 port: toggled via the `hidden` attribute rather than style.display,
+  // so the markup and the script agree on one mechanism.
+  screenshotPreview.hidden = true;
+  screenshotPreview.removeAttribute('src');
   addStepModal.classList.add('active');
   newStepDescription.focus();
 }
@@ -912,7 +1030,7 @@ function processScreenshotFile(file) {
   const reader = new FileReader();
   reader.onload = (e) => {
     screenshotPreview.src = e.target.result;
-    screenshotPreview.style.display = 'block';
+    screenshotPreview.hidden = false;
     screenshotUpload.classList.add('has-image');
   };
   reader.readAsDataURL(file);
@@ -1174,6 +1292,302 @@ async function resequenceAndPersist() {
 
 // ==================== Export + Progress ====================
 
+// ==================== v1.2 features (ported) ====================
+//
+// Re-implemented on the current code rather than copied: v1.2's own versions
+// interpolated step.id into attributes unescaped, numbered rows by filtered
+// index instead of step.sequence, called a storage variable (fsStorage) that
+// does not exist here, and mutated steps before writes with no rollback.
+
+// R-001: current view. Per-viewer convenience, so localStorage (guarded —
+// the accessor itself can throw in some contexts).
+let currentView = 'cards';
+try {
+  if (localStorage.getItem('testsnapper_view') === 'table') currentView = 'table';
+} catch (_) { /* default to cards */ }
+
+function switchView(view) {
+  currentView = view === 'table' ? 'table' : 'cards';
+  try { localStorage.setItem('testsnapper_view', currentView); } catch (_) { /* non-critical */ }
+  const cardsBtn = document.getElementById('viewCardsBtn');
+  const tableBtn = document.getElementById('viewTableBtn');
+  cardsBtn?.classList.toggle('active', currentView === 'cards');
+  tableBtn?.classList.toggle('active', currentView === 'table');
+  cardsBtn?.setAttribute('aria-pressed', String(currentView === 'cards'));
+  tableBtn?.setAttribute('aria-pressed', String(currentView === 'table'));
+  // "Add step at end" belongs to the card layout.
+  const addFooter = document.querySelector('.add-step-footer');
+  if (addFooter) addFooter.hidden = currentView === 'table';
+}
+
+// Columns a user may edit in the table. A fixed allowlist — data-field is read
+// back from the DOM on blur and used as a property key, so it must never be
+// free-form.
+const TABLE_EDITABLE = {
+  fieldName: 'Field name',
+  value: 'Value',
+  description: 'Description'
+};
+
+function tableCellValue(step, field) {
+  return field === 'description'
+    ? (step.description || generateStepDescription(step))
+    : (step[field] || '');
+}
+
+function editableCell(step, field, n) {
+  return `<td contenteditable="true" class="table-editable" role="textbox"
+      data-step-id="${Utils.escapeHtml(step.id)}" data-field="${field}"
+      aria-label="${TABLE_EDITABLE[field]} for step ${n}">${Utils.escapeHtml(tableCellValue(step, field))}</td>`;
+}
+
+function renderTableView(steps) {
+  const container = document.getElementById('tableContainer');
+  if (!container) return;
+  if (!steps.length) { container.innerHTML = ''; return; }
+
+  const rows = steps.map((s, i) => {
+    const n = s.sequence || (i + 1);
+    const badge = ACTION_BADGES[s.action] || { style: 'default', label: 'Step' };
+    const url = s.action === 'navigate' ? (s.value || s.url) : s.url;
+    // Redacted values are read-only. v1.2 made them editable, so correcting a
+    // "••••" cell would have overwritten the stored value with mask characters.
+    const valueCell = s.isSensitive
+      ? `<td class="table-sensitive">${Utils.escapeHtml(s.value || '')} <span class="step-redacted">Redacted</span></td>`
+      : editableCell(s, 'value', n);
+    return `<tr>
+      <td class="table-time">${n}</td>
+      <td><span class="step-action" data-action="${badge.style}">${badge.label}</span></td>
+      ${editableCell(s, 'fieldName', n)}
+      ${valueCell}
+      ${editableCell(s, 'description', n)}
+      <td class="table-url" title="${Utils.escapeHtml(url || '')}">${Utils.escapeHtml(shortUrl(url))}</td>
+      <td class="table-time">${s.timestamp ? Utils.escapeHtml(new Date(s.timestamp).toLocaleTimeString()) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // No Selector column — acd82c4 removed locators, reconfirmed for this port.
+  container.innerHTML = `
+    <table class="review-table">
+      <caption class="visually-hidden">Recorded steps</caption>
+      <thead><tr>
+        <th scope="col">#</th><th scope="col">Action</th><th scope="col">Field name</th>
+        <th scope="col">Value</th><th scope="col">Description</th><th scope="col">URL</th><th scope="col">Time</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  container.querySelectorAll('.table-editable').forEach(cell => {
+    cell.addEventListener('blur', handleTableCellEdit);
+    // Enter commits rather than inserting a line break into a single-line field.
+    cell.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); cell.blur(); }
+    });
+  });
+}
+
+async function handleTableCellEdit(e) {
+  const cell = e.currentTarget;
+  const field = cell.dataset.field;
+  if (!Object.prototype.hasOwnProperty.call(TABLE_EDITABLE, field)) return;
+  const step = stepsData.find(s => s.id === cell.dataset.stepId);
+  if (!step) return;
+
+  const newVal = cell.innerText.trim();
+  const oldVal = tableCellValue(step, field);
+  if (newVal === oldVal) return;
+
+  saveToHistory('edit');
+  const previous = step[field];
+  step[field] = newVal;
+  try {
+    await storage.updateStep(step);
+  } catch (err) {
+    // Roll back — otherwise the table shows an edit that was never persisted
+    // (the same failure shape as P1-6).
+    step[field] = previous;
+    cell.innerText = oldVal;
+    showMessage(`Couldn't save that edit — ${err.message}. The previous value was restored.`, 'error');
+  }
+}
+
+// R-004: export configuration. Per-viewer convenience, so localStorage.
+const SCREENSHOT_SIZES = ['full', 'medium', 'small'];
+
+function readExportConfig() {
+  const size = document.getElementById('ecScreenshotSize')?.value;
+  const config = {
+    includeScreenshots: document.getElementById('ecIncludeScreenshots')?.checked !== false,
+    screenshotSize: SCREENSHOT_SIZES.includes(size) ? size : 'full'
+  };
+  try { localStorage.setItem('testsnapper_export_config', JSON.stringify(config)); } catch (_) { /* non-critical */ }
+  return config;
+}
+
+function restoreExportConfig() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('testsnapper_export_config') || 'null'); } catch (_) { /* ignore */ }
+  if (!saved || typeof saved !== 'object') return;
+  const include = document.getElementById('ecIncludeScreenshots');
+  const size = document.getElementById('ecScreenshotSize');
+  if (include && typeof saved.includeScreenshots === 'boolean') include.checked = saved.includeScreenshots;
+  if (size && SCREENSHOT_SIZES.includes(saved.screenshotSize)) size.value = saved.screenshotSize;
+}
+
+function showExportPreview() {
+  const config = readExportConfig();
+  const content = document.getElementById('exportPreviewContent');
+  if (!content) return;
+  // Exports include every step in sequence order regardless of on-screen
+  // filters, so the preview does too — otherwise it would misrepresent the file.
+  const preview = [...stepsData]
+    .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+    .slice(0, 5);
+  const sizeLabel = { full: 'full size', medium: '800px', small: '400px' }[config.screenshotSize];
+  const rows = preview.map(s => {
+    const badge = ACTION_BADGES[s.action] || { style: 'default', label: 'Step' };
+    return `<tr>
+      <td class="table-time">${s.sequence || ''}</td>
+      <td><span class="step-action" data-action="${badge.style}">${badge.label}</span></td>
+      <td>${Utils.escapeHtml(s.description || generateStepDescription(s))}</td>
+    </tr>`;
+  }).join('');
+  content.innerHTML = `
+    <p class="preview-note">Screenshots: ${config.includeScreenshots ? `included (${sizeLabel})` : 'omitted'} ·
+      ${stepsData.length} step${stepsData.length === 1 ? '' : 's'} in the full export.</p>
+    <table class="review-table">
+      <thead><tr><th scope="col">#</th><th scope="col">Action</th><th scope="col">Step</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  openDialog(document.getElementById('exportPreviewModal'));
+}
+
+// R-003: privacy audit, driven by the authoritative isSensitive flag. v1.2
+// counted redactions by matching the literal strings '[REDACTED]' and '***',
+// but the redactor writes '••••••••', '***-**-****', '**** **** **** ****' and
+// others — so its count was effectively always zero.
+function showPrivacyAudit() {
+  const content = document.getElementById('privacyAuditContent');
+  if (!content) return;
+  const redacted = [...stepsData]
+    .filter(s => s.isSensitive)
+    .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  const withShots = redacted.filter(s => _assetCache && _assetCache.has(s.id)).length;
+
+  let html = `<p class="audit-summary"><strong>${redacted.length}</strong> value${redacted.length === 1 ? '' : 's'} masked before saving.</p>`;
+  if (withShots) {
+    html += `<p class="audit-warning">Of these, <strong>${withShots}</strong> ${withShots === 1 ? 'has' : 'have'} a screenshot.
+      Screenshots are <strong>not</strong> redacted — the value may be visible in the image. Review them before sharing.</p>`;
+  }
+  if (redacted.length) {
+    html += `<table class="review-table">
+      <thead><tr><th scope="col">#</th><th scope="col">Field</th><th scope="col">Stored value</th><th scope="col">Screenshot</th></tr></thead>
+      <tbody>${redacted.map(s => `<tr>
+        <td class="table-time">${s.sequence || ''}</td>
+        <td>${Utils.escapeHtml(s.fieldName || '—')}</td>
+        <td class="table-sensitive">${Utils.escapeHtml(s.value || '—')}</td>
+        <td>${_assetCache && _assetCache.has(s.id) ? 'Yes — review' : '—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } else {
+    html += '<p class="audit-empty">No values in this session were identified as sensitive.</p>';
+  }
+  content.innerHTML = html;
+  openDialog(document.getElementById('privacyAuditModal'));
+}
+
+function setupV12Features() {
+  switchView(currentView);
+  restoreExportConfig();
+
+  // Descriptions were sized once at render and never again, so resizing the
+  // window re-wrapped the text inside a fixed height and clipped it.
+  window.addEventListener('resize', debounce(() => {
+    document.querySelectorAll('.step-description-area').forEach(autosizeTextarea);
+  }, 150));
+
+  document.getElementById('viewCardsBtn')?.addEventListener('click', () => { switchView('cards'); renderSteps(); });
+  document.getElementById('viewTableBtn')?.addEventListener('click', () => { switchView('table'); renderSteps(); });
+  document.getElementById('previewExportBtn')?.addEventListener('click', showExportPreview);
+  document.getElementById('privacyAuditBtn')?.addEventListener('click', showPrivacyAudit);
+  document.getElementById('ecIncludeScreenshots')?.addEventListener('change', readExportConfig);
+  document.getElementById('ecScreenshotSize')?.addEventListener('change', readExportConfig);
+
+  wireDialog(document.getElementById('screenshotViewer'), document.getElementById('closeScreenshotViewer'));
+  wireDialog(document.getElementById('exportPreviewModal'), document.getElementById('closeExportPreview'));
+  wireDialog(document.getElementById('privacyAuditModal'), document.getElementById('closePrivacyAudit'));
+
+  // Mobile sidebar.
+  const toggle = document.getElementById('sidebarToggle');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  if (toggle && sidebar && overlay) {
+    const setOpen = (open) => {
+      sidebar.classList.toggle('open', open);
+      overlay.classList.toggle('active', open);
+      toggle.setAttribute('aria-expanded', String(open));
+    };
+    toggle.addEventListener('click', () => setOpen(!sidebar.classList.contains('open')));
+    overlay.addEventListener('click', () => setOpen(false));
+  }
+}
+
+// ==================== Generic dialog helper (v1.2 port) ====================
+//
+// The v1.2 design adds three dialogs (screenshot viewer, export preview,
+// privacy audit). v1.2's own versions were bare <div>s shown with inline
+// display:flex — no role, no focus management, no Escape, background still
+// tabbable. Rather than repeat A-7's fix three times, they share this helper.
+
+const _dialogReturnFocus = new WeakMap();
+
+function openDialog(overlay) {
+  if (!overlay) return;
+  _dialogReturnFocus.set(overlay, document.activeElement);
+  overlay.classList.add('active');
+  const appWrapper = document.querySelector('.app-wrapper');
+  if (appWrapper) appWrapper.inert = true;
+  const first = overlay.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if (first) first.focus();
+}
+
+function closeDialog(overlay) {
+  if (!overlay || !overlay.classList.contains('active')) return;
+  overlay.classList.remove('active');
+  // Only release inert when no other dialog is still open.
+  if (!document.querySelector('.modal-overlay.active')) {
+    const appWrapper = document.querySelector('.app-wrapper');
+    if (appWrapper) appWrapper.inert = false;
+  }
+  const back = _dialogReturnFocus.get(overlay);
+  if (back && typeof back.focus === 'function') back.focus();
+}
+
+/** Wire close button, backdrop click and Escape for a dialog overlay. */
+function wireDialog(overlay, closeBtn) {
+  if (!overlay) return;
+  if (closeBtn) closeBtn.addEventListener('click', () => closeDialog(overlay));
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeDialog(overlay); });
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDialog(overlay); }
+  });
+}
+
+function openScreenshotViewer(stepId) {
+  const overlay = document.getElementById('screenshotViewer');
+  const img = document.getElementById('screenshotViewerImg');
+  const title = document.getElementById('screenshotViewerTitle');
+  const thumb = document.querySelector(`.step-thumb[data-step-id="${CSS.escape(stepId)}"] img`);
+  if (!overlay || !img || !thumb) return;
+  const step = stepsData.find(s => s.id === stepId);
+  const n = step?.sequence || '';
+  img.src = thumb.src;
+  img.alt = `Screenshot for step ${n}`;
+  img.hidden = false;
+  if (title) title.textContent = n ? `Step ${n} — screenshot` : 'Screenshot';
+  openDialog(overlay);
+}
+
 // A-7: remembers what to hand focus back to when the export modal closes.
 let _progressTriggerElement = null;
 
@@ -1264,9 +1678,11 @@ async function handleSaveAndExport() {
     // a large DOCX.
     showProgressModal();
 
+    // R-004: the Configure Export panel's choices now actually reach the
+    // export (v1.2's UI shipped without the service-side plumbing).
     const result = await exportService.exportSession(sessionId, format, (progress) => {
       handleExportProgress(progress);
-    });
+    }, readExportConfig());
 
     let downloadUrl;
     const filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');

@@ -1,125 +1,157 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- SEC-002: Content Security Policy for enhanced security -->
-    <!-- UX-018: Google Fonts removed for offline reliability and privacy -->
+    <!-- SEC-002: Content Security Policy for enhanced security.
+         v1.2 port: the v1.2 branch relaxed this to allow fonts.googleapis.com /
+         fonts.gstatic.com. That was deliberately NOT carried over — UX-018 removed
+         Google Fonts for offline reliability and privacy, and zero network egress
+         is the product's core compliance claim. The v1.2 type stack falls back to
+         system fonts (see review-standalone.css). -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self';">
     <title>Review Session - TestSnapper</title>
-    <!-- UX-006: Apply theme before first paint to prevent flash -->
+    <!-- UX-006: Apply theme before first paint to prevent flash. v1.2 deleted this
+         script; kept here because removing it reintroduces the flash. -->
     <script src="../theme-init.js"></script>
     <link rel="stylesheet" href="review-standalone.css">
 </head>
 
 <body>
     <div class="app-wrapper">
+        <!-- Mobile sidebar toggle -->
+        <button id="sidebarToggle" class="sidebar-toggle" title="Toggle Sidebar" aria-label="Toggle sidebar"
+            aria-controls="sidebar" aria-expanded="false">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <!-- Sidebar overlay for mobile -->
+        <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+        <!-- Sidebar: session metadata + export -->
+        <aside class="sidebar" id="sidebar" aria-labelledby="sidebarHeading">
+            <div class="header-logo">
+                <h2 id="sidebarHeading">
+                    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> TestSnapper
+                </h2>
+            </div>
+
+            <div class="session-settings-card">
+                <div class="field-group">
+                    <label for="sessionName">Session Name</label>
+                    <input type="text" id="sessionName" class="input-styled" placeholder="Session name..."
+                        autocomplete="off">
+                </div>
+
+                <!-- Kept from 6cd9544 (July): report metadata. v1.2 predates this
+                     feature and dropped all three fields. -->
+                <div class="field-group">
+                    <label for="sessionAuthor">Author</label>
+                    <input type="text" id="sessionAuthor" class="input-styled" placeholder="Your name..."
+                        autocomplete="off">
+                </div>
+
+                <div class="field-row">
+                    <div class="field-group">
+                        <label for="sessionStartTime">Start Time</label>
+                        <input type="datetime-local" id="sessionStartTime" class="input-styled">
+                    </div>
+                    <div class="field-group">
+                        <label for="sessionEndTime">End Time</label>
+                        <input type="datetime-local" id="sessionEndTime" class="input-styled">
+                    </div>
+                </div>
+
+                <div class="field-group">
+                    <label for="exportFormat">Export Format</label>
+                    <select id="exportFormat" class="select-styled">
+                        <option value="docx">Microsoft Word (.docx)</option>
+                        <option value="pdf">PDF Document (.pdf)</option>
+                        <option value="csv">Excel / CSV (.csv)</option>
+                        <option value="json">JSON Format (Data)</option>
+                        <option value="markdown">Markdown (.md)</option>
+                    </select>
+                </div>
+
+                <div class="meta-info">
+                    <div class="meta-item">
+                        <span class="meta-label">Created:</span>
+                        <span id="sessionDate" class="meta-value">-</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Steps:</span>
+                        <span id="sessionStepCount" class="meta-value">-</span>
+                    </div>
+                </div>
+
+                <!-- R-004: Export configuration.
+                     "Include selectors" (ecIncludeSelectors) deliberately omitted —
+                     acd82c4 removed locators from every export, and that decision
+                     was reconfirmed when this design was ported. -->
+                <details id="exportConfigDetails" class="export-config">
+                    <summary>Configure Export</summary>
+                    <div class="export-config-body">
+                        <label class="export-config-label"><input type="checkbox" id="ecIncludeScreenshots" checked> Include screenshots</label>
+                        <!-- v1.2 also offered "Only failed steps". Removed: it filtered on
+                             step.failed, a field no step has ever had (no pass/fail
+                             verdict exists), so ticking it exported an EMPTY document. -->
+                        <label class="export-config-label export-config-stack" for="ecScreenshotSize">Screenshot size
+                            <select id="ecScreenshotSize" class="select-styled">
+                                <!-- Defaults to Full: v1.2 defaulted to Medium, which would have
+                                     silently downsized every existing user's exports from 1920px. -->
+                                <option value="full" selected>Full</option>
+                                <option value="medium">Medium (800px)</option>
+                                <option value="small">Small (400px)</option>
+                            </select>
+                        </label>
+                        <button id="previewExportBtn" type="button" class="btn btn-secondary btn-block">Preview (first 5)</button>
+                    </div>
+                </details>
+
+                <div class="sidebar-actions">
+                    <button id="saveExportBtn" class="btn btn-primary">
+                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Documentation
+                    </button>
+
+                    <button id="cancelBtn" class="btn btn-secondary">
+                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Done
+                    </button>
+                </div>
+            </div>
+        </aside>
+
         <!-- Main Review Area -->
         <main class="main-content">
             <header class="page-header">
                 <div>
-                    <h1 class="page-title">
-                        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-                        Review & Refine
-                    </h1>
-                    <p style="color: var(--text-muted); font-size: 14px;">Review your captured interactions and export
-                        your documentation.</p>
+                    <h1>Review &amp; Refine</h1>
+                    <p>Review your captured interactions and export your documentation.</p>
                 </div>
                 <div class="header-actions">
-                    <button id="themeToggle" class="icon-btn" title="Toggle Theme"
-                        style="width: 42px; height: 42px;">
+                    <button id="themeToggle" class="icon-btn icon-btn-lg" title="Toggle Theme" aria-label="Toggle theme">
                         <span class="icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
                     </button>
-                    <button id="bulkDeleteBtn" class="btn btn-danger" disabled
-                        style="height: 42px; padding: 0 16px; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 14px; white-space: nowrap;">
-                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> Delete Selection
+                    <button id="bulkDeleteBtn" class="btn btn-danger bulk-delete-btn" disabled>
+                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> Delete Selection
                     </button>
-                    <button id="undoBtn" class="icon-btn" disabled title="Undo (Ctrl+Z)"
-                        style="width: 42px; height: 42px;">
+                    <button id="undoBtn" class="icon-btn icon-btn-lg" disabled title="Undo (Ctrl+Z)" aria-label="Undo last action">
                         <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                     </button>
                 </div>
             </header>
 
-            <!-- Session Settings / Export bar — sits between the header and the search toolbar -->
-            <aside class="sidebar" id="sidebar">
-            <div class="session-settings-card">
-                <div class="settings-fields">
-                    <div class="settings-row">
-                        <div class="field-group">
-                            <label for="sessionName">Session Name</label>
-                            <input type="text" id="sessionName" class="input-styled" placeholder="Session name..."
-                                autocomplete="off">
-                        </div>
-
-                        <div class="field-group">
-                            <label for="sessionAuthor">Author</label>
-                            <input type="text" id="sessionAuthor" class="input-styled" placeholder="Your name..."
-                                autocomplete="off">
-                        </div>
-                    </div>
-
-                    <div class="settings-row">
-                        <div class="field-group">
-                            <label for="sessionStartTime">Start Time</label>
-                            <input type="datetime-local" id="sessionStartTime" class="input-styled">
-                        </div>
-
-                        <div class="field-group">
-                            <label for="sessionEndTime">End Time</label>
-                            <input type="datetime-local" id="sessionEndTime" class="input-styled">
-                        </div>
-
-                        <div class="field-group">
-                            <label for="exportFormat">Export Format</label>
-                            <select id="exportFormat" class="select-styled">
-                                <option value="docx">Microsoft Word (.docx)</option>
-                                <option value="pdf">PDF Document (.pdf)</option>
-                                <option value="csv">Excel / CSV (.csv)</option>
-                                <option value="json">JSON Format (Data)</option>
-                                <!-- _exportMarkdown() has always worked; it was simply
-                                     absent from both pickers, so the format the README
-                                     advertises was unreachable. -->
-                                <option value="markdown">Markdown (.md)</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="settings-footer">
-                    <div class="meta-info">
-                        <div class="meta-item">
-                            <span class="meta-label">Steps:</span>
-                            <span id="sessionStepCount">-</span>
-                        </div>
-                    </div>
-
-                    <div class="sidebar-actions">
-                        <button id="saveExportBtn" class="btn btn-primary">
-                            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Documentation
-                        </button>
-
-                        <button id="cancelBtn" class="btn btn-secondary">
-                            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Close
-                        </button>
-                    </div>
-                </div>
-            </div>
-            </aside>
-            <!-- Notification Area -->
-            <!-- A-1 (WCAG 4.1.3): see popup.html — status vs. assertive split. -->
-            <div id="message" class="message hidden" role="status" aria-live="polite" aria-atomic="true" style="margin-bottom: 20px;"></div>
+            <!-- A-1 (WCAG 4.1.3): polite region for status, assertive for errors. -->
+            <div id="message" class="message hidden" role="status" aria-live="polite" aria-atomic="true"></div>
             <div id="a11yAlerts" role="alert" aria-live="assertive" class="visually-hidden"></div>
 
             <!-- Toolbar -->
-            <section class="toolbar">
+            <section class="toolbar" aria-label="Filter and view options">
                 <div class="search-wrapper">
                     <span class="icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                     <input type="text" id="stepSearch" class="input-styled search-input" aria-label="Search steps"
                         placeholder="Search steps, actions, or values...">
                 </div>
-                <select id="actionFilter" class="select-styled" aria-label="Filter by action type" style="width: 180px;">
+                <select id="actionFilter" class="select-styled" aria-label="Filter by action type">
                     <option value="all">All Actions</option>
                     <option value="click">Click</option>
                     <option value="type">Type</option>
@@ -130,46 +162,54 @@
                     <option value="screenshot">Screenshot</option>
                 </select>
                 <button id="clearFiltersBtn" class="btn btn-secondary">Clear</button>
+                <!-- R-001: Cards / Table view toggle -->
+                <div class="view-toggle-group" role="group" aria-label="View mode">
+                    <button id="viewCardsBtn" type="button" class="view-toggle-btn active" aria-pressed="true" title="Card view">Cards</button>
+                    <button id="viewTableBtn" type="button" class="view-toggle-btn" aria-pressed="false" title="Table view">Table</button>
+                </div>
+                <!-- v1.2 "Remember Fields" (R-008) omitted: it messaged a
+                     saveFieldNameMemory handler that does not exist in the current
+                     background script, then reported success regardless. Field-name
+                     memory needs content-script + background work to be real. -->
+                <button id="privacyAuditBtn" type="button" class="btn btn-secondary" title="View privacy audit report">Privacy Audit</button>
             </section>
 
-            <div id="stepResultsSummary"
-                style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; font-weight: 500;"></div>
+            <!-- A-4: announced so the "Showing N of M" count reaches screen readers. -->
+            <div id="stepResultsSummary" role="status" aria-live="polite"></div>
 
             <!-- Steps List -->
             <div id="stepsContainer" class="steps-container">
-                <div class="loading" style="text-align: center; padding: 40px;">Loading documented steps...</div>
+                <div class="loading">Loading session…</div>
             </div>
 
-            <div id="noResultsMsg" class="hidden" style="text-align: center; padding: 60px; color: var(--text-muted);">
-                <span style="display: block; margin-bottom: 16px; color: var(--text-disabled);" aria-hidden="true"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+            <!-- R-001: Table View -->
+            <div id="tableContainer" class="table-container" hidden></div>
+
+            <!-- UX-008: persistent keyboard-accessible Add Step (kept; v1.2 dropped it) -->
+            <div class="add-step-footer">
+                <button id="addStepAtEndBtn" type="button" class="btn btn-secondary">+ Add step at end</button>
+            </div>
+
+            <div id="noResultsMsg" class="hidden empty-state">
+                <span aria-hidden="true"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                 <p>No steps match your current filters.</p>
             </div>
-
-            <!-- UX-008: Persistent keyboard-accessible add step button -->
-            <div style="text-align: center; padding: 16px;">
-                <button id="addStepAtEndBtn" class="btn btn-secondary"
-                        aria-label="Add new step at end of session">
-                    + Add Step
-                </button>
-            </div>
         </main>
-
-
     </div>
 
     <!-- Modals -->
     <div class="modal-overlay" id="addStepModal">
-        <div class="modal-card">
-            <h3 style="margin-bottom: 24px;">Add Manual Step</h3>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="addStepModalTitle">
+            <h3 id="addStepModalTitle">Add Manual Step</h3>
 
             <div class="field-group">
-                <label>Step Description *</label>
-                <textarea id="newStepDescription" class="input-styled" style="min-height: 80px;"
+                <label for="newStepDescription">Step Description <span aria-hidden="true">*</span><span class="visually-hidden">(required)</span></label>
+                <textarea id="newStepDescription" class="input-styled" required aria-required="true"
                     placeholder="Describe what happens in this step..."></textarea>
             </div>
 
             <div class="field-group">
-                <label>Action Category</label>
+                <label for="newStepAction">Action Category</label>
                 <select id="newStepAction" class="select-styled">
                     <option value="click">Click</option>
                     <option value="type">Type</option>
@@ -183,32 +223,27 @@
 
             <div class="field-group">
                 <label>Screenshot</label>
-                <div id="screenshotUpload" role="button" tabindex="0" aria-label="Upload screenshot"
-                    style="border: 2px dashed var(--border); border-radius: 12px; padding: 24px; text-align: center; cursor: pointer;">
-                    <input type="file" id="screenshotInput" accept="image/*" style="display: none;">
-                    <span style="display: block; margin-bottom: 8px; color: var(--text-muted);" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
-                    <p style="font-size: 13px; color: var(--text-muted);">Drop image here or click to upload</p>
-                    <img id="screenshotPreview"
-                        style="max-width: 100%; margin-top: 16px; border-radius: 8px; display: none;">
+                <div id="screenshotUpload" class="dropzone">
+                    <input type="file" id="screenshotInput" accept="image/*" hidden>
+                    <span aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
+                    <p>Drop image here or click to upload</p>
+                    <img id="screenshotPreview" alt="Uploaded screenshot preview" hidden>
                 </div>
             </div>
 
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 32px;">
+            <div class="modal-actions">
                 <button id="cancelAddStep" class="btn btn-secondary">Cancel</button>
                 <button id="confirmAddStep" class="btn btn-primary">Add Step</button>
             </div>
         </div>
     </div>
 
-    <!-- Export Progress -->
-    <!-- A-7 (WCAG 4.1.2/2.4.3/2.1.2): this was a bare <div> — no role, no
-         aria-modal, no label, focus never entered it, and Escape was scoped to
-         the Add Step modal only. It guards the product's terminal action. -->
+    <!-- Export Progress — A-7: labelled dialog with a live progressbar. -->
     <div class="modal-overlay" id="progressModal">
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="progressTitle"
-            aria-describedby="progressStatus" style="max-width: 400px; text-align: center;">
+        <div class="modal-card modal-card-narrow" role="dialog" aria-modal="true" aria-labelledby="progressTitle"
+            aria-describedby="progressStatus">
             <h3 id="progressTitle" class="visually-hidden">Exporting session</h3>
-            <div id="exportLoader" style="margin-bottom: 24px;">
+            <div id="exportLoader">
                 <svg width="50" height="50" viewBox="0 0 50 50" aria-hidden="true">
                     <circle cx="25" cy="25" r="20" fill="none" stroke="var(--border)" stroke-width="4" />
                     <circle id="progressCircle" cx="25" cy="25" r="20" fill="none" stroke="var(--accent)"
@@ -216,15 +251,44 @@
                         style="transition: stroke-dashoffset 0.3s ease;" />
                 </svg>
             </div>
-            <h3 id="progressPercent" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
-                aria-valuetext="0 percent" style="font-size: 24px;">0%</h3>
-            <p id="progressStatus" style="color: var(--text-muted); margin-top: 8px; margin-bottom: 24px;">Preparing
-                export...</p>
+            <p id="progressPercent" class="progress-percent" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+                aria-valuenow="0" aria-valuetext="0 percent">0%</p>
+            <p id="progressStatus" class="progress-status">Preparing export...</p>
+            <button id="cancelExportBtn" class="btn btn-secondary btn-block">Cancel Export</button>
+        </div>
+    </div>
 
-            <!-- P2-... : cancelling an export destroys nothing, so it is not a
-                 destructive action and should not wear the danger colour that
-                 the genuine bulk-delete uses. -->
-            <button id="cancelExportBtn" class="btn btn-secondary" style="width: 100%;">Cancel Export</button>
+    <!-- Screenshot viewer. The v1.2 card shows a 120px thumbnail, which is too
+         small to read, so each thumbnail opens the full image here. -->
+    <div id="screenshotViewer" class="modal-overlay">
+        <div class="modal-card modal-card-viewer" role="dialog" aria-modal="true" aria-labelledby="screenshotViewerTitle">
+            <div class="modal-head">
+                <h3 id="screenshotViewerTitle">Screenshot</h3>
+                <button id="closeScreenshotViewer" type="button" class="icon-btn" aria-label="Close screenshot">×</button>
+            </div>
+            <img id="screenshotViewerImg" alt="" hidden>
+        </div>
+    </div>
+
+    <!-- R-004: Export Preview -->
+    <div id="exportPreviewModal" class="modal-overlay">
+        <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="exportPreviewTitle">
+            <div class="modal-head">
+                <h3 id="exportPreviewTitle">Export Preview (first 5 steps)</h3>
+                <button id="closeExportPreview" type="button" class="icon-btn" aria-label="Close preview">×</button>
+            </div>
+            <div id="exportPreviewContent"></div>
+        </div>
+    </div>
+
+    <!-- R-003: Privacy Audit -->
+    <div id="privacyAuditModal" class="modal-overlay">
+        <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="privacyAuditTitle">
+            <div class="modal-head">
+                <h3 id="privacyAuditTitle">Privacy Audit Report</h3>
+                <button id="closePrivacyAudit" type="button" class="icon-btn" aria-label="Close privacy audit">×</button>
+            </div>
+            <div id="privacyAuditContent"></div>
         </div>
     </div>
 
