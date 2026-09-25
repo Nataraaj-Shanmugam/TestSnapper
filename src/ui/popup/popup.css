@@ -2269,3 +2269,8 @@ body { min-width: 320px; overflow-x: auto; }
     scroll-behavior: auto !important;
   }
 }
+
+/* F-7: a session that ended because its tab closed. Replaces the old
+   "[INCOMPLETE]" name prefix. Amber pair, 6.46:1 light / 7.62:1 dark. */
+.session-meta-incomplete { color: #92400E; background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.35); }
+[data-theme="dark"] .session-meta-incomplete { color: #FCD34D; background: rgba(245,158,11,.16); }

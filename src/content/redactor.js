@@ -68,7 +68,12 @@ class Redactor {
     this.phonePattern = /(\+\d{1,3}[\s.-]?)?(\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}\b/;
     // Card candidate: 13–16 digits, optional space/hyphen grouping (Amex 15 + Visa/MC 16).
     // Validated with Luhn before masking to avoid corrupting order ids.
-    this.creditCardPattern = /\b(?:\d[ -]?){13,16}\b/;
+    // Q-8: was {13,16}, which let 19-digit PANs (UnionPay, some Maestro)
+    // through unmasked. Luhn still guards against masking plain long ids.
+    // Shaped digit-(sep-digit)*, so a match always ENDS on a digit. The old
+    // (?:\d[ -]?){n} let the last digit swallow a trailing space, gluing the
+    // mask onto the next word ("**** **** **** ****end").
+    this.creditCardPattern = /\b\d(?:[ -]?\d){12,18}\b/;
     this.ssnPattern = /\b\d{3}-\d{2}-\d{4}\b/;
     this._routingPattern = /\b\d{9}\b/; // private — only valid in financial field context (LOW-016)
     this.dobPattern = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/; // MM/DD/YYYY or MM-DD-YY
@@ -89,7 +94,7 @@ class Redactor {
    * @returns {boolean}
    */
   _luhnValid(digits) {
-    if (!/^\d{13,16}$/.test(digits)) return false;
+    if (!/^\d{13,19}$/.test(digits)) return false;
     let sum = 0;
     let alt = false;
     for (let i = digits.length - 1; i >= 0; i--) {
@@ -225,6 +230,24 @@ class Redactor {
     if (looksFinancial) {
       this._routingPatternG.lastIndex = 0;
       result = result.replace(this._routingPatternG, '*********');
+    }
+
+    // Q-8: the phone pattern requires a separator, so a number typed the way
+    // people type on mobile — 5551234567 — passed through. Masking every
+    // 10-15 digit run would corrupt order ids, so, like the routing-number
+    // rule above, only do it where the field itself says it holds a phone.
+    const looksLikePhone = element && (
+      element.type === 'tel' ||
+      /^tel(-|$)/i.test((element.getAttribute && element.getAttribute('autocomplete')) || '') ||
+      /phone|mobile|\btel\b|cell/i.test([
+        element.name,
+        element.id,
+        element.placeholder,
+        element.getAttribute && element.getAttribute('aria-label')
+      ].filter(Boolean).join(' '))
+    );
+    if (looksLikePhone) {
+      result = result.replace(/\+?\d{10,15}\b/g, (m) => m.replace(/\d/g, '*'));
     }
 
     // Mask dates of birth with length-accurate year mask (LOW-015)

@@ -336,6 +336,13 @@ async function loadSession() {
     sessionNameInput.value = sessionData.sessionName ||
       `Session ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionStepCount.textContent = stepsData.length;
+    // F-7: the incomplete flag replaces the old "[INCOMPLETE]" name prefix.
+    if (sessionData.incomplete) {
+      showMessage(
+        `This recording ended unexpectedly — the tab was closed. The ${stepsData.length} step${stepsData.length === 1 ? '' : 's'} captured before that are all here.`,
+        'warning'
+      );
+    }
     // v1.2 sidebar: when the session was recorded.
     const sessionDateEl = document.getElementById('sessionDate');
     if (sessionDateEl) {
@@ -799,6 +806,11 @@ function renderStepMeta(step) {
   const path = shortUrl(url);
   if (path) {
     parts.push(`<span class="step-url" title="${Utils.escapeHtml(url)}">${Utils.escapeHtml(path)}</span>`);
+  }
+
+  // F-4: steps whose naming prompt was deferred ("Name later").
+  if (step.needsName) {
+    parts.push(`<span class="step-needs-name" title="Name this field in Table view or edit the description.">Needs a name</span>`);
   }
 
   if (step.isSensitive) {
@@ -1399,13 +1411,17 @@ async function handleTableCellEdit(e) {
 
   saveToHistory('edit');
   const previous = step[field];
+  const previousNeedsName = step.needsName;
   step[field] = newVal;
+  // Naming the field resolves a deferred "Name later" (F-4).
+  if (field === 'fieldName' && newVal) delete step.needsName;
   try {
     await storage.updateStep(step);
   } catch (err) {
     // Roll back — otherwise the table shows an edit that was never persisted
     // (the same failure shape as P1-6).
     step[field] = previous;
+    if (previousNeedsName) step.needsName = previousNeedsName;
     cell.innerText = oldVal;
     showMessage(`Couldn't save that edit — ${err.message}. The previous value was restored.`, 'error');
   }

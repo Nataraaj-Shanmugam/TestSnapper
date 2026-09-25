@@ -499,7 +499,8 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     var strong = document.createElement('strong');
     strong.textContent = action;
     p.appendChild(strong);
-    p.appendChild(document.createTextNode(' action. Please provide a descriptive name.'));
+    // UX copy: say what the name is FOR, and that skipping keeps the step.
+    p.appendChild(document.createTextNode(' action. A name makes the exported document readable — or name it later on the review page.'));
     var inp = document.createElement('input');
     inp.id = inputId;
     inp.className = 'ts-input';
@@ -511,11 +512,12 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     var skipBtn = document.createElement('button');
     skipBtn.id = cancelId;
     skipBtn.className = 'ts-btn ts-btn-cancel';
-    skipBtn.textContent = 'Skip';
+    // F-4: was "Skip", which read as discarding and (until now) did.
+    skipBtn.textContent = 'Name later';
     var okBtn = document.createElement('button');
     okBtn.id = confirmId;
     okBtn.className = 'ts-btn ts-btn-confirm';
-    okBtn.textContent = 'Confirm';
+    okBtn.textContent = 'Save name';
     actions.appendChild(skipBtn);
     actions.appendChild(okBtn);
     modalDiv.appendChild(h3);
@@ -641,8 +643,15 @@ async function processStepWithManualEntry(element, action, stepData) {
     }
 
     if (!fieldName) {
-      window.Logger?.debug('⏭️ User skipped field name entry');
-      return null;
+      // UX F-4: "Skip" used to return null here, and every caller then did
+      // `if (!stepData) return;` — so skipping the naming prompt DISCARDED the
+      // click or keystroke itself. Every user's mental model of "Skip" is
+      // "skip the name, keep the step". Keep it, with a placeholder name the
+      // review page lets them edit.
+      window.Logger?.debug('⏭️ Field name skipped — keeping step as "Unnamed field"');
+      stepData.fieldName = 'Unnamed field';
+      stepData.needsName = true;
+      return stepData;
     }
 
     window.Logger?.info('✅ Manual field name entered:', fieldName);

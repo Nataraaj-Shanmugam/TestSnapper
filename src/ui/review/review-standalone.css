@@ -1949,3 +1949,17 @@ td.table-editable:focus {
   .step-actions { order: 1; margin-top: 0; }
   .step-thumb { order: 2; flex: 0 0 100%; width: auto; max-width: 320px; margin-left: 60px; }
 }
+
+/* F-4: steps whose field name was deferred with "Name later". Same amber pair
+   as the Select badge (6.46:1 light, 7.62:1 dark). */
+.step-needs-name {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: #92400E;
+  background: rgba(245,158,11,.12);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+}
+[data-theme="dark"] .step-needs-name { color: #FCD34D; background: rgba(245,158,11,.16); }

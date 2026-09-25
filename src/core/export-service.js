@@ -387,7 +387,9 @@ export class ExportService {
           : (step.value || '');
 
         return [
-          index + 1,
+          // Q-9: was index + 1 AFTER screenshot rows were filtered out, so CSV
+          // numbering drifted from Word/PDF. Gaps now mark omitted steps.
+          step.sequence || index + 1,
           step.action,
           step.fieldName || 'N/A',
           safeValue,
@@ -413,15 +415,47 @@ export class ExportService {
   /**
    * Export to Markdown.
    */
+  /**
+   * Escape text for inline Markdown.
+   *
+   * Q-9: this export used _escapeHtml on the title only — which is the wrong
+   * escaping for Markdown ("Login & Checkout" became "Login &amp; Checkout" in
+   * the raw file) — while fieldName and value, which are lifted from arbitrary
+   * page text, got no escaping at all. A field labelled `<img src=x onerror=…>`
+   * went into the file as raw HTML, and `**` or `[x](…)` in page text became
+   * live formatting or links. Backslash-escape Markdown's inline punctuation
+   * instead; CommonMark renders "\<" as a literal "<", never as a tag.
+   */
+  _mdText(text) {
+    return String(text ?? '')
+      .replace(/[\r\n]+/g, ' ')
+      // `&` is left alone: an entity can never form a tag, and escaping it
+      // made the raw file read "Login \& Checkout".
+      .replace(/([\\`*_{}[\]<>()#|!~])/g, '\\$1');
+  }
+
+  /**
+   * A code span that cannot be broken out of: the fence is one backtick longer
+   * than the longest backtick run in the value (CommonMark §6.1). The old
+   * single-backtick span ended early on any value containing a backtick.
+   */
+  _mdCode(text) {
+    const value = String(text ?? '').replace(/[\r\n]+/g, ' ');
+    const longest = Math.max(0, ...(value.match(/`+/g) || []).map(run => run.length));
+    const fence = '`'.repeat(longest + 1);
+    const pad = /^`|`$/.test(value) || /^ .* $/.test(value) ? ' ' : '';
+    return `${fence}${pad}${value}${pad}${fence}`;
+  }
+
   _exportMarkdown(exportData, sessionId) {
     const { session, steps } = exportData;
     const sessionName = session.name || 'Untitled Session';
     const lines = [
-      `# ${this._escapeHtml(sessionName)}`,
+      `# ${this._mdText(sessionName)}`,
       '',
-      `**Author:** ${this._escapeHtml(session.author || 'N/A')}  `,
-      `**Start Time:** ${this._formatExportTime(session.startTime)}  `,
-      `**End Time:** ${this._formatExportTime(session.endTime)}  `,
+      `**Author:** ${this._mdText(session.author || 'N/A')}  `,
+      `**Start Time:** ${this._mdText(this._formatExportTime(session.startTime))}  `,
+      `**End Time:** ${this._mdText(this._formatExportTime(session.endTime))}  `,
       `**Steps:** ${steps.length}`,
       '',
       '---',
@@ -430,11 +464,13 @@ export class ExportService {
 
     steps.forEach((step, i) => {
       const safeUrl = this._sanitizeUrl(step.url);
-      lines.push(`### Step ${i + 1}: ${step.action}`);
-      if (step.fieldName) lines.push(`- **Field:** ${step.fieldName}`);
-      if (step.value)     lines.push(`- **Value:** \`${step.value}\``);
+      // Q-9: numbered by sequence, like every other format and the review page.
+      lines.push(`### Step ${step.sequence || i + 1}: ${this._mdText(step.action)}`);
+      if (step.fieldName) lines.push(`- **Field:** ${this._mdText(step.fieldName)}`);
+      if (step.value)     lines.push(`- **Value:** ${this._mdCode(step.value)}`);
       // Unified export: no locator line (matches the Word doc).
-      if (safeUrl)        lines.push(`- **URL:** ${safeUrl}`);
+      // URLs go in a code span so page-controlled text cannot form a link.
+      if (safeUrl)        lines.push(`- **URL:** ${this._mdCode(safeUrl)}`);
       lines.push('');
     });
 
@@ -564,14 +600,18 @@ export class ExportService {
     for (const step of regularSteps) {
       if (this._isCancelled(session.id)) { this._clearCancellation(session.id); throw new Error('Export cancelled by user'); }
       stepNumber++;
+      // Q-9: print the number the user sees on the review page. Each format
+      // used to run its own counter over a differently-filtered list, so
+      // "Step 7" named a different step in Word, PDF, CSV and Markdown.
+      const shownNumber = step.sequence || stepNumber;
 
       let text;
       if (step.action === 'screenshot') {
-        text = `${stepNumber}. Manual screenshot`;
+        text = `${shownNumber}. Manual screenshot`;
       } else if (step.description) {
-        text = `${stepNumber}. ${step.description}`;
+        text = `${shownNumber}. ${step.description}`;
       } else {
-        text = `${stepNumber}. ${step.action.toUpperCase()}`;
+        text = `${shownNumber}. ${step.action.toUpperCase()}`;
         if (step.fieldName && step.fieldName !== 'N/A') text += ` on "${step.fieldName}"`;
         if (step.value && step.action !== 'navigate') text += ` with value "${step.value}"`;
         if (step.action === 'navigate') text += ` to ${this._sanitizeUrl(step.value || step.url)}`;
@@ -761,7 +801,8 @@ export class ExportService {
 
         if (step.action === 'screenshot') {
           oneliner = 'Manual screenshot captured';
-          html += `<li>${oneliner}`;
+          // Q-9: explicit number — <ol> would count this list's own items.
+          html += `<li value="${Number(step.sequence) || ''}">${oneliner}`;
 
           // Load + process this one asset, then null it out
           const asset = assetIndex.get(step.id);
@@ -985,7 +1026,8 @@ export class ExportService {
           ? (step.isManual ? 'Manual screenshot' : 'Automated screenshot')
           : `${step.action.toUpperCase()} ${step.fieldName || ''}`);
 
-      const lines = doc.splitTextToSize(`${stepNumber}. ${description}`, contentWidth);
+      // Q-9: same number as the review page and every other format.
+      const lines = doc.splitTextToSize(`${step.sequence || stepNumber}. ${description}`, contentWidth);
       lines.forEach(line => {
         doc.text(line, margin, yPosition);
         yPosition += 5;

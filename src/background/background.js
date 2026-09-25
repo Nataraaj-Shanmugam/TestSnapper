@@ -468,7 +468,7 @@ const recoveryReady = (async () => {
           type: 'basic',
           iconUrl: 'src/assets/icons/icon128.png',
           title: 'TestSnapper - Recording Recovery Failed',
-          message: `Your previous recording session could not be recovered because the tab was closed. The session has been saved as incomplete.`,
+          message: `TestSnapper stopped when the tab closed. The steps recorded before that are saved — open TestSnapper to review or export them.`,
           priority: 1
         });
       } catch (notifErr) {
@@ -489,7 +489,11 @@ async function markSessionIncomplete(sessionId) {
   try {
     const session = await storage.getSession(sessionId);
     if (session) {
-      session.sessionName = `[INCOMPLETE] ${session.sessionName || 'Session'}`;
+      // UX F-7: this used to prefix the name with "[INCOMPLETE] ". The name is
+      // the session's identity everywhere — the popup list, the review page,
+      // the export FILENAME and the title inside the DOCX/PDF — so a crash
+      // stamped every deliverable. The flag below carries the same fact; the
+      // popup and review page now surface it without touching the name.
       session.incomplete = true;
       await storage.updateSession(session);
     }

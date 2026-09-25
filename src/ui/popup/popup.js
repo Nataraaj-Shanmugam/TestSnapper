@@ -439,6 +439,7 @@ async function renderSessionSummary() {
   box.innerHTML = `
     <div class="session-summary-name">${Utils.escapeHtml(sessionLabel(s))}</div>
     <div class="session-summary-meta">
+      ${s.incomplete ? '<span class="session-meta-badge session-meta-incomplete">Ended unexpectedly</span>' : ''}
       <span class="session-meta-badge">${Number(s.stepCount) || 0} steps</span>
       ${when ? `<span class="session-meta-badge">${Utils.escapeHtml(when)}</span>` : ''}
       <span class="session-meta-badge" data-size>…</span>
