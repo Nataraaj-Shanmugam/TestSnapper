@@ -121,47 +121,55 @@ function getEnhancedFieldName(element) {
   // Prefer the dedicated FieldNameResolver (Shadow DOM, ARIA, form groups,
   // proximity scoring, etc.) when it is loaded. Fall back to the inline
   // heuristics below if the resolver is absent, throws, or returns null.
+  let resolverSaidNull = false;
   if (fieldNameResolver) {
     try {
       const resolved = fieldNameResolver.resolve(element);
       if (resolved) return resolved;
+      resolverSaidNull = true;
     } catch (e) {
       // Fall through to inline heuristics
     }
   }
 
-  const label = findAssociatedLabel(element);
-  if (label) return cleanFieldName(label);
+  // The resolver returning null is a verdict — "can't name this, ask the
+  // user" — not a failure. These inline heuristics used to override it and
+  // ended at `element.type`, so every unlabelled text box became "Text"
+  // ("Type 'blue' in Text" in the exported document) and the naming prompt
+  // never appeared. Keep the fallbacks, but hold each to the same quality bar
+  // the resolver applies: "Email" (type="email") passes, "Text" does not.
+  const accept = (raw) => {
+    if (!raw) return null;
+    const cleaned = cleanFieldName(raw);
+    if (!cleaned) return null;
+    if (fieldNameResolver && typeof fieldNameResolver._isQualityName === 'function' &&
+        !fieldNameResolver._isQualityName(cleaned)) return null;
+    return cleaned;
+  };
 
-  if (element.placeholder) {
-    return cleanFieldName(element.placeholder);
+  const labelledBy = element.getAttribute('aria-labelledby');
+  const labelledByEl = labelledBy ? document.getElementById(labelledBy) : null;
+  // If the resolver ran and said null, it has already judged label,
+  // placeholder, ARIA, name, id and nearby text — retrying them here would just
+  // override its verdict (e.g. accept the "you@company.com" placeholder it
+  // deliberately rejected, Q-7). The input type is the one signal it does not
+  // use. The full list remains for when the resolver is missing or threw.
+  const candidates = resolverSaidNull ? [() => element.type] : [
+    () => findAssociatedLabel(element),
+    () => element.placeholder,
+    () => element.getAttribute('aria-label'),
+    () => labelledByEl && labelledByEl.textContent,
+    () => element.name,
+    () => element.id,
+    () => element.type,
+    () => findNearbyText(element),
+    () => selectorEngine.extractFieldName(element)
+  ];
+  for (const candidate of candidates) {
+    const name = accept(candidate());
+    if (name) return name;
   }
-
-  if (element.getAttribute('aria-label')) {
-    return cleanFieldName(element.getAttribute('aria-label'));
-  }
-  if (element.getAttribute('aria-labelledby')) {
-    const labelElement = document.getElementById(element.getAttribute('aria-labelledby'));
-    if (labelElement) return cleanFieldName(labelElement.textContent);
-  }
-
-  if (element.name) {
-    return cleanFieldName(element.name);
-  }
-
-  if (element.id) {
-    return cleanFieldName(element.id);
-  }
-
-  if (element.type) {
-    return cleanFieldName(element.type);
-  }
-
-  const nearbyText = findNearbyText(element);
-  if (nearbyText) return cleanFieldName(nearbyText);
-
-  const fallback = selectorEngine.extractFieldName(element);
-  return fallback || null;
+  return null;
 }
 
 function findAssociatedLabel(element) {
@@ -901,28 +909,24 @@ function showRateLimitFeedback() {
   showToastNotification('Screenshot rate limited - please wait a moment', 'warning');
 }
 
-function handleInput(event) {
-  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
-
+/**
+ * Record the current typed value of `element` as a 'type' step.
+ *
+ * Extracted from handleInput's debounce timer so that an action which consumes
+ * the typed text — pressing Enter in a search box — can commit it FIRST.
+ * Otherwise the 800ms debounce recorded "Press Enter" before the text it
+ * submitted, and if Enter navigated away the text was never recorded at all.
+ */
+async function commitInput(element) {
   try {
-    const element = event.target;
-    // Use the element object itself as the Map key to avoid calling
-    // generateSelector() synchronously on every keystroke. generateSelector() is
-    // deferred to the debounced callback body where it runs only once per burst.
-    const elementKey = element;
-
-    if (pendingInputs.has(elementKey)) {
-      clearTimeout(pendingInputs.get(elementKey));
-    }
-
-    const timeoutId = setTimeout(async () => {
       // P2-11: the entry was only deleted on the success path, so the two
       // early returns below (duplicate input, and a skipped/timed-out
       // field-name modal) orphaned it. pendingInputs is keyed by the element
       // OBJECT, so each orphan pinned a live DOM node for the rest of the
       // session — nodes an SPA had since re-rendered away could never be
-      // collected. The timer has already fired here; release it first.
-      pendingInputs.delete(elementKey);
+      // collected. Release it first.
+      pendingInputs.delete(element);
+      const elementKey = element;
 
       // generateSelector is now called here (deferred), not in the outer scope.
       const selector = selectorEngine.generateSelector(element);
@@ -958,12 +962,77 @@ function handleInput(event) {
       pendingInputs.delete(elementKey);
 
       window.Logger?.info('Input captured:', stepData.fieldName, value);
-    }, 800);
-
-    pendingInputs.set(elementKey, timeoutId);
   } catch (error) {
     window.Logger?.error('❌ Error capturing input:', error);
     // Don't stop recording, just log and continue
+  }
+}
+
+function handleInput(event) {
+  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
+
+  const element = event.target;
+  // Use the element object itself as the Map key to avoid calling
+  // generateSelector() synchronously on every keystroke. generateSelector() is
+  // deferred to commitInput, where it runs only once per burst.
+  if (pendingInputs.has(element)) {
+    clearTimeout(pendingInputs.get(element));
+  }
+  pendingInputs.set(element, setTimeout(() => { commitInput(element); }, 800));
+}
+
+// Input types where Enter is not a meaningful "submit this" action.
+var ENTER_IGNORED_TYPES = ['checkbox', 'radio', 'button', 'submit', 'reset',
+  'file', 'image', 'hidden', 'range', 'color'];
+
+/**
+ * Q-1: Enter was never recorded. Inside a <form> it triggers implicit
+ * submission, which handleSubmit already records — but the very common
+ * JS-driven search box has no form, so "type a term, press Enter" produced the
+ * typed text and nothing else, and the document could not be followed.
+ *
+ * Records Enter only on a single-line input outside a form. Textareas are
+ * excluded (Enter there is a newline, not an action), as are modified presses
+ * and IME composition.
+ */
+async function handleKeydown(event) {
+  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
+  if (event.key !== 'Enter' || event.isComposing ||
+      event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+
+  const element = event.target;
+  if (!element || element.tagName !== 'INPUT') return;
+  if (ENTER_IGNORED_TYPES.indexOf((element.type || 'text').toLowerCase()) !== -1) return;
+  if (element.form) return; // implicit submission -> handleSubmit records it
+
+  try {
+    // Commit the text Enter is acting on, so it precedes the Enter step and
+    // survives a navigation. This listener runs in the capture phase and the
+    // awaits below settle as microtasks, so both steps are sent before the
+    // page's own Enter handler gets a chance to navigate.
+    if (pendingInputs.has(element)) {
+      clearTimeout(pendingInputs.get(element));
+      await commitInput(element);
+    }
+
+    if (isDuplicateInteraction(element, 'keypress', 'Enter')) return;
+
+    const stepData = {
+      action: 'keypress',
+      selector: selectorEngine.generateSelector(element),
+      fieldName: getEnhancedFieldName(element),
+      targetLabel: selectorEngine.getElementText(element),
+      url: window.location.href,
+      value: 'Enter',
+      isSensitive: false
+    };
+    // No naming prompt: the preceding 'type' step already asked, and a modal
+    // here would interrupt the very navigation Enter is triggering.
+    updateLastInteraction(element, 'keypress', 'Enter');
+    sendStepToBackground(stepData);
+    window.Logger?.info('Enter captured:', stepData.fieldName);
+  } catch (error) {
+    window.Logger?.error('❌ Error capturing Enter:', error);
   }
 }
 
@@ -1218,6 +1287,7 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
   document.addEventListener('input', handleInput, { capture: true, signal: signal });
   document.addEventListener('change', handleChange, { capture: true, signal: signal });
   document.addEventListener('submit', handleSubmit, { capture: true, signal: signal });
+  document.addEventListener('keydown', handleKeydown, { capture: true, signal: signal });
 
   // Pre-fetch iframe label context for cross-frame field name resolution (MED-010)
   if (fieldNameResolver && typeof fieldNameResolver.initFrameContext === 'function') {

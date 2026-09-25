@@ -1963,3 +1963,15 @@ td.table-editable:focus {
   padding: 1px 8px;
 }
 [data-theme="dark"] .step-needs-name { color: #FCD34D; background: rgba(245,158,11,.16); }
+
+/* Undo in the delete toast: a real button styled as an inline link. */
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

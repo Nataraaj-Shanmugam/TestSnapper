@@ -88,6 +88,19 @@ let _modalTriggerElement = null;
 
 // ==================== Utils ====================
 
+/**
+ * F-20: saves that are still in flight. Edits save on blur, asynchronously, and
+ * "Done" used to call window.close() immediately — the tab could die before the
+ * write landed and the edit was silently lost. Done now waits for these.
+ */
+const _pendingWrites = new Set();
+function trackWrite(promise) {
+  const p = Promise.resolve(promise);
+  _pendingWrites.add(p);
+  p.finally(() => _pendingWrites.delete(p));
+  return p;
+}
+
 function debounce(fn, delay = 300) {
   let timer;
   return (...args) => {
@@ -140,7 +153,13 @@ function setupEventListeners() {
   setupV12Features();
   bulkDeleteBtn.addEventListener('click', handleBulkDelete);
   saveExportBtn.addEventListener('click', handleSaveAndExport);
-  cancelBtn.addEventListener('click', () => window.close());
+  cancelBtn.addEventListener('click', async () => {
+    // The field being edited blurs on this button's mousedown, so its save has
+    // already started by the time this click runs; wait for it (F-20).
+    cancelBtn.disabled = true;
+    await Promise.allSettled([..._pendingWrites]);
+    window.close();
+  });
 
   // UX-008: Persistent keyboard-accessible "Add Step" button
   const addStepAtEndBtn = document.getElementById('addStepAtEndBtn');
@@ -157,10 +176,10 @@ function setupEventListeners() {
   stepsContainer.addEventListener('drop', handleContainerDrop);
 
   // Session name / author / start / end time auto-save
-  sessionNameInput.addEventListener('blur', saveSessionName);
-  sessionAuthorInput.addEventListener('blur', saveSessionAuthor);
-  sessionStartTimeInput.addEventListener('change', saveSessionStartTime);
-  sessionEndTimeInput.addEventListener('change', saveSessionEndTime);
+  sessionNameInput.addEventListener('blur', () => trackWrite(saveSessionName()));
+  sessionAuthorInput.addEventListener('blur', () => trackWrite(saveSessionAuthor()));
+  sessionStartTimeInput.addEventListener('change', () => trackWrite(saveSessionStartTime()));
+  sessionEndTimeInput.addEventListener('change', () => trackWrite(saveSessionEndTime()));
 
   // Add Step Modal
   screenshotUpload.addEventListener('click', () => screenshotInput.click());
@@ -767,6 +786,7 @@ const ACTION_BADGES = {
   select_radio: { style: 'select',     label: 'Radio' },
   check:        { style: 'select',     label: 'Check' },
   submit:       { style: 'submit',     label: 'Submit' },
+  keypress:     { style: 'submit',     label: 'Key' },
   screenshot:   { style: 'screenshot', label: 'Screenshot' },
   apicall:      { style: 'apicall',    label: 'API call' }
 };
@@ -824,10 +844,18 @@ function renderStepMeta(step) {
   return `<div class="step-meta">${parts.join('')}</div>`;
 }
 
+/**
+ * Plain-text description of a step. Returns UNESCAPED text: every caller
+ * escapes at the point it inserts into HTML (card textarea, table cell, export
+ * preview), and one compares against a textarea's already-decoded value.
+ * This used to escape field and value here as well, so they were escaped twice
+ * and "Terms & Conditions" displayed as "Terms &amp; Conditions" — and saving
+ * the card persisted the "&amp;" into the description and every export.
+ */
 function generateStepDescription(step) {
   const action = step.action || 'Action';
-  const field = step.fieldName ? Utils.escapeHtml(step.fieldName.trim()) : '';
-  const value = step.value ? Utils.escapeHtml(step.value.trim()) : '';
+  const field = step.fieldName ? String(step.fieldName).trim() : '';
+  const value = step.value ? String(step.value).trim() : '';
 
   switch (action.toLowerCase()) {
     case 'click':
@@ -842,11 +870,14 @@ function generateStepDescription(step) {
       return `Check the box ${field ? `for "${field}"` : ''}`;
     case 'submit':
       return `Submit the form`;
+    case 'keypress':
+      // Q-1: Enter in a field outside a form (e.g. a JS search box).
+      return `Press ${value || 'Enter'} in ${field || 'field'}`;
     case 'screenshot':
       if (step.isManual) return '📸 Manual screenshot';
       return step.screenshotTrigger === 'navigation' ? '📸 Navigation screenshot' : '📸 Auto screenshot';
     case 'apicall':
-      return step.description ? `🌐 ${Utils.escapeHtml(step.description)}` : `🌐 API ${value}`.trim();
+      return step.description ? `🌐 ${step.description}` : `🌐 API ${value}`.trim();
     default:
       return `${action} ${field} ${value ? `→ "${value}"` : ''}`.trim();
   }
@@ -893,13 +924,17 @@ function attachStepEventListeners() {
       const oldText = step.description || generateStepDescription(step);
 
       if (newText && newText !== oldText) {
+        const previousDescription = step.description;
         try {
           saveToHistory('edit');
           step.description = newText;
-          await storage.updateStep(step);
+          await trackWrite(storage.updateStep(step));
           showMessage('Step updated', 'success');
         } catch (err) {
           console.error('Failed to update step:', err);
+          // Restore the in-memory step too — only resetting the textarea left
+          // stepsData disagreeing with storage (the P1-6 failure shape).
+          step.description = previousDescription;
           showMessage('Failed to update step: ' + err.message, 'error');
           e.target.value = oldText;
         }
@@ -1416,7 +1451,7 @@ async function handleTableCellEdit(e) {
   // Naming the field resolves a deferred "Name later" (F-4).
   if (field === 'fieldName' && newVal) delete step.needsName;
   try {
-    await storage.updateStep(step);
+    await trackWrite(storage.updateStep(step));
   } catch (err) {
     // Roll back — otherwise the table shows an edit that was never persisted
     // (the same failure shape as P1-6).
@@ -1721,7 +1756,15 @@ async function handleSaveAndExport() {
     if (result.blob) setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000);
 
     hideProgressModal();
-    showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
+    // P2-6: .docx is built with the bundled docx library; if that fails to
+    // load, the service falls back to a Word-compatible HTML .doc. That is a
+    // reasonable fallback, but it happened silently under a picker that said
+    // ".docx" — anything downstream that parses OOXML then failed.
+    if (format === 'docx' && !/\.docx$/i.test(filename)) {
+      showMessage('Exported as a Word-compatible .doc — the .docx library could not load. Word opens it, but tools that read .docx may not.', 'warning');
+    } else {
+      showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
+    }
   } catch (error) {
     hideProgressModal();
     if (/cancel/i.test(error?.message || '')) {
@@ -1753,27 +1796,26 @@ function showMessageWithUndo(text) {
     clearTimeout(messageDiv._msgTimer);
     messageDiv._msgTimer = null;
   }
-  // Set innerHTML with a link to trigger undo
   messageDiv.innerHTML = '';
   const span = document.createElement('span');
   span.textContent = text + ' — ';
-  const undoLink = document.createElement('a');
-  undoLink.href = '#';
-  undoLink.textContent = 'Undo';
-  undoLink.style.cssText = 'font-weight:bold; text-decoration:underline; cursor:pointer;';
-  undoLink.addEventListener('click', (e) => {
-    e.preventDefault();
+  // A-1 (4.1.2): a real <button>, not <a href="#"> with a click handler.
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'link-button';
+  undoBtn.textContent = 'Undo';
+  undoBtn.addEventListener('click', () => {
     messageDiv.style.display = 'none';
     undo();
   });
   messageDiv.appendChild(span);
-  messageDiv.appendChild(undoLink);
+  messageDiv.appendChild(undoBtn);
   messageDiv.className = 'message success';
   messageDiv.style.display = 'block';
-  messageDiv._msgTimer = setTimeout(() => {
-    messageDiv.style.display = 'none';
-    messageDiv._msgTimer = null;
-  }, 6000);
+  // F-18 / WCAG 2.2.1: this vanished after 6 seconds, and it is the one
+  // affordance for recovering deleted steps — a slower reader, or anyone who
+  // glanced away, lost it for good. It now stays until the next message
+  // replaces it. (Ctrl+Z / the header Undo button still work regardless.)
 }
 
 function hideMessage() {

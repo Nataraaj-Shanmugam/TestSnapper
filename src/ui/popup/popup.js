@@ -815,7 +815,15 @@ async function handleExport() {
     await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
     if (result.blob) URL.revokeObjectURL(downloadUrl);
     hideExportProgress();
-    showMessage(`Exported as ${filename}`, "success");
+    // P2-6: .docx is built with the bundled docx library; if that fails to
+    // load, the service falls back to a Word-compatible HTML .doc. That is a
+    // reasonable fallback, but it happened silently under a picker that said
+    // ".docx" — anything downstream that parses OOXML then failed.
+    if (format === 'docx' && !/\.docx$/i.test(filename)) {
+      showMessage(`Exported ${filename} — a Word-compatible .doc, because the .docx library could not load.`, "warning");
+    } else {
+      showMessage(`Exported as ${filename}`, "success");
+    }
   } catch (err) {
     console.error("Export failed:", err);
     hideExportProgress();

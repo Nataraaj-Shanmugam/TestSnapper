@@ -22,11 +22,17 @@ var FieldNameResolver = (function () {
   'use strict';
 
   // ── Generic name blocklist ─────────────────────────────────────────
+  // Q-7: 'email', 'password', 'tel', 'url', 'search', 'number', 'date' and
+  // 'time' used to be here. They are input *type* names, but they are also
+  // perfectly good field names — "Type into Email" is what a reader wants —
+  // and rejecting them sent a plain name="email" field down to the proximity
+  // strategy, which returns nearby page text (often the site's brand name).
+  // Only names that tell a reader nothing remain.
   var GENERIC_NAMES = new Set([
-    'text', 'password', 'email', 'number', 'tel', 'url', 'search',
+    'text',
     'button', 'submit', 'reset', 'input', 'field', 'div', 'span',
     'form', 'select', 'textarea', 'checkbox', 'radio',
-    'hidden', 'file', 'image', 'range', 'color', 'date', 'time',
+    'hidden', 'file', 'image', 'range', 'color',
     'click here', 'enter', 'type here', 'unknown field',
     'click', 'type', 'option', 'label', 'a', 'li', 'td', 'th',
     'section', 'article', 'main', 'header', 'footer', 'nav'
@@ -232,9 +238,29 @@ var FieldNameResolver = (function () {
    * @param {Element} element - Form element
    * @returns {string|null} Placeholder text or null
    */
+  /**
+   * Q-7: placeholders are often example DATA, not labels. This strategy runs
+   * before name/id, so `<input name="workEmail" placeholder="you@company.com">`
+   * was named "You@company.com" and `placeholder="e.g. 555-0123"` became
+   * "E.g. 555 0123". Reordering would hurt forms whose placeholder IS the
+   * label ("Search products", "Enter your email"), so instead reject only
+   * placeholders that look like a sample value, and let name/id answer.
+   */
+  function looksLikeExampleValue(s) {
+    if (/@/.test(s)) return true;                                        // you@company.com
+    if (/^(e\.g\.|eg\b|ex[:.]|example\b|for example\b)/i.test(s)) return true; // e.g. 555-0123
+    if (/^(https?:\/\/|www\.)/i.test(s)) return true;                     // https://…
+    if (/^[dmy]{1,4}([\/.\- ][dmy]{1,4}){2}$/i.test(s)) return true;      // MM/DD/YYYY
+    var compact = s.replace(/\s/g, '');
+    var digits = (s.match(/\d/g) || []).length;
+    return digits > 0 && digits / compact.length > 0.4;                   // 555-0123, 12/31/1999
+  }
+
   FieldNameResolver.prototype._fromPlaceholder = function (element) {
     var ph = element.placeholder || element.getAttribute('placeholder');
-    return ph && ph.trim() ? ph.trim() : null;
+    ph = ph && ph.trim();
+    if (!ph || looksLikeExampleValue(ph)) return null;
+    return ph;
   };
 
   /**
