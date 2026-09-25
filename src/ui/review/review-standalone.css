@@ -1502,3 +1502,60 @@ input[type="checkbox"].step-checkbox {
 }
 .step-number-badge { animation: none !important; }
 .toolbar .icon { animation: none !important; }
+
+/* A-3: reorder control group — pointer alternative to dragging (WCAG 2.5.7). */
+.step-reorder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding-top: 6px;
+}
+.step-move {
+  min-width: 24px;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.step-move:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.step-move[aria-disabled="true"] { opacity: .3; cursor: default; pointer-events: none; }
+.step-handle { font-size: 16px; }
+
+/* ------------------------------------------------------------------
+   P2-5 (WCAG 1.4.3): filled buttons failed AA. Measured white-on-token:
+     --accent light #4f7cbb = 4.26:1   --accent dark #5b8fd0 = 3.34:1
+     --danger dark  #e0685f = 3.33:1   (--danger light passes at 5.44:1)
+   All are 11-12px text, so 4.5:1 is required. An --accent-contrast token
+   that fixed this previously was deleted by the "Soft Cards v4" rewrite.
+   Separate solid tokens are reintroduced for FILLED SURFACES ONLY, so
+   --accent stays available for borders, icons and tints where the lighter
+   value is correct.
+     --accent-solid light #3e6399 = 6.09:1   dark #2f5486 = 7.68:1
+     --danger-solid light #a8332d = 6.61:1   dark #9c332c = 7.18:1
+   ------------------------------------------------------------------ */
+:root {
+  --accent-solid: #3e6399;
+  --danger-solid: #a8332d;
+}
+:root[data-theme="dark"] {
+  --accent-solid: #2f5486;
+  --danger-solid: #9c332c;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --accent-solid: #2f5486;
+    --danger-solid: #9c332c;
+  }
+}
+.btn-primary { background: var(--accent-solid) !important; color: #fff !important; }
+.btn-danger  { background: var(--danger-solid) !important; color: #fff !important; }

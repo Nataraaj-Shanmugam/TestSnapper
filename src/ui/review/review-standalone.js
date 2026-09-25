@@ -633,17 +633,32 @@ async function renderSteps() {
              .step-main tall. -->
         <div class="step-top" style="align-items: flex-start;">
 
-          <!-- UX-009: draggable="true" on handle only, not whole card -->
-          <div class="step-handle" draggable="true" tabindex="0" role="button"
-               aria-label="Drag to reorder step ${badgeNum}"
-               title="Drag to reorder" style="font-size: 20px; padding-top: 10px; cursor: grab;">⋮⋮</div>
+          <!-- A-3 (WCAG 2.5.7 Dragging Movements, AA): dragging was the ONLY
+               pointer route to reorder. 2.5.7 requires a single-pointer
+               alternative specifically — the ArrowUp/Down handler does not
+               discharge it, and it was undiscoverable anyway. These buttons
+               share moveStep() with drag and the arrow keys, so all three
+               routes behave identically. -->
+          <div class="step-reorder">
+            <button type="button" class="step-move" data-dir="up" data-step-id="${safeId}"
+                    aria-label="Move step ${badgeNum} up" title="Move up">▲</button>
+            <!-- UX-009: draggable="true" on handle only, not whole card -->
+            <div class="step-handle" draggable="true" tabindex="0" role="button"
+                 aria-roledescription="sortable step handle"
+                 aria-label="Reorder step ${badgeNum}"
+                 aria-keyshortcuts="ArrowUp ArrowDown"
+                 title="Drag to reorder, or press Arrow Up / Arrow Down" style="cursor: grab;">⋮⋮</div>
+            <button type="button" class="step-move" data-dir="down" data-step-id="${safeId}"
+                    aria-label="Move step ${badgeNum} down" title="Move down">▼</button>
+          </div>
 
           <!-- checkbox – fixed width, top-aligned -->
-          <div style="display: flex; align-items: flex-start; justify-content: center; width: 40px; flex-shrink: 0; padding-top: 8px;">
+          <div style="display: flex; align-items: flex-start; justify-content: center; width: 24px; flex-shrink: 0; padding-top: 8px;">
             <input type="checkbox" class="step-checkbox" data-step-id="${safeId}"
                    ${step.selected ? 'checked' : ''}
                    draggable="false"
-                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--accent);">
+                   aria-label="Select step ${badgeNum} for bulk actions"
+                   style="cursor: pointer; accent-color: var(--accent);">
           </div>
 
           <!-- main content (textarea + optional screenshot) -->
@@ -782,6 +797,32 @@ function attachStepEventListeners() {
       if (!card) return;
       await moveStep(card.dataset.stepId, e.key === 'ArrowUp' ? -1 : 1);
     });
+  });
+
+  // A-3: pointer alternative to dragging. Delegated so it survives re-render.
+  document.querySelectorAll('.step-move').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const b = e.currentTarget;
+      await moveStep(b.dataset.stepId, b.dataset.dir === 'up' ? -1 : 1);
+      // Focus the equivalent button on the card in its new position, so
+      // repeated clicks keep working without re-aiming.
+      const moved = document.querySelector(
+        `.step-card[data-step-id="${CSS.escape(b.dataset.stepId)}"] .step-move[data-dir="${b.dataset.dir}"]`
+      );
+      if (moved) moved.focus();
+    });
+  });
+
+  // A-3: the first card cannot move up and the last cannot move down. Use
+  // aria-disabled rather than removing or hard-disabling, so the control keeps
+  // its place in the tab order and focus is never dropped mid-interaction.
+  const cards = [...document.querySelectorAll('.step-card')];
+  cards.forEach((card, i) => {
+    const up = card.querySelector('.step-move[data-dir="up"]');
+    const down = card.querySelector('.step-move[data-dir="down"]');
+    if (up) up.setAttribute('aria-disabled', String(i === 0));
+    if (down) down.setAttribute('aria-disabled', String(i === cards.length - 1));
   });
 
   // UX-009: dragover/drop are handled once at the container level (see

@@ -1869,3 +1869,80 @@ input[type="checkbox"], input[type="radio"] {
 #stateText {
   animation: none !important;
 }
+
+/* ------------------------------------------------------------------
+   P2-5 (WCAG 1.4.3): filled buttons failed AA. Measured white-on-token:
+     --accent light #4f7cbb = 4.26:1   --accent dark #5b8fd0 = 3.34:1
+     --danger dark  #e0685f = 3.33:1   (--danger light passes at 5.44:1)
+   All are 11-12px text, so 4.5:1 is required. An --accent-contrast token
+   that fixed this previously was deleted by the "Soft Cards v4" rewrite.
+   Separate solid tokens are reintroduced for FILLED SURFACES ONLY, so
+   --accent stays available for borders, icons and tints where the lighter
+   value is correct.
+     --accent-solid light #3e6399 = 6.09:1   dark #2f5486 = 7.68:1
+     --danger-solid light #a8332d = 6.61:1   dark #9c332c = 7.18:1
+   ------------------------------------------------------------------ */
+:root {
+  --accent-solid: #3e6399;
+  --danger-solid: #a8332d;
+}
+:root[data-theme="dark"] {
+  --accent-solid: #2f5486;
+  --danger-solid: #9c332c;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --accent-solid: #2f5486;
+    --danger-solid: #9c332c;
+  }
+}
+.btn-primary { background: var(--accent-solid) !important; color: #fff !important; }
+.btn-danger  { background: var(--danger-solid) !important; color: #fff !important; }
+
+/* ------------------------------------------------------------------
+   P2-5 (second half): .btn-secondary/.btn-warning/.btn-success/.btn-info
+   were all mapped to one identical grey, so Pause and Resume — mutually
+   exclusive states — looked the same, and Save Settings (the only primary
+   action on its tab) read as inert. Restore three tiers: filled primary,
+   tonal, ghost.
+   ------------------------------------------------------------------ */
+.btn-warning,
+.btn-success,
+.btn-info {
+  background: var(--accent-subtle) !important;
+  color: var(--accent-hover, var(--accent)) !important;
+  border: 1px solid var(--border) !important;
+}
+.btn-warning:hover:not(:disabled),
+.btn-success:hover:not(:disabled),
+.btn-info:hover:not(:disabled) {
+  background: var(--bg-tertiary) !important;
+}
+/* Save Settings is the primary action of the Settings tab. */
+#saveSettingsBtn {
+  background: var(--accent-solid) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+}
+
+/* ------------------------------------------------------------------
+   A-10 (WCAG 1.4.10 Reflow / 1.4.12 Text Spacing): the popup was
+   width:380px with overflow-x:hidden and ZERO media queries, so anything
+   exceeding 380px was clipped and unreachable — no scrollbar, no pan.
+   Applying the 1.4.12 text-spacing bookmarklet truncated .stats,
+   .button-row, the "Every [n] seconds" row and .storage-actions. Popups
+   honour browser page zoom, so a user at 200% hits this for real.
+   ------------------------------------------------------------------ */
+body {
+  min-width: 320px;
+  overflow-x: auto !important;   /* never `hidden` on the scroll root */
+}
+.stats,
+.button-row,
+.storage-actions { flex-wrap: wrap; }
+
+@media (max-width: 360px) {
+  .stats,
+  .button-row,
+  .storage-actions { flex-direction: column; }
+}

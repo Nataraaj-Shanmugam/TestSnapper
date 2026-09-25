@@ -26,7 +26,19 @@ class Redactor {
       /api[_-]?key/i,
       /auth/i,
       /credit[_-]?card/i,
+      // Q-8: /credit[_-]?card/ never matched the names payment forms actually
+      // use — cardNumber, cc-number, card_number — so those fields were not
+      // classified sensitive at all.
+      /card[_-]?number/i,
+      /\bcc[_-]?(number|num|csc|cvc|exp)/i,
+      /cardnumber/i,
       /cvv/i,
+      // Q-8: /cvv/ misses every other spelling of the same field, and a bare
+      // "123" matches no PII pattern, so the CVC reached the export in clear.
+      /\bcvc\b/i,
+      /\bcsc\b/i,
+      /security[_-]?code/i,
+      /card[_-]?verification/i,
       /ssn/i,
       /social[_-]?security/i,
       /\bpin\b/i,
@@ -36,6 +48,11 @@ class Redactor {
       /dob/i,
       /date[_-]?of[_-]?birth/i,
       /birthdate/i,
+      // Q-8: neither /birthdate/ nor /date[_-]?of[_-]?birth/ matches the very
+      // common `birth_date` / `birthDate`, so a DOB picker named that exported
+      // the exact date of birth.
+      /birth[_-]?date/i,
+      /birth[_-]?day/i,
       /tax[_-]?id/i,
       /\bein\b/i,
       /driver[_-]?license/i,
@@ -93,6 +110,34 @@ class Redactor {
     if (element.type === 'password') return true;
 
     if (element.dataset.sensitive === 'true' || element.dataset.sensitive === '') return true;
+
+    // Q-8: `autocomplete` is the single most reliable sensitivity signal in
+    // HTML and was not consulted at all. These tokens are standardised, so an
+    // exact-match check has no false-positive risk — unlike the name/id
+    // heuristics below, which depend on whatever the developer happened to
+    // call the field.
+    const AUTOCOMPLETE_SENSITIVE = new Set([
+      'cc-number', 'cc-csc', 'cc-exp', 'cc-exp-month', 'cc-exp-year',
+      'cc-name', 'cc-given-name', 'cc-family-name', 'cc-type',
+      'current-password', 'new-password', 'one-time-code',
+      'bday', 'bday-day', 'bday-month', 'bday-year'
+    ]);
+    const autocomplete = (element.getAttribute('autocomplete') || '').trim().toLowerCase();
+    if (autocomplete) {
+      // The attribute may carry section/billing/shipping prefixes.
+      const token = autocomplete.split(/\s+/).pop();
+      if (AUTOCOMPLETE_SENSITIVE.has(token)) return true;
+    }
+
+    // Q-8: <input type="date"> reports .value as an ISO string (1985-03-14),
+    // which matches no DOB regex — the heuristics are structurally unable to
+    // catch it. Treat date inputs whose naming hints at a birth date as
+    // sensitive regardless of value format.
+    if (element.type === 'date' && /birth|dob|\bbday\b/i.test(
+      [element.name, element.id, element.getAttribute('aria-label')].filter(Boolean).join(' ')
+    )) {
+      return true;
+    }
 
     // Concatenate labeling attributes only — class names excluded to avoid
     // false positives on utility classes like "auth-button" or "token-input-wrapper"

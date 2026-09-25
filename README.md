@@ -330,6 +330,16 @@ npm run build
 - **Compression**: Native CompressionStream API (GZIP)
 - **File System**: File System Access API (Manifest V3)
 - **Export Libraries**: docx.js 7.8.2, jsPDF 2.5.1 — both vendored in `libs/`, SHA-384 verified, loaded only via `chrome.runtime.getURL()`
+
+### Third-party licenses
+
+Both bundled libraries are MIT licensed and redistributed with their full
+copyright notices in `libs/*.LICENSE.txt`, as the licence requires.
+
+| Library | Version | Licence | Notice |
+|---|---|---|---|
+| [docx](https://github.com/dolanmiu/docx) | 7.8.2 | MIT | `libs/docx.min.js.LICENSE.txt` |
+| [jsPDF](https://github.com/parallax/jsPDF) | 2.5.1 | MIT (bundled Adobe BSD fonts) | `libs/jspdf.umd.min.js.LICENSE.txt` |
 - **Documentation**: JSDoc (150+ methods documented, ~95% coverage)
 
 ### File Structure

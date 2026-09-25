@@ -477,15 +477,43 @@ var FieldNameResolver = (function () {
    * @returns {string} Cleaned field name
    */
   FieldNameResolver.prototype._cleanFieldName = function (text) {
-    return text
+    var cleaned = text
       .replace(/^\*+|\*+$/g, '')                     // Remove leading/trailing asterisks
       .replace(/:\s*$/g, '')                         // Remove trailing colons
-      .replace(/([a-z])([A-Z])/g, '$1 $2')          // camelCase to spaces
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')       // camelCase to spaces
+      // Q-7: the rule above only splits lower→upper, so an acronym butted
+      // against a word stayed fused: customerPONumber → "customer PONumber",
+      // which then title-cased to the meaningless "Customer Ponumber". Split
+      // ACRONYM+Word too, so it becomes "Customer PO Number".
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
       .replace(/[_-]+/g, ' ')                        // Underscores/hyphens to spaces
       .replace(/\s+/g, ' ')                          // Multiple spaces to single
-      .trim()
+      .trim();
+
+    // Q-7: the mapper below used to lowercase the tail of every word
+    // unconditionally, destroying acronyms — SSN became "Ssn", IBAN "Iban",
+    // VAT ID "Vat Id", DOB "Dob", customerPONumber "Customer Ponumber". Those
+    // are unrecognisable in an exported document.
+    //
+    // "All-caps token = acronym" is too broad: an all-caps LABEL is usually
+    // just shouting ("FIRST NAME" must still become "First Name"). Two narrower
+    // signals are used instead:
+    //   1. a known form-field acronym, in any input casing; and
+    //   2. an all-caps run inside otherwise mixed-case text — which only
+    //      arises from camelCase splitting (userURL, customerPONumber), never
+    //      from a shouted label.
+    var KNOWN_ACRONYMS = [
+      'SSN', 'IBAN', 'VAT', 'DOB', 'URL', 'ID', 'ZIP', 'EIN', 'PIN', 'CVV',
+      'CVC', 'PO', 'NHS', 'TIN', 'ABN', 'GST', 'VIN', 'IMEI', 'ITIN', 'SIN',
+      'BSB', 'NIF', 'API', 'OTP', 'IP', 'PAN', 'UPI', 'IFSC', 'SWIFT', 'BIC'
+    ];
+    var isAllCapsInput = cleaned === cleaned.toUpperCase();
+
+    return cleaned
       .split(' ')
       .map(function (word) {
+        if (KNOWN_ACRONYMS.indexOf(word.toUpperCase()) !== -1) return word.toUpperCase();
+        if (!isAllCapsInput && /^[A-Z0-9]{2,5}$/.test(word)) return word;
         return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
       })
       .join(' ');
