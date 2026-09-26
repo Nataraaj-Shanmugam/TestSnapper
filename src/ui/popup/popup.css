@@ -2274,3 +2274,18 @@ body { min-width: 320px; overflow-x: auto; }
    "[INCOMPLETE]" name prefix. Amber pair, 6.46:1 light / 7.62:1 dark. */
 .session-meta-incomplete { color: #92400E; background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.35); }
 [data-theme="dark"] .session-meta-incomplete { color: #FCD34D; background: rgba(245,158,11,.16); }
+
+/* Status messages (WCAG 1.4.3). v1.2 set each type's text to its own base hue
+   over a tint of that hue, and every one failed — measured on computed styles:
+     light  info 3.58  success 2.83  warning 2.75  error 3.96
+     dark   info 2.61  success 1.93  warning 1.84  error 2.96
+   This is every status, warning and error message the product shows. Explicit
+   tint + a darker (light) / lighter (dark) step of the same hue. */
+.message.info    { background: rgba(59,130,246,.12);  color: #1E3A8A; border-color: rgba(59,130,246,.45); }
+.message.success { background: rgba(34,197,94,.12);   color: #14532D; border-color: rgba(34,197,94,.45); }
+.message.warning { background: rgba(245,158,11,.14);  color: #78350F; border-color: rgba(245,158,11,.5); }
+.message.error   { background: rgba(239,68,68,.12);   color: #7F1D1D; border-color: rgba(239,68,68,.45); }
+[data-theme="dark"] .message.info    { background: rgba(59,130,246,.16); color: #BFDBFE; }
+[data-theme="dark"] .message.success { background: rgba(34,197,94,.16);  color: #BBF7D0; }
+[data-theme="dark"] .message.warning { background: rgba(245,158,11,.16); color: #FDE68A; }
+[data-theme="dark"] .message.error   { background: rgba(239,68,68,.16);  color: #FECACA; }

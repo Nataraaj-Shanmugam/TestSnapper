@@ -355,13 +355,6 @@ async function loadSession() {
     sessionNameInput.value = sessionData.sessionName ||
       `Session ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionStepCount.textContent = stepsData.length;
-    // F-7: the incomplete flag replaces the old "[INCOMPLETE]" name prefix.
-    if (sessionData.incomplete) {
-      showMessage(
-        `This recording ended unexpectedly — the tab was closed. The ${stepsData.length} step${stepsData.length === 1 ? '' : 's'} captured before that are all here.`,
-        'warning'
-      );
-    }
     // v1.2 sidebar: when the session was recorded.
     const sessionDateEl = document.getElementById('sessionDate');
     if (sessionDateEl) {
@@ -404,6 +397,16 @@ async function loadSession() {
 
     await renderSteps();
     hideMessage();
+
+    // F-7: the incomplete flag replaces the old "[INCOMPLETE]" name prefix.
+    // Shown AFTER hideMessage() — shown any earlier, the line above clears it
+    // along with "Loading session…" and the user never sees it.
+    if (sessionData.incomplete) {
+      showMessage(
+        `This recording ended unexpectedly — the tab was closed. The ${stepsData.length} step${stepsData.length === 1 ? '' : 's'} captured before that are all here.`,
+        'warning'
+      );
+    }
 
     console.log('✅ Session loaded:', sessionId, 'Steps:', stepsData.length);
   } catch (error) {
