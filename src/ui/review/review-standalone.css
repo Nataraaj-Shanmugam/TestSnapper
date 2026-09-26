@@ -1691,10 +1691,6 @@ td.table-editable:focus {
 
 /* ---- Elements this port introduced or kept that v1.2 never styled ---- */
 
-/* Start/End Time stack: datetime-local inputs have a large intrinsic minimum
-   width, so two side by side overflowed the 280px sidebar. */
-.field-row { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
-.sidebar input[type="datetime-local"] { width: 100%; min-width: 0; }
 
 .export-config { margin-top: var(--space-3); }
 .export-config > summary {
@@ -1990,3 +1986,59 @@ td.table-editable:focus {
 [data-theme="dark"] .message.success { background: rgba(34,197,94,.16);  color: #BBF7D0; }
 [data-theme="dark"] .message.warning { background: rgba(245,158,11,.16); color: #FDE68A; }
 [data-theme="dark"] .message.error   { background: rgba(239,68,68,.16);  color: #FECACA; }
+
+/* ---- Session details + export: a full-width panel on TOP of the page ----
+   v1.2 placed this in a sticky 280px left sidebar; the product owner wants it
+   above the step list. Two rows of fields on a 3-column grid (a single row of
+   five squeezed the date pickers, which need ~190px), then a footer with
+   Configure Export on the left and the actions on the right. */
+.session-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.session-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+  align-items: end;
+}
+.session-panel-grid .field-group { margin-bottom: 0; min-width: 0; }
+.session-panel-grid input[type="datetime-local"] { width: 100%; min-width: 0; }
+.session-panel-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-bottom: var(--space-2);
+}
+.session-panel-meta .meta-item { padding: 0; }
+.session-panel-meta .meta-item + .meta-item { margin-top: 0; }
+
+.session-panel-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-default);
+}
+.session-panel-footer .export-config { margin-top: 0; flex: 1 1 320px; }
+/* Opened options lie in a row here rather than stacking as in a sidebar. */
+.session-panel-footer .export-config-body { flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.session-panel-footer .export-config-stack { flex-direction: row; align-items: center; gap: var(--space-2); white-space: nowrap; }
+.session-panel-footer .btn-block { width: auto; }
+.session-panel-actions { display: flex; gap: var(--space-2); flex: 0 0 auto; }
+
+@media (max-width: 860px) {
+  .session-panel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .session-panel-grid { grid-template-columns: 1fr; }
+  .session-panel-actions { width: 100%; }
+  .session-panel-actions .btn { flex: 1; }
+}

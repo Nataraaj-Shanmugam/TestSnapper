@@ -355,7 +355,7 @@ async function loadSession() {
     sessionNameInput.value = sessionData.sessionName ||
       `Session ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionStepCount.textContent = stepsData.length;
-    // v1.2 sidebar: when the session was recorded.
+    // Session panel: when the session was recorded.
     const sessionDateEl = document.getElementById('sessionDate');
     if (sessionDateEl) {
       const created = sessionData.createdAt ? new Date(sessionData.createdAt) : null;
@@ -1571,19 +1571,6 @@ function setupV12Features() {
   wireDialog(document.getElementById('exportPreviewModal'), document.getElementById('closeExportPreview'));
   wireDialog(document.getElementById('privacyAuditModal'), document.getElementById('closePrivacyAudit'));
 
-  // Mobile sidebar.
-  const toggle = document.getElementById('sidebarToggle');
-  const sidebar = document.getElementById('sidebar');
-  const overlay = document.getElementById('sidebarOverlay');
-  if (toggle && sidebar && overlay) {
-    const setOpen = (open) => {
-      sidebar.classList.toggle('open', open);
-      overlay.classList.toggle('active', open);
-      toggle.setAttribute('aria-expanded', String(open));
-    };
-    toggle.addEventListener('click', () => setOpen(!sidebar.classList.contains('open')));
-    overlay.addEventListener('click', () => setOpen(false));
-  }
 }
 
 // ==================== Generic dialog helper (v1.2 port) ====================

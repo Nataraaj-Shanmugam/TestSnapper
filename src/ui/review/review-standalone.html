@@ -20,105 +20,6 @@
 
 <body>
     <div class="app-wrapper">
-        <!-- Mobile sidebar toggle -->
-        <button id="sidebarToggle" class="sidebar-toggle" title="Toggle Sidebar" aria-label="Toggle sidebar"
-            aria-controls="sidebar" aria-expanded="false">
-            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-        </button>
-        <!-- Sidebar overlay for mobile -->
-        <div id="sidebarOverlay" class="sidebar-overlay"></div>
-
-        <!-- Sidebar: session metadata + export -->
-        <aside class="sidebar" id="sidebar" aria-labelledby="sidebarHeading">
-            <div class="header-logo">
-                <h2 id="sidebarHeading">
-                    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> TestSnapper
-                </h2>
-            </div>
-
-            <div class="session-settings-card">
-                <div class="field-group">
-                    <label for="sessionName">Session Name</label>
-                    <input type="text" id="sessionName" class="input-styled" placeholder="Session name..."
-                        autocomplete="off">
-                </div>
-
-                <!-- Kept from 6cd9544 (July): report metadata. v1.2 predates this
-                     feature and dropped all three fields. -->
-                <div class="field-group">
-                    <label for="sessionAuthor">Author</label>
-                    <input type="text" id="sessionAuthor" class="input-styled" placeholder="Your name..."
-                        autocomplete="off">
-                </div>
-
-                <div class="field-row">
-                    <div class="field-group">
-                        <label for="sessionStartTime">Start Time</label>
-                        <input type="datetime-local" id="sessionStartTime" class="input-styled">
-                    </div>
-                    <div class="field-group">
-                        <label for="sessionEndTime">End Time</label>
-                        <input type="datetime-local" id="sessionEndTime" class="input-styled">
-                    </div>
-                </div>
-
-                <div class="field-group">
-                    <label for="exportFormat">Export Format</label>
-                    <select id="exportFormat" class="select-styled">
-                        <option value="docx">Microsoft Word (.docx)</option>
-                        <option value="pdf">PDF Document (.pdf)</option>
-                        <option value="csv">Excel / CSV (.csv)</option>
-                        <option value="json">JSON Format (Data)</option>
-                        <option value="markdown">Markdown (.md)</option>
-                    </select>
-                </div>
-
-                <div class="meta-info">
-                    <div class="meta-item">
-                        <span class="meta-label">Created:</span>
-                        <span id="sessionDate" class="meta-value">-</span>
-                    </div>
-                    <div class="meta-item">
-                        <span class="meta-label">Steps:</span>
-                        <span id="sessionStepCount" class="meta-value">-</span>
-                    </div>
-                </div>
-
-                <!-- R-004: Export configuration.
-                     "Include selectors" (ecIncludeSelectors) deliberately omitted —
-                     acd82c4 removed locators from every export, and that decision
-                     was reconfirmed when this design was ported. -->
-                <details id="exportConfigDetails" class="export-config">
-                    <summary>Configure Export</summary>
-                    <div class="export-config-body">
-                        <label class="export-config-label"><input type="checkbox" id="ecIncludeScreenshots" checked> Include screenshots</label>
-                        <!-- v1.2 also offered "Only failed steps". Removed: it filtered on
-                             step.failed, a field no step has ever had (no pass/fail
-                             verdict exists), so ticking it exported an EMPTY document. -->
-                        <label class="export-config-label export-config-stack" for="ecScreenshotSize">Screenshot size
-                            <select id="ecScreenshotSize" class="select-styled">
-                                <!-- Defaults to Full: v1.2 defaulted to Medium, which would have
-                                     silently downsized every existing user's exports from 1920px. -->
-                                <option value="full" selected>Full</option>
-                                <option value="medium">Medium (800px)</option>
-                                <option value="small">Small (400px)</option>
-                            </select>
-                        </label>
-                        <button id="previewExportBtn" type="button" class="btn btn-secondary btn-block">Preview (first 5)</button>
-                    </div>
-                </details>
-
-                <div class="sidebar-actions">
-                    <button id="saveExportBtn" class="btn btn-primary">
-                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Documentation
-                    </button>
-
-                    <button id="cancelBtn" class="btn btn-secondary">
-                        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Done
-                    </button>
-                </div>
-            </div>
-        </aside>
 
         <!-- Main Review Area -->
         <main class="main-content">
@@ -139,6 +40,89 @@
                     </button>
                 </div>
             </header>
+
+            <!-- Session details + export. Sits on top of the page, full width,
+                 between the header and the search toolbar — v1.2 put it in a
+                 left sidebar, which the product owner rejected. -->
+            <section class="session-panel" aria-labelledby="sessionPanelHeading">
+                <h2 id="sessionPanelHeading" class="visually-hidden">Session details and export</h2>
+                <div class="session-panel-grid">
+                    <div class="field-group">
+                        <label for="sessionName">Session Name</label>
+                        <input type="text" id="sessionName" class="input-styled" placeholder="Session name..."
+                            autocomplete="off">
+                    </div>
+                    <!-- Kept from 6cd9544 (July): report metadata. -->
+                    <div class="field-group">
+                        <label for="sessionAuthor">Author</label>
+                        <input type="text" id="sessionAuthor" class="input-styled" placeholder="Your name..."
+                            autocomplete="off">
+                    </div>
+                    <div class="field-group">
+                        <label for="exportFormat">Export Format</label>
+                        <select id="exportFormat" class="select-styled">
+                            <option value="docx">Microsoft Word (.docx)</option>
+                            <option value="pdf">PDF Document (.pdf)</option>
+                            <option value="csv">Excel / CSV (.csv)</option>
+                            <option value="json">JSON Format (Data)</option>
+                            <option value="markdown">Markdown (.md)</option>
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label for="sessionStartTime">Start Time</label>
+                        <input type="datetime-local" id="sessionStartTime" class="input-styled">
+                    </div>
+                    <div class="field-group">
+                        <label for="sessionEndTime">End Time</label>
+                        <input type="datetime-local" id="sessionEndTime" class="input-styled">
+                    </div>
+                    <div class="session-panel-meta">
+                        <div class="meta-item">
+                            <span class="meta-label">Created:</span>
+                            <span id="sessionDate" class="meta-value">-</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Steps:</span>
+                            <span id="sessionStepCount" class="meta-value">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="session-panel-footer">
+                    <!-- R-004: Export configuration.
+                         "Include selectors" (ecIncludeSelectors) deliberately omitted —
+                         acd82c4 removed locators from every export, and that decision
+                         was reconfirmed when this design was ported. -->
+                    <details id="exportConfigDetails" class="export-config">
+                        <summary>Configure Export</summary>
+                        <div class="export-config-body">
+                            <label class="export-config-label"><input type="checkbox" id="ecIncludeScreenshots" checked> Include screenshots</label>
+                            <!-- v1.2 also offered "Only failed steps". Removed: it filtered on
+                                 step.failed, a field no step has ever had (no pass/fail
+                                 verdict exists), so ticking it exported an EMPTY document. -->
+                            <label class="export-config-label export-config-stack" for="ecScreenshotSize">Screenshot size
+                                <select id="ecScreenshotSize" class="select-styled">
+                                    <!-- Defaults to Full: v1.2 defaulted to Medium, which would have
+                                         silently downsized every existing user's exports from 1920px. -->
+                                    <option value="full" selected>Full</option>
+                                    <option value="medium">Medium (800px)</option>
+                                    <option value="small">Small (400px)</option>
+                                </select>
+                            </label>
+                            <button id="previewExportBtn" type="button" class="btn btn-secondary btn-block">Preview (first 5)</button>
+                        </div>
+                    </details>
+
+                    <div class="session-panel-actions">
+                        <button id="saveExportBtn" class="btn btn-primary">
+                            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Documentation
+                        </button>
+                        <button id="cancelBtn" class="btn btn-secondary">
+                            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Done
+                        </button>
+                    </div>
+                </div>
+            </section>
 
             <!-- A-1 (WCAG 4.1.3): polite region for status, assertive for errors. -->
             <div id="message" class="message hidden" role="status" aria-live="polite" aria-atomic="true"></div>
