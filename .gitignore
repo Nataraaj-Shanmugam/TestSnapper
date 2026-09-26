@@ -90,3 +90,5 @@ playwright-report/*
 Observations/
 _smoke_out/
 _smoke_settings.cjs
+# Packages downloaded from the Chrome Web Store (source lives on the version branch)
+release/published-*/
