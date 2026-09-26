@@ -60,7 +60,7 @@ Fixes landed on `fix/v1.1.7-findings` (3 commits off `V1.1.7`). 438 tests pass, 
 | P2-6 `.docx` → `.doc` fallback | Conditional and cosmetic; only fires when the bundled `docx` library fails to load |
 | P2-9 jsPDF 2.5.1 → 4.x | Two majors; needs PDF-export regression testing and a new SRI pin |
 | P2-10 permission restructuring | `optional_permissions` + `registerContentScripts` is an architecture change affecting the install flow |
-| Q-2 repeated-click collapse | **A product decision, not a bug.** `tests/background/recorder-utils.test.js` explicitly asserts the current behaviour; documented in place at `recorder-utils.js` rather than flipped silently |
+| Q-2 repeated-click collapse | **Fixed in 1.1.8.** Background dedup is now time-bounded for clicks (`CLICK_REPEAT_WINDOW_MS` = 500ms in `recorder-utils.js`): a repeat inside the window is treated as a double-fire, a deliberate repeat is recorded. The untimed rule (and its test) still applies when no elapsed time is passed |
 | Q-9 / Q-10 export-format changes | DOCX screenshot placement, CSV numbering, and the JSON schema are output-format decisions |
 
 ---
@@ -471,7 +471,7 @@ is either never captured or captured and discarded.
 | New tab / OAuth leg | **No** | See P0-2 |
 | Repeated identical click | **2nd+ dropped** | See Q-2 |
 
-### Q-2 · Repeated identical clicks are silently collapsed `[REPORTED]`
+### Q-2 · Repeated identical clicks are silently collapsed `[FIXED 1.1.8]`
 
 `background.js:1038`, `recorder-utils.js:44-52` — clicks carry `value: null`, so identical
 action + fieldName + url dedups. Clicking "Next page" three times records **one** step. Pagination,

@@ -986,7 +986,38 @@ async function resumeRecording(tabId) {
   return { success: true };
 }
 
+/**
+ * Ask the recorded tab to commit typed input still waiting on its debounce.
+ * Resolves after the content script has stored those steps, when no frame has
+ * anything pending, or after FLUSH_TIMEOUT_MS — whichever comes first.
+ * @param {number} tabId
+ * @returns {Promise<void>}
+ */
+async function flushPendingInputs(tabId) {
+  const FLUSH_TIMEOUT_MS = 1500;
+  if (!tabId || stateManager.state !== 'recording') return;
+  try {
+    await Promise.race([
+      chrome.tabs.sendMessage(tabId, { action: 'flushPendingInputs' }),
+      new Promise(resolve => setTimeout(resolve, FLUSH_TIMEOUT_MS))
+    ]);
+  } catch (err) {
+    // "Receiving end does not exist" / "message port closed": nothing pending.
+    Logger.debug('flushPendingInputs: no pending input to commit', err?.message);
+  }
+}
+
 async function stopRecording(tabId) {
+  if (stateManager.isIdle()) {
+    return { success: false, error: 'Not recording' };
+  }
+
+  // Let the page commit text typed within the last 800ms (still debounced)
+  // while addStep will still accept it. Bounded: a field-name prompt opened by
+  // that commit must not hold the stop hostage.
+  await flushPendingInputs(stateManager.session?.tabId ?? tabId);
+  // A second stop (double-click, shortcut + panel) may have finished while
+  // this one waited on the page.
   if (stateManager.isIdle()) {
     return { success: false, error: 'Not recording' };
   }
@@ -1092,6 +1123,7 @@ async function stopRecording(tabId) {
 
 // Track the last step to detect consecutive duplicates at the background level
 let _lastAddedStep = null;
+let _lastAddedAt = 0;
 
 async function addStep(stepData, senderTabId) {
   // Reject steps when not actively recording (e.g. paused) — MED-001
@@ -1114,7 +1146,7 @@ async function addStep(stepData, senderTabId) {
     const settings = await settingsManager.get();
 
     // Server-side consecutive duplicate detection (gated on smartDedup setting)
-    if (settings.smartDedup !== false && _isConsecutiveDuplicate(stepData, _lastAddedStep)) {
+    if (settings.smartDedup !== false && _isConsecutiveDuplicate(stepData, _lastAddedStep, Date.now() - _lastAddedAt)) {
       Logger.debug('⏭️ Skipping consecutive duplicate step:', stepData.action, stepData.fieldName);
       return { success: true, skipped: true };
     }
@@ -1135,6 +1167,7 @@ async function addStep(stepData, senderTabId) {
     sanitizeStepForStorage(step);
 
     _lastAddedStep = stepData;
+    _lastAddedAt = Date.now();
 
     await storage.addStep(step);
     await storage.updateSession(stateManager.session);

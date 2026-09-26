@@ -328,3 +328,28 @@ describe('SchemaMigrator.migrateIfNeeded — idempotency', () => {
     expect(chromeStore.has('testsnapper_data')).toBe(false);
   });
 });
+
+describe('SchemaMigrator: legacy "[INCOMPLETE]" session names', () => {
+  it('strips the prefix and sets the incomplete flag', async () => {
+    chromeStore.set('testsnapper_sessions', [
+      { sessionId: 'a', sessionName: '[INCOMPLETE] Checkout flow' },
+      { sessionId: 'b', sessionName: '[INCOMPLETE] [INCOMPLETE] Login' },
+      { sessionId: 'c', sessionName: 'Clean name' },
+    ]);
+
+    await new SchemaMigrator(new MockStorageManager()).migrateIfNeeded();
+
+    const sessions = chromeStore.get('testsnapper_sessions');
+    expect(sessions[0]).toMatchObject({ sessionName: 'Checkout flow', incomplete: true });
+    expect(sessions[1]).toMatchObject({ sessionName: 'Login', incomplete: true });
+    expect(sessions[2]).toEqual({ sessionId: 'c', sessionName: 'Clean name' });
+  });
+
+  it('does not write when no session carries the prefix', async () => {
+    chromeStore.set('testsnapper_sessions', [{ sessionId: 'c', sessionName: 'Clean name' }]);
+
+    await new SchemaMigrator(new MockStorageManager()).migrateIfNeeded();
+
+    expect(chrome.storage.local.set).not.toHaveBeenCalled();
+  });
+});

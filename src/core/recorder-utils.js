@@ -10,6 +10,9 @@
  *   import { _isConsecutiveDuplicate, shouldRecordRequest, validateSettings } from './recorder-utils.js';
  */
 
+/** A repeated identical click inside this window is treated as a double-fire (Q-2). */
+export const CLICK_REPEAT_WINDOW_MS = 500;
+
 /**
  * Detects if a step is a consecutive duplicate of the last added step.
  * Used to prevent recording the same action twice in a row.
@@ -30,6 +33,8 @@
  * @param {Object} [lastStep.selector] - Selector information with optional css property
  * @param {string} lastStep.targetLabel - Human-readable target label
  *
+ * @param {number} [elapsedMs] - ms since lastStep was added; bounds click dedup (Q-2)
+ *
  * @returns {boolean} true if this step is a duplicate of the last step
  *
  * @example
@@ -37,21 +42,20 @@
  * const lastStep = { action: 'type', fieldName: 'username', url: '/', selector: { css: 'input.user' }, value: 'alice' };
  * _isConsecutiveDuplicate(stepData, lastStep) → true
  */
-export function _isConsecutiveDuplicate(stepData, lastStep) {
+export function _isConsecutiveDuplicate(stepData, lastStep, elapsedMs) {
   if (!lastStep) return false;
 
-  // Q-2 (KNOWN LIMITATION, deliberately left as-is): clicks carry
-  // `value: null` and this check has no time bound, so three clicks on
-  // "Next page", a quantity stepper's "+", or "Add row" collapse into one
-  // recorded step — the exported document then claims one interaction where
-  // the user performed several.
-  //
-  // This is NOT an accidental bug: tests/background/recorder-utils.test.js
-  // ("returns true for click actions with identical selector even without
-  // value") asserts exactly this behaviour, so it was an intentional choice.
-  // Changing it is a product decision about which matters more — suppressing
-  // accidental double-fire, or faithfully recording deliberate repetition.
-  // A time-bounded rule would satisfy both but needs a step timestamp here.
+  // Q-2: clicks carry `value: null`, so without a time bound three clicks on
+  // "Next page", a quantity stepper's "+", or "Add row" collapsed into one
+  // step. When the caller says how long ago the last step was added, a
+  // repeated click only counts as a duplicate inside CLICK_REPEAT_WINDOW_MS —
+  // long enough to absorb an event that fired twice, short of how fast
+  // people deliberately repeat a click. Without elapsedMs the old untimed
+  // rule applies.
+  if (stepData.action === 'click' && typeof elapsedMs === 'number' &&
+      elapsedMs >= CLICK_REPEAT_WINDOW_MS) {
+    return false;
+  }
 
   // Same action + same fieldName + same selector CSS + same URL = duplicate
   if (lastStep.action !== stepData.action) return false;

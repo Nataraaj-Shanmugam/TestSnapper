@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { _isConsecutiveDuplicate, shouldRecordRequest, validateSettings, shouldCaptureNavigationScreenshot } from '../../src/core/recorder-utils.js';
+import { _isConsecutiveDuplicate, CLICK_REPEAT_WINDOW_MS, shouldRecordRequest, validateSettings, shouldCaptureNavigationScreenshot } from '../../src/core/recorder-utils.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // shouldCaptureNavigationScreenshot — "Auto-Capture Screenshots" is the master
@@ -581,5 +581,22 @@ describe('validateSettings', () => {
     expect(result.screenshotFormat).toBe('png'); // default for invalid enum
     expect(result.captureApiCalls).toBe(true); // preserved
     expect(result.maxSessions).toBe(25); // from defaults
+  });
+});
+
+describe('_isConsecutiveDuplicate — repeated clicks (Q-2)', () => {
+  const click = { action: 'click', fieldName: 'Add item', url: '/cart', selector: { css: '#add' }, value: null, targetLabel: 'Add item' };
+
+  it('treats a repeat inside the window as a double-fire', () => {
+    expect(_isConsecutiveDuplicate({ ...click }, click, CLICK_REPEAT_WINDOW_MS - 1)).toBe(true);
+  });
+
+  it('records a deliberate repeat outside the window', () => {
+    expect(_isConsecutiveDuplicate({ ...click }, click, CLICK_REPEAT_WINDOW_MS)).toBe(false);
+  });
+
+  it('does not time-bound identical type steps', () => {
+    const type = { ...click, action: 'type', value: 'x' };
+    expect(_isConsecutiveDuplicate({ ...type }, type, 10_000)).toBe(true);
   });
 });

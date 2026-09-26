@@ -150,3 +150,37 @@ test('F-4: "Name later" on the field-name prompt keeps the step', async () => {
   expect(typed.fieldName).toBe('Unnamed field');
   expect(typed.needsName).toBe(true);
 });
+
+test('Stop right after typing keeps the text (pending input is flushed first)', async () => {
+  const steps = await record(
+    '/stop-while-typing',
+    '<label for="note">Note</label><input id="note" name="note" type="text">',
+    async (page) => {
+      const note = page.locator('#note');
+      await note.click();
+      await note.fill('last words');
+      // No wait: stop arrives well inside the 800ms input debounce, the way
+      // the stop keyboard shortcut does. Before the fix the stop cleared the
+      // debounce timer and the text was never recorded.
+    }
+  );
+
+  const typed = steps.find((s) => s.action === 'type' && s.value === 'last words');
+  expect(typed, `a type step with "last words" — got ${JSON.stringify(steps.map((s) => [s.action, s.value]))}`).toBeTruthy();
+});
+
+test('Q-2: deliberate repeated clicks are each recorded', async () => {
+  const steps = await record(
+    '/repeat-click',
+    '<button id="add" type="button">Add item</button>',
+    async (page) => {
+      for (let i = 0; i < 3; i++) {
+        await page.locator('#add').click();
+        await page.waitForTimeout(700); // clearly deliberate, outside the double-fire window
+      }
+    }
+  );
+
+  const clicks = steps.filter((s) => s.action === 'click');
+  expect(clicks.length, `three click steps — got ${JSON.stringify(steps.map((s) => s.action))}`).toBe(3);
+});

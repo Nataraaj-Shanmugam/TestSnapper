@@ -974,7 +974,7 @@ async function commitInput(element) {
       if (!stepData) return;
 
       updateLastInteraction(element, 'type', value);
-      sendStepToBackground(stepData);
+      await sendStepToBackground(stepData);
       pendingInputs.delete(elementKey);
 
       window.Logger?.info('Input captured:', stepData.fieldName, value);
@@ -1233,10 +1233,15 @@ function sendStepToBackground(stepData, isRetry) {
     return;
   }
 
+  // Resolves once the background has answered, so flushPendingInputs can
+  // tell it the step is stored before recording stops. Callers that don't
+  // care about ordering ignore the return value.
+  return new Promise(function(resolve) {
   chrome.runtime.sendMessage({
     action: 'addStep',
     stepData: stepData
   }, function(response) {
+    resolve();
     if (chrome.runtime.lastError) {
       window.Logger?.error('Failed to send step:', chrome.runtime.lastError);
       if (!isRetry) {
@@ -1268,6 +1273,26 @@ function sendStepToBackground(stepData, isRetry) {
       }
     }
   });
+  });
+}
+
+/**
+ * Commit every input still waiting on its 800ms debounce, right now.
+ *
+ * Stopping from the popup or the floating panel usually moved focus first,
+ * but the stop keyboard shortcut does not, and in every case the stop cleared
+ * the timers — so whatever the tester typed just before stopping was lost.
+ * The background calls this (via 'flushPendingInputs') before it changes
+ * state, and waits for it with a timeout.
+ */
+function flushPendingInputs() {
+  if (!pendingInputs || pendingInputs.size === 0) return Promise.resolve();
+  var elements = [];
+  pendingInputs.forEach(function(timeoutId, element) {
+    clearTimeout(timeoutId);
+    elements.push(element);
+  });
+  return Promise.all(elements.map(function(element) { return commitInput(element); }));
 }
 
 /**
@@ -1807,6 +1832,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       stopRecording();
       sendResponse({ success: true });
       break;
+
+    case 'flushPendingInputs':
+      // Every frame gets this message and the first reply wins, so only the
+      // frame that actually holds pending text answers. When no frame does,
+      // the background sees the channel close at once and carries on.
+      if (!isRecording || !pendingInputs || pendingInputs.size === 0) return false;
+      flushPendingInputs().then(
+        function() { sendResponse({ success: true }); },
+        function() { sendResponse({ success: false }); }
+      );
+      return true; // keep the channel open for the async response
 
     // Background queries before auto-capturing to skip sensitive pages
     case 'isSensitiveFieldActive': {

@@ -26,6 +26,7 @@ import { StorageManager } from './storage.js';
 import { getPendingFlush, addPendingFlush, removePendingFlush } from './flush-utils.js';
 import { Logger } from './logger.js';
 import { sanitizeUrl } from './privacy-utils.js';
+import { normalizeLegacyIncompleteName } from './schema-migrator.js';
 
 /**
  * SEC-1 backstop: strip sensitive query params from a step's URLs in
@@ -291,7 +292,7 @@ export class FSStorageManager {
         const assets = await this._fileSync.readAssets(sessionId);
 
         return {
-          ...data.session,
+          ...normalizeLegacyIncompleteName(data.session),
           steps,
           assets
         };
@@ -349,7 +350,7 @@ export class FSStorageManager {
 
     if (fsReady) {
       const index = await this._fileSync.readSessionIndex();
-      sessions.push(...index);
+      sessions.push(...index.map(normalizeLegacyIncompleteName));
     }
 
     // Overlay buffered sessions that haven't been flushed yet
