@@ -441,14 +441,16 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     // Use shared detectPageTheme() helper (handles transparent body, alpha blending)
     var modalTheme = detectPageTheme();
     var isLight = modalTheme === 'light';
-    var modalBg = isLight ? '#ffffff' : '#1a1a1f';
-    var modalBorder = isLight ? '#dee2e6' : '#2e2e35';
+    // UX-019: dark surfaces use the TS_SLATE palette (defined at top of file)
+    // instead of one-off hex, so the injected UI matches the extension's own theme.
+    var modalBg = isLight ? '#ffffff' : TS_SLATE_900;
+    var modalBorder = isLight ? '#dee2e6' : TS_SLATE_700;
     var modalShadow = isLight ? '0 10px 25px -5px rgba(0,0,0,0.1)' : '0 10px 25px -5px rgba(0,0,0,0.5)';
     var textPrimary = isLight ? '#212529' : '#ececef';
     var textMuted = isLight ? '#868e96' : '#71717a';
-    var borderColor = isLight ? '#dee2e6' : '#2e2e35';
-    var inputBg = isLight ? '#ffffff' : '#111113';
-    var cancelHoverBg = isLight ? '#e9ecef' : '#2e2e35';
+    var borderColor = isLight ? '#dee2e6' : TS_SLATE_700;
+    var inputBg = isLight ? '#ffffff' : TS_SLATE_900;
+    var cancelHoverBg = isLight ? '#e9ecef' : TS_SLATE_700;
 
     // Create Shadow DOM host so styles don't leak into/from host page
     var shadowHost = document.createElement('div');
@@ -885,7 +887,8 @@ function showToastNotification(message, type) {
     '*, *::before, *::after { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; font-size: 13px; line-height: 1.5; text-transform: none; }',
     /* Prefixed keyframe name */
     '@keyframes testsnapper-slideInRight { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }',
-    '.toast { position: fixed; bottom: 16px; right: 16px; background: ' + (isLt ? '#ffffff' : '#1a1a1f') + '; color: ' + (isLt ? '#495057' : '#a1a1aa') + '; border: 1px solid ' + (isLt ? '#dee2e6' : '#2e2e35') + '; border-left: 3px solid ' + accentColor + '; padding: 12px 16px; border-radius: 8px; font-weight: 500; box-shadow: ' + (isLt ? '0 4px 12px rgba(0,0,0,0.08)' : '0 4px 12px rgba(0,0,0,0.4)') + '; animation: testsnapper-slideInRight 0.2s ease; max-width: 360px; transition: opacity 0.2s ease; }'
+    // UX-019: TS_SLATE_900/700 instead of one-off dark hex
+    '.toast { position: fixed; bottom: 16px; right: 16px; background: ' + (isLt ? '#ffffff' : TS_SLATE_900) + '; color: ' + (isLt ? '#495057' : '#a1a1aa') + '; border: 1px solid ' + (isLt ? '#dee2e6' : TS_SLATE_700) + '; border-left: 3px solid ' + accentColor + '; padding: 12px 16px; border-radius: 8px; font-weight: 500; box-shadow: ' + (isLt ? '0 4px 12px rgba(0,0,0,0.08)' : '0 4px 12px rgba(0,0,0,0.4)') + '; animation: testsnapper-slideInRight 0.2s ease; max-width: 360px; transition: opacity 0.2s ease; }'
   ].join('\n');
 
   var toastEl = document.createElement('div');
@@ -907,6 +910,16 @@ function showToastNotification(message, type) {
  */
 function showRateLimitFeedback() {
   showToastNotification('Screenshot rate limited - please wait a moment', 'warning');
+}
+
+/**
+ * SEC-002: feedback when a manual screenshot was skipped because a
+ * sensitive field (password, etc.) is focused — captureVisibleTab records
+ * exactly what's on screen, so this is the same guard already applied to
+ * auto-screenshots, now covering the explicit Ctrl+Shift+S action too.
+ */
+function showSensitiveScreenshotBlockedFeedback() {
+  showToastNotification('Screenshot skipped — a password or payment field is focused.', 'warning');
 }
 
 /**
@@ -935,8 +948,11 @@ async function commitInput(element) {
       // Always run the value through redactor to catch PII in generic fields.
       // maskValue() returns the original string unchanged when no patterns match,
       // so this is always safe to call.
-      const maskedValue = redactor.maskValue(element.value, element);
-      const isSensitive = maskedValue !== element.value || redactor.shouldIgnoreField(element);
+      // PERF-017: compute shouldIgnoreField once and pass it in, instead of
+      // maskValue computing it internally and this line recomputing it again.
+      const isIgnored = redactor.shouldIgnoreField(element);
+      const maskedValue = redactor.maskValue(element.value, element, isIgnored);
+      const isSensitive = maskedValue !== element.value || isIgnored;
       const value = maskedValue;
 
       if (isDuplicateInteraction(element, 'type', value)) {
@@ -1077,8 +1093,10 @@ async function handleChange(event) {
     } else {
       action = 'type';
       // Always run through redactor to catch PII in generic fields.
-      const maskedValue = redactor.maskValue(element.value, element);
-      isSensitive = maskedValue !== element.value || redactor.shouldIgnoreField(element);
+      // PERF-017: compute shouldIgnoreField once, reuse for both maskValue and isSensitive.
+      const isIgnored = redactor.shouldIgnoreField(element);
+      const maskedValue = redactor.maskValue(element.value, element, isIgnored);
+      isSensitive = maskedValue !== element.value || isIgnored;
       value = maskedValue;
     }
 
@@ -1505,8 +1523,8 @@ function addRecordingIndicator(startTime = Date.now()) {
       box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06);
     }
     .panel.theme-dark {
-      background: #1a1a1f;
-      border: 1px solid #2e2e35;
+      background: ${TS_SLATE_900};
+      border: 1px solid ${TS_SLATE_700};
       box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
     .panel:active {
@@ -1542,7 +1560,7 @@ function addRecordingIndicator(startTime = Date.now()) {
       height: 14px;
     }
     .theme-light .divider { background: #dee2e6; }
-    .theme-dark .divider { background: #2e2e35; }
+    .theme-dark .divider { background: ${TS_SLATE_700}; }
     .controls {
       display: flex;
       gap: 4px;
@@ -1561,7 +1579,7 @@ function addRecordingIndicator(startTime = Date.now()) {
     .theme-light .btn { color: #868e96; }
     .theme-dark .btn { color: #71717a; }
     .theme-light .btn:hover { background: #e9ecef; }
-    .theme-dark .btn:hover { background: #2e2e35; }
+    .theme-dark .btn:hover { background: ${TS_SLATE_700}; }
     .btn:hover.stop { color: #dc2626; }
     .btn:hover.pause { color: #d97706; }
     .btn:hover.resume { color: #16a34a; }
@@ -1832,10 +1850,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
-    // P0-5: a manual capture was refused because a sensitive field is focused.
-    // Say so — an ignored keypress otherwise reads as a broken shortcut.
+    // SEC-002: visual feedback when a manual capture is skipped for a
+    // focused sensitive field
     case 'screenshotBlockedSensitive':
-      showToastNotification('Screenshot skipped — a password or payment field is focused.', 'warning');
+      showSensitiveScreenshotBlockedFeedback();
       sendResponse({ success: true });
       break;
 
@@ -1897,22 +1915,6 @@ window.Logger?.info('TestSnapper content script loaded');
     }
 
     if (response && response.session) {
-      // P0-2: a session is active, but it may belong to a DIFFERENT tab. Steps
-      // from this tab would be rejected by handleAddStep ('Wrong tab') and the
-      // rejection is swallowed, so mounting the normal panel here showed a live
-      // red RECORDING indicator over work that was silently discarded.
-      if (response.isRecordedTab === false) {
-        window.Logger?.debug('TestSnapper: session belongs to another tab — not capturing here');
-        // Only the top frame gets UI; a toast inside an ad iframe is noise.
-        if (window === window.top) {
-          showToastNotification(
-            'TestSnapper is recording a different tab — nothing on this page is being captured.',
-            'warning'
-          );
-        }
-        return;
-      }
-
       window.Logger?.info('Restoring session state:', response.state, response.session);
       // Pass settings so auto-screenshot continues after page load.
       var settings = response.settings || response.session?.settings || {};

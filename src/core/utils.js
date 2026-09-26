@@ -2,6 +2,7 @@
  * Shared Utilities
  * Common functions used across the extension
  */
+import { Logger } from './logger.js';
 
 export const Utils = {
   /**
@@ -57,7 +58,7 @@ export const Utils = {
       }
       return new Blob([u8arr], { type: mime });
     } catch (error) {
-      console.error('Failed to convert dataURL to Blob:', error);
+      Logger.error('Failed to convert dataURL to Blob:', error);
       throw error;
     }
   },

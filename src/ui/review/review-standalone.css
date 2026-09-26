@@ -2042,3 +2042,12 @@ td.table-editable:focus {
   .session-panel-actions { width: 100%; }
   .session-panel-actions .btn { flex: 1; }
 }
+
+/* PERF-008: search/filter hides existing cards instead of rebuilding the list.
+   The v1.2 stylesheet had no rule for this class, so filtered cards stayed
+   visible. The old rule hid only the card, leaving each hidden card's
+   "+ add step here" strip stacked on screen — hide that too. */
+.step-card.is-filtered-out,
+.add-between:has(+ .step-card.is-filtered-out) {
+  display: none;
+}

@@ -19,9 +19,10 @@
 import { FSStorageManager } from '../../core/fs-storage.js';
 import { ExportService } from '../../core/export-service.js';
 import { Utils } from '../../core/utils.js';
+import { Logger } from '../../core/logger.js';
 import { setupTheme } from '../theme.js';
 
-console.log("✅ TestSnapper Popup loaded");
+Logger.info("✅ TestSnapper Popup loaded");
 
 const fsStorage = new FSStorageManager();
 const fileSync = fsStorage.fileSync;
@@ -97,7 +98,7 @@ async function safePhase(name, fn) {
   try {
     await fn();
   } catch (err) {
-    console.error(`Popup init phase "${name}" failed:`, err);
+    Logger.error(`Popup init phase "${name}" failed:`, err);
   }
 }
 
@@ -133,6 +134,15 @@ function setupKeyboardShortcuts() {
   if (!helpBtn) return;
 
   helpBtn.addEventListener('click', () => {
+    // Toggle: a second click while the shortcuts list is showing dismisses
+    // it instead of re-showing it (a help popover should close on repeat click).
+    const isShortcutsShowing = messageDiv.style.display === 'flex' &&
+      messageDiv.classList.contains('message-multiline');
+    if (isShortcutsShowing) {
+      hideMessage();
+      return;
+    }
+
     const shortcuts = [
       { keys: 'Ctrl+Shift+S / ⌘⇧S', desc: 'Capture Screenshot' },
       { keys: 'Ctrl+Shift+U / ⌘⇧U', desc: 'Pause/Resume Recording' },
@@ -142,6 +152,9 @@ function setupKeyboardShortcuts() {
     ];
     const lines = shortcuts.map(s => `• ${s.keys}: ${s.desc}`).join('\n');
     showMessage(lines, 'info', 8000);
+    // UX-013: the shared toast is built for a single centered line; a
+    // multi-line shortcut list needs left-aligned text with real line breaks.
+    messageDiv.classList.add('message-multiline');
   });
 }
 
@@ -487,7 +500,7 @@ async function handleSmartCleanup() {
       chrome.runtime.sendMessage({ action: 'deleteSession', sessionId: s.sessionId }).catch(() => {});
       deleted++;
     } catch (err) {
-      console.error('Cleanup failed for', s.sessionId, err);
+      Logger.error('Cleanup failed for', s.sessionId, err);
     }
   }
   showMessage(`Deleted ${deleted} of ${old.length} old session${old.length === 1 ? '' : 's'}.`, deleted === old.length ? 'success' : 'warning');
@@ -707,7 +720,7 @@ async function handleStart() {
       showMessage("Failed to start: " + (response.error || "Unknown error"), "error");
     }
   } catch (err) {
-    console.error("Start failed:", err);
+    Logger.error("Start failed:", err);
     showMessage("Error starting recording. Check permissions.", "error");
   }
 }
@@ -718,7 +731,7 @@ async function handlePause() {
     response.success ? showMessage("Recording paused", "info") : showMessage("Pause failed", "error");
     await updateState();
   } catch (err) {
-    console.error("Pause failed:", err);
+    Logger.error("Pause failed:", err);
     showMessage("Error pausing recording", "error");
   }
 }
@@ -729,7 +742,7 @@ async function handleResume() {
     response.success ? showMessage("Recording resumed", "success") : showMessage("Resume failed", "error");
     await updateState();
   } catch (err) {
-    console.error("Resume failed:", err);
+    Logger.error("Resume failed:", err);
     showMessage("Error resuming recording", "error");
   }
 }
@@ -762,7 +775,7 @@ async function handleStop() {
       showMessage("Failed to stop: " + (response.error || "Unknown error"), "error");
     }
   } catch (err) {
-    console.error("Stop failed:", err);
+    Logger.error("Stop failed:", err);
     showMessage("Error stopping recording", "error");
   } finally {
     stopBtn.disabled = false;
@@ -774,7 +787,7 @@ async function handleScreenshot() {
     const response = await chrome.runtime.sendMessage({ action: "captureScreenshot" });
     response.success ? showMessage("Screenshot captured!", "success") : showMessage("Capture failed", "error");
   } catch (err) {
-    console.error("Screenshot failed:", err);
+    Logger.error("Screenshot failed:", err);
     showMessage("Error capturing screenshot", "error");
   }
 }
@@ -825,7 +838,7 @@ async function handleExport() {
       showMessage(`Exported as ${filename}`, "success");
     }
   } catch (err) {
-    console.error("Export failed:", err);
+    Logger.error("Export failed:", err);
     hideExportProgress();
     showMessage("Export failed: " + err.message, "error");
   }
@@ -865,7 +878,7 @@ async function handleViewSteps() {
     await chrome.tabs.create({ url });
     setTimeout(() => window.close(), 500);
   } catch (err) {
-    console.error("View steps failed:", err);
+    Logger.error("View steps failed:", err);
     showMessage("Error opening review page", "error");
   }
 }
@@ -883,7 +896,7 @@ async function handleDeleteSession() {
     showMessage("Deleted session", "success");
     await loadSessions();
   } catch (err) {
-    console.error("Delete failed:", err);
+    Logger.error("Delete failed:", err);
     showMessage("Error deleting session", "error");
   }
 }
@@ -901,7 +914,7 @@ async function handleClearAll() {
     showMessage("Cleared all sessions", "success");
     await loadSessions();
   } catch (err) {
-    console.error("Clear all failed:", err);
+    Logger.error("Clear all failed:", err);
     showMessage("Error clearing sessions", "error");
   }
 }
@@ -930,7 +943,7 @@ async function handleBackupAll() {
 
     showMessage(`Backup saved: ${filename}`, "success");
   } catch (err) {
-    console.error("Backup failed:", err);
+    Logger.error("Backup failed:", err);
     showMessage("Error creating backup: " + err.message, "error");
   }
 }
@@ -967,7 +980,7 @@ async function handleRestoreAll(event) {
     await loadSessions();
     await updateStorageUsage();
   } catch (err) {
-    console.error("Restore failed:", err);
+    Logger.error("Restore failed:", err);
     showMessage("Error restoring backup: " + err.message, "error");
   } finally {
     event.target.value = ''; // Reset file input
@@ -1016,7 +1029,7 @@ async function handleSaveSettings() {
       showMessage('Failed to save settings: ' + (res.error || "Unknown error"), 'error');
     }
   } catch (err) {
-    console.error("Save settings failed:", err);
+    Logger.error("Save settings failed:", err);
     showMessage("Error saving settings", "error");
   }
 }
@@ -1064,7 +1077,7 @@ async function loadSessions() {
     handleSessionSelect();
     loadStorageBreakdown().catch(() => {});
   } catch (e) {
-    console.error("Load sessions failed:", e);
+    Logger.error("Load sessions failed:", e);
   }
 }
 
@@ -1083,7 +1096,7 @@ async function loadSettings() {
     applySettingsToForm(res.settings);
     syncProfileSelect();
   } catch (err) {
-    console.error("Load settings failed:", err);
+    Logger.error("Load settings failed:", err);
   }
 }
 
@@ -1099,7 +1112,7 @@ async function loadExportFormat() {
       formatRadio.checked = true;
     }
   } catch (err) {
-    console.error("Load export format failed:", err);
+    Logger.error("Load export format failed:", err);
   }
 }
 
@@ -1107,7 +1120,7 @@ async function saveExportFormat(format) {
   try {
     await chrome.storage.local.set({ exportFormat: format });
   } catch (err) {
-    console.error("Save export format failed:", err);
+    Logger.error("Save export format failed:", err);
   }
 }
 
@@ -1190,7 +1203,7 @@ async function updateState() {
       if (currentState === "recording" && currentSessionId) updateLiveSteps();
     }
   } catch (e) {
-    console.error("State update failed:", e);
+    Logger.error("State update failed:", e);
   }
 }
 
@@ -1199,7 +1212,7 @@ async function updateLiveSteps() {
     const res = await chrome.runtime.sendMessage({ action: "getSessionSteps", sessionId: currentSessionId });
     if (res.success) displaySteps(res.steps, liveStepsList);
   } catch (err) {
-    console.error("Update live steps failed:", err);
+    Logger.error("Update live steps failed:", err);
   }
 }
 
@@ -1279,6 +1292,16 @@ function showMessage(text, type = "info", duration = 3000) {
   }, duration);
 }
 
+// Manual dismiss — same exit animation as the auto-dismiss timer in showMessage().
+function hideMessage() {
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+  messageDiv.classList.add("toast-exit");
+  setTimeout(() => {
+    messageDiv.style.display = "none";
+    messageDiv.classList.remove("toast-exit", "message-multiline");
+  }, 200);
+}
+
 // =====================
 // File Sync / Storage Setup
 // =====================
@@ -1302,7 +1325,7 @@ async function checkFileSyncStatus() {
       updateSyncUI('needs-auth', `${folderName || '.TestSnapper'} (needs re-auth)`);
     }
   } catch (err) {
-    console.error('File sync status check failed:', err);
+    Logger.error('File sync status check failed:', err);
     updateSyncUI('none', 'Error checking folder');
   }
 }
@@ -1359,7 +1382,7 @@ async function handleSetStorageFolder() {
     await loadSessions();
   } catch (err) {
     if (err.name === 'AbortError') return;
-    console.error('Set storage folder failed:', err);
+    Logger.error('Set storage folder failed:', err);
     showMessage('Failed to set folder: ' + err.message, 'error');
   }
 }
@@ -1377,7 +1400,7 @@ async function handleReauthorize() {
       showMessage('Permission denied. Try setting a new folder.', 'error');
     }
   } catch (err) {
-    console.error('Re-authorize failed:', err);
+    Logger.error('Re-authorize failed:', err);
     showMessage('Re-authorization failed', 'error');
   }
 }
