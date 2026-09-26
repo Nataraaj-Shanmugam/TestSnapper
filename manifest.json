@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TestSnapper",
   "description": "Record UI test sessions with smart field detection and screenshots, then export step-by-step documentation to Word, PDF, CSV, or JSON.",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "author": "TestSnapper Team",
   "offline_enabled": true,
   "minimum_chrome_version": "105",

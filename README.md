@@ -613,6 +613,33 @@ npm run clean
 
 ## 📊 Version History
 
+### v1.1.8 (2026-09-26) - v1.2 Design, Review Findings & Refactor Restored
+**Interface:**
+- 🎨 Popup and review page ported to the v1.2 design (light/dark), with session search,
+  summary card, settings profiles, settings export/import and a storage breakdown
+- 🎨 Review page: session details and export options moved to a panel at the top of the page
+- 🟢 Recording status shows green, stopped shows red
+- ♿ Dialogs take focus when they open, errors stay visible until dismissed and are announced,
+  the export progress bar is exposed to screen readers
+
+**Recording fixes:**
+- ✅ Enter in a search box is recorded after the text it submits
+- ✅ Text typed just before stopping (including via the keyboard shortcut) is no longer lost
+- ✅ Deliberate repeated clicks ("+", "Next page") are each recorded
+- ✅ Skipping the field-name prompt keeps the step ("Unnamed field") instead of deleting it
+- ✅ Screenshots, manual ones included, are skipped while a password/payment field is focused
+- 🔒 More card-number, CVC, birth-date and phone formats are redacted
+
+**Data:**
+- ✅ Sessions that ended unexpectedly are flagged instead of renamed; older
+  "[INCOMPLETE] …" names are cleaned up automatically
+- ✅ Search/filter and table view on the review page no longer lose edits or reorder the wrong step
+- ✅ Export numbering, Markdown escaping, screenshot-size options and cancel all behave consistently
+
+**Code:**
+- 🏗️ Restores the v1.1.6 refactor (performance work in storage, selectors and redaction; Logger
+  everywhere) that the v1.1.7 store-package sync had reverted
+
 ### v1.1.5 (2026-03-21) - Architecture Refactoring & Full Documentation
 **Architecture Improvements:**
 - ✅ Resolved all 12 high/medium severity architectural issues (arch-review)

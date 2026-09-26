@@ -38,6 +38,8 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
   - `src/core/compression.js` — GZIP compression via CompressionStream
   - `src/core/utils.js` — Shared pure utilities (UUID, escapeHtml, blobToDataURL) plus DOM-dependent helpers (downloadFile, showMessage) — dom-utils.js was merged in here (FUNC-021)
   - `src/core/flush-utils.js` — Shared flush coordination between storage and filesystem
+  - `src/core/recorder-utils.js` — Pure recording helpers (consecutive-step dedup with a 500ms click window, API-call filtering, settings validation)
+  - `src/core/privacy-utils.js` — Server-side PII masking backstop applied to every step before it is stored
 
 ### Build System
 - Webpack 5 + Babel (targets Chrome 88+)
@@ -89,7 +91,7 @@ TestSnapper is a Chrome browser extension (Manifest V3) that records UI test ses
 
 ## Git Branching
 - **Main branch:** `master`
-- **Current version:** 1.1.5 (see `package.json`)
+- **Current version:** 1.1.8 (see `package.json`)
 - **Branch naming:** `fix/` or feature prefixes (e.g., `fix/v1.1.6-parallel-fixes`)
 - Versions are single-sourced from `package.json` and injected into `manifest.json` at build time
 
