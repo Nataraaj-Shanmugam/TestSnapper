@@ -525,7 +525,8 @@ class BadgeManager {
   static async setRecording(tabId) {
     await BadgeManager._apply([
       () => chrome.action.setBadgeText({ text: '●', tabId }),
-      () => chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId }),
+      // Recording = green (was red). #15803D keeps the white ● at 5.02:1.
+      () => chrome.action.setBadgeBackgroundColor({ color: '#15803D', tabId }),
       () => chrome.action.setTitle({ title: 'TestSnapper - Recording', tabId })
     ]);
   }

@@ -1520,7 +1520,8 @@ function addRecordingIndicator(startTime = Date.now()) {
     .status-dot {
       width: 6px;
       height: 6px;
-      background: #dc2626;
+      /* Recording = green (was red), per product-owner request. */
+      background: #16a34a;
       border-radius: 50%;
       animation: pulse 2s infinite;
     }

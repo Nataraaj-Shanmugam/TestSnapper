@@ -1122,17 +1122,23 @@ async function updateState() {
       currentSessionId = response.session?.sessionId || null;
       // BUG-008 FIX: null-guard all DOM element accesses to avoid crashes if
       // an element is ever missing from the DOM.
+      // Not recording and not paused = stopped: shown red, labelled "Stopped"
+      // (was a grey "Idle"). Recording is green, paused amber.
+      const isStopped = currentState !== "recording" && currentState !== "paused";
       if (stateText) {
-        stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
+        stateText.textContent = isStopped ? "Stopped"
+          : currentState.charAt(0).toUpperCase() + currentState.slice(1);
         stateText.classList.toggle("recording", currentState === "recording");
         stateText.classList.toggle("paused", currentState === "paused");
+        stateText.classList.toggle("stopped", isStopped);
       }
       if (stateDot) {
-        stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
+        stateDot.className = "state-dot " + (isStopped ? "stopped" : currentState);
       }
       if (stateIndicator) {
         stateIndicator.classList.toggle("is-recording", currentState === "recording");
         stateIndicator.classList.toggle("is-paused", currentState === "paused");
+        stateIndicator.classList.toggle("is-stopped", isStopped);
       }
 
       // Animate stat values

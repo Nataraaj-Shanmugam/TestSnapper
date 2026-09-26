@@ -2289,3 +2289,40 @@ body { min-width: 320px; overflow-x: auto; }
 [data-theme="dark"] .message.success { background: rgba(34,197,94,.16);  color: #BBF7D0; }
 [data-theme="dark"] .message.warning { background: rgba(245,158,11,.16); color: #FDE68A; }
 [data-theme="dark"] .message.error   { background: rgba(239,68,68,.16);  color: #FECACA; }
+
+/* ---- Recording state colours (product-owner request) ----
+   Recording = green and blinking; Stopped = red, steady; Paused stays amber.
+   v1.2 used red for recording and grey for idle. Text on the card measured:
+     Recording #15803D 5.02 / dark #4ADE80 8.40
+     Stopped   #B91C1C 6.47 / dark #F87171 5.29
+     Paused    #B45309 5.02 / dark #FBBF24 8.76 (was #D97706, 3.19 — failed)
+   Dots are graphics (3:1 needed): green 3.30 / 6.42, red 4.83 / 3.89. */
+.state-dot.recording {
+  background: #16A34A;
+  color: #16A34A;
+  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px #16A34A, 0 2px 8px rgba(22,163,74,.35);
+}
+[data-theme="dark"] .state-dot.recording {
+  background: #22C55E;
+  color: #22C55E;
+  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px #22C55E, 0 2px 8px rgba(34,197,94,.35);
+}
+.state-dot.stopped {
+  background: #DC2626;
+  color: #DC2626;
+  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px #DC2626;
+  animation: none;
+}
+[data-theme="dark"] .state-dot.stopped {
+  background: #EF4444;
+  color: #EF4444;
+  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px #EF4444;
+}
+.state-indicator.is-recording { border-color: rgba(22,163,74,.25); border-left-color: #16A34A; }
+.state-indicator.is-stopped   { border-color: rgba(220,38,38,.2);  border-left-color: #DC2626; }
+#stateText.recording { color: #15803D; text-shadow: none; }
+#stateText.stopped   { color: #B91C1C; text-shadow: none; }
+#stateText.paused    { color: #B45309; text-shadow: none; }
+[data-theme="dark"] #stateText.recording { color: #4ADE80; }
+[data-theme="dark"] #stateText.stopped   { color: #F87171; }
+[data-theme="dark"] #stateText.paused    { color: #FBBF24; }
