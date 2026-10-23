@@ -472,26 +472,53 @@
     .steps h3 { font-size: 1.075rem; font-weight: 600; }
     .steps p { margin-top: .35rem; color: var(--ink-soft); font-size: .975rem; }
 
-    /* Export formats: a definition table */
+    /* Export formats: 3 tiles on the first row, 2 wider ones on the second */
     .formats {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 1rem;
+    }
+    .format {
+      grid-column: span 2;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      grid-template-rows: auto 1fr;
+      column-gap: 1rem;
+      row-gap: .5rem;
+      padding: 1.5rem;
       border: 1px solid var(--rule);
       border-radius: 12px;
       background: var(--surface);
-      overflow: hidden;
     }
-    .format {
+    .format:nth-child(n + 4) { grid-column: span 3; }
+    .format-icon {
+      grid-row: span 2;
+      width: 3rem;
+      height: 3rem;
       display: grid;
-      grid-template-columns: 2.5rem 9rem 1fr;
-      align-items: center;
-      gap: 1rem;
-      padding: 1rem 1.25rem;
-      border-top: 1px solid var(--rule);
+      place-items: center;
+      border-radius: 10px;
+      background: var(--steel-wash);
+      color: var(--steel);
     }
-    .format:first-child { border-top: 0; }
-    .format dt { font-weight: 600; }
-    .format dt small { display: block; font-weight: 400; font-family: var(--mono); font-size: .8rem; color: var(--ink-soft); }
-    .format dd { color: var(--ink-soft); }
-    .format .icon { color: var(--steel); width: 1.5rem; height: 1.5rem; }
+    .format-icon .icon { width: 1.5rem; height: 1.5rem; }
+    .format dt {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: .5rem;
+      font-weight: 600;
+      font-size: 1.075rem;
+    }
+    .format dt small {
+      padding: .05rem .45rem;
+      border-radius: 4px;
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      font: 500 .75rem var(--mono);
+      color: var(--ink-soft);
+    }
+    .format dd { color: var(--ink-soft); font-size: .975rem; }
 
     /* Privacy */
     .privacy {
@@ -608,6 +635,9 @@
       .hero .wrap { grid-template-columns: 1fr; }
       .hero h1 { max-width: 18ch; }
       .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 2rem; }
+      .formats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .format, .format:nth-child(n + 4) { grid-column: auto; }
+      .format:last-child { grid-column: 1 / -1; }
     }
     @media (max-width: 760px) {
       .nav-toggle { display: inline-flex; }
@@ -629,8 +659,8 @@
       .nav a:first-child { border-top: 0; }
       .nav .btn { margin-top: .5rem; border-top: 0; }
       .features, .privacy, .install { grid-template-columns: 1fr; }
-      .format { grid-template-columns: 2rem 1fr; }
-      .format dd { grid-column: 2; }
+      .formats { grid-template-columns: 1fr; }
+      .format, .format:nth-child(n + 4) { grid-column: auto; }
     }
     @media (max-width: 560px) {
       .demo-body { grid-template-columns: 1fr; }
@@ -856,27 +886,27 @@
         </div>
         <dl class="formats">
           <div class="format">
-            <svg class="icon" aria-hidden="true"><use href="#i-doc"/></svg>
+            <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-doc"/></svg></span>
             <dt>Word <small>.docx</small></dt>
             <dd>Session details and numbered steps with screenshots, ready to attach to a test plan.</dd>
           </div>
           <div class="format">
-            <svg class="icon" aria-hidden="true"><use href="#i-pdf"/></svg>
+            <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-pdf"/></svg></span>
             <dt>PDF <small>.pdf</small></dt>
             <dd>The same layout on A4, for sign-off and audit evidence.</dd>
           </div>
           <div class="format">
-            <svg class="icon" aria-hidden="true"><use href="#i-table"/></svg>
+            <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-table"/></svg></span>
             <dt>CSV <small>.csv</small></dt>
             <dd>Step, action, field name, value and URL, for spreadsheets and test-management imports.</dd>
           </div>
           <div class="format">
-            <svg class="icon" aria-hidden="true"><use href="#i-braces"/></svg>
+            <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-braces"/></svg></span>
             <dt>JSON <small>.json</small></dt>
             <dd>Full session and step data, including selectors, to build automated tests from.</dd>
           </div>
           <div class="format">
-            <svg class="icon" aria-hidden="true"><use href="#i-markdown"/></svg>
+            <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-markdown"/></svg></span>
             <dt>Markdown <small>.md</small></dt>
             <dd>A plain step list for tickets, pull requests and wikis.</dd>
           </div>
