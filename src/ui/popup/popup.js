@@ -242,7 +242,295 @@ function setupTabs() {
   }
 }
 
+// ==================== v1.2 popup features (ported) ====================
+//
+// Re-implemented on the current code. v1.2's versions interpolated sessionId
+// into attributes unescaped, sized sessions from the legacy
+// testsnapper_assets_{id} key (missing every screenshot), deleted via a
+// message alone (leaving on-disk copies for folder users), and defined
+// profiles over a screenshotMode setting that has no backend.
+
+let _sessionCache = [];
+
+// Every setting the form owns, with the values it may take. Shared by Save,
+// Export and Import so the three can never drift apart.
+const SETTINGS_SCHEMA = {
+  autoScreenshot: 'boolean',
+  screenshotSeconds: 'number',
+  captureOnNavigation: 'boolean',
+  smartDedup: 'boolean',
+  autoSave: 'boolean',
+  // The control is a <select> of exactly these values. Clamping to a 1-100
+  // range let an import set e.g. 1, which matches no option and blanked the
+  // select — and a low value would prune recordings at the next Stop (P2-12).
+  // A file exported from this control always holds one of these four.
+  maxSessions: [10, 25, 50, 100],
+  screenshotFormat: ['png', 'jpeg-high'],
+  exportImageQuality: ['auto', 'high', 'standard'],
+  captureApiCalls: 'boolean',
+  captureFailedCalls: 'boolean',
+  captureAllCalls: 'boolean',
+  includeTimestamp: 'boolean'
+};
+
+/** Read the Settings form into a settings object. */
+function readSettingsForm() {
+  const val = (id) => document.getElementById(id);
+  return {
+    autoScreenshot: autoScreenshot?.checked || false,
+    screenshotSeconds: parseInt(screenshotSeconds?.value) || 5,
+    captureOnNavigation: val('captureOnNavigation')?.checked !== false,
+    smartDedup: val('smartDedup')?.checked !== false,
+    autoSave: autoSave?.checked !== false,
+    maxSessions: parseInt(maxSessions?.value) || 25,
+    screenshotFormat: val('screenshotFormat')?.value || 'png',
+    exportImageQuality: val('exportImageQuality')?.value || 'auto',
+    captureApiCalls: captureApiCalls?.checked || false,
+    captureFailedCalls: captureFailedCalls?.checked || false,
+    captureAllCalls: captureAllCalls?.checked || false,
+    includeTimestamp: includeTimestamp?.checked !== false
+  };
+}
+
+/** Write a settings object into the form. Does not save. */
+function applySettingsToForm(s) {
+  if (captureApiCalls) captureApiCalls.checked = s.captureApiCalls || false;
+  if (captureFailedCalls) captureFailedCalls.checked = s.captureFailedCalls || false;
+  if (captureAllCalls) captureAllCalls.checked = s.captureAllCalls || false;
+  if (includeTimestamp) includeTimestamp.checked = s.includeTimestamp !== false;
+  if (autoScreenshot) autoScreenshot.checked = s.autoScreenshot || false;
+  if (screenshotSeconds) screenshotSeconds.value = s.screenshotSeconds || 5;
+  if (autoSave) autoSave.checked = s.autoSave !== false;
+  if (maxSessions) maxSessions.value = s.maxSessions || 25;
+  const byId = (id) => document.getElementById(id);
+  if (byId('captureOnNavigation')) byId('captureOnNavigation').checked = s.captureOnNavigation !== false;
+  if (byId('smartDedup')) byId('smartDedup').checked = s.smartDedup !== false;
+  if (byId('screenshotFormat')) byId('screenshotFormat').value = s.screenshotFormat || 'png';
+  if (byId('exportImageQuality')) byId('exportImageQuality').value = s.exportImageQuality || 'auto';
+  if (apiCallsOptions) apiCallsOptions.style.display = captureApiCalls?.checked ? "block" : "none";
+  if (screenshotInterval) screenshotInterval.style.display = autoScreenshot?.checked ? "block" : "none";
+  syncNavScreenshotDependency();
+}
+
+/**
+ * Validate an untrusted settings object (from an imported file) against the
+ * schema. Unknown keys are dropped, wrong types rejected, numbers clamped to
+ * the same ranges handleSaveSettings enforces.
+ */
+function sanitizeImportedSettings(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [key, rule] of Object.entries(SETTINGS_SCHEMA)) {
+    if (!(key in raw)) continue;
+    const v = raw[key];
+    if (Array.isArray(rule)) {
+      if (rule.includes(v)) out[key] = v;
+    } else if (rule === 'boolean' && typeof v === 'boolean') {
+      out[key] = v;
+    } else if (rule === 'number' && typeof v === 'number' && Number.isFinite(v)) {
+      // screenshotSeconds is a free number input, so clamp to its 1-60 range.
+      out[key] = key === 'screenshotSeconds' ? Math.max(1, Math.min(60, Math.round(v))) : v;
+    }
+  }
+  return out;
+}
+
+// R-007: profiles, defined over settings that actually take effect.
+const SETTING_PROFILES = {
+  fast: { autoScreenshot: false, captureOnNavigation: false },
+  docs: { autoScreenshot: true, screenshotSeconds: 5, captureOnNavigation: true, includeTimestamp: true }
+};
+
+function detectProfile(s) {
+  for (const [name, preset] of Object.entries(SETTING_PROFILES)) {
+    if (Object.entries(preset).every(([k, v]) => s[k] === v)) return name;
+  }
+  return 'custom';
+}
+
+function syncProfileSelect() {
+  const sel = document.getElementById('settingsProfile');
+  if (sel) sel.value = detectProfile(readSettingsForm());
+}
+
+function applyProfile(name) {
+  const preset = SETTING_PROFILES[name];
+  if (!preset) return;
+  applySettingsToForm({ ...readSettingsForm(), ...preset });
+  showMessage('Profile applied — press Save Settings to keep it.', 'info');
+}
+
+function handleExportSettings() {
+  const payload = { app: 'TestSnapper', kind: 'settings', version: 1, settings: readSettingsForm() };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'testsnapper-settings.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showMessage('Settings exported.', 'success');
+}
+
+async function handleImportSettings(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    // Accept either the wrapped export format or a bare settings object.
+    const incoming = sanitizeImportedSettings(parsed && parsed.settings ? parsed.settings : parsed);
+    const count = Object.keys(incoming).length;
+    if (!count) {
+      showMessage("That file doesn't contain any TestSnapper settings.", 'error');
+      return;
+    }
+    applySettingsToForm({ ...readSettingsForm(), ...incoming });
+    syncProfileSelect();
+    // P0-1 guard: an imported file must not quietly arm the delete-on-stop
+    // behaviour without the user noticing.
+    if (incoming.autoSave === false) {
+      showMessage(`Loaded ${count} settings. Note: "Keep recordings after stopping" is OFF in this file — recordings would be deleted on Stop. Review, then press Save Settings.`, 'warning');
+    } else {
+      showMessage(`Loaded ${count} settings — review them, then press Save Settings.`, 'info');
+    }
+  } catch (err) {
+    showMessage("Couldn't read that settings file — it isn't valid JSON.", 'error');
+  }
+}
+
+// ---- R-006: session search + summary ----
+
+function formatBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return '0 KB';
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Bytes a session occupies in chrome.storage. Uses the current key layout —
+ * steps, the asset index, and one key per screenshot. v1.2 read the legacy
+ * testsnapper_assets_{id} key, so its size (and Cleanup's "freed" figure)
+ * omitted the screenshots that make up nearly all of it.
+ */
+async function sessionBytes(sessionId) {
+  const idxKey = `testsnapper_assetIndex_${sessionId}`;
+  const r = await chrome.storage.local.get(idxKey);
+  const ids = Array.isArray(r[idxKey]) ? r[idxKey] : [];
+  const keys = [`testsnapper_steps_${sessionId}`, idxKey, ...ids.map(id => `testsnapper_asset_${sessionId}_${id}`)];
+  return new Promise(resolve => chrome.storage.local.getBytesInUse(keys, resolve));
+}
+
+function sessionLabel(s) {
+  return s.sessionName || `Session ${new Date(s.createdAt).toLocaleString()}`;
+}
+
+function applySessionSearch() {
+  const q = (document.getElementById('sessionSearch')?.value || '').trim().toLowerCase();
+  let shown = 0;
+  let total = 0;
+  for (const opt of sessionDropdown.options) {
+    if (!opt.value) continue;
+    total++;
+    const match = !q || opt.textContent.toLowerCase().includes(q);
+    // Never hide the current selection, or the control would show a value
+    // with no matching option.
+    opt.hidden = !match && opt.value !== sessionDropdown.value;
+    if (!opt.hidden) shown++;
+  }
+  const status = document.getElementById('sessionSearchStatus');
+  if (status) status.textContent = q ? `${shown} of ${total} sessions match` : '';
+}
+
+async function renderSessionSummary() {
+  const box = document.getElementById('sessionSummary');
+  if (!box) return;
+  const s = _sessionCache.find(x => x.sessionId === sessionDropdown.value);
+  if (!s) { box.hidden = true; box.innerHTML = ''; return; }
+  const created = s.createdAt ? new Date(s.createdAt) : null;
+  const when = created && !isNaN(created)
+    ? created.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  box.innerHTML = `
+    <div class="session-summary-name">${Utils.escapeHtml(sessionLabel(s))}</div>
+    <div class="session-summary-meta">
+      ${s.incomplete ? '<span class="session-meta-badge session-meta-incomplete">Ended unexpectedly</span>' : ''}
+      <span class="session-meta-badge">${Number(s.stepCount) || 0} steps</span>
+      ${when ? `<span class="session-meta-badge">${Utils.escapeHtml(when)}</span>` : ''}
+      <span class="session-meta-badge" data-size>…</span>
+    </div>`;
+  box.hidden = false;
+  try {
+    const bytes = await sessionBytes(s.sessionId);
+    const sizeEl = box.querySelector('[data-size]');
+    // Guard against a newer selection having replaced this one meanwhile.
+    if (sizeEl && sessionDropdown.value === s.sessionId) sizeEl.textContent = formatBytes(bytes);
+  } catch (_) { /* size is informational */ }
+}
+
+// ---- R-009: storage breakdown + cleanup ----
+
+async function loadStorageBreakdown() {
+  const list = document.getElementById('storageBreakdownList');
+  if (!list) return;
+  if (!_sessionCache.length) { list.textContent = 'No sessions stored.'; return; }
+  const sized = await Promise.all(_sessionCache.map(async s => ({ s, bytes: await sessionBytes(s.sessionId).catch(() => 0) })));
+  sized.sort((a, b) => b.bytes - a.bytes);
+  const top = sized.slice(0, 5);
+  const max = Math.max(1, top[0]?.bytes || 1);
+  list.innerHTML = top.map(({ s, bytes }) => `
+    <div class="breakdown-row">
+      <span class="breakdown-name" title="${Utils.escapeHtml(sessionLabel(s))}">${Utils.escapeHtml(sessionLabel(s))}</span>
+      <span class="breakdown-size">${formatBytes(bytes)}</span>
+      <span class="breakdown-bar" aria-hidden="true"><span style="width:${Math.max(2, Math.round((bytes / max) * 100))}%"></span></span>
+    </div>`).join('') +
+    (sized.length > 5 ? `<p class="setting-hint setting-hint-block">+ ${sized.length - 5} more sessions</p>` : '');
+}
+
+async function handleSmartCleanup() {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const old = _sessionCache.filter(s => s.createdAt && new Date(s.createdAt).getTime() < cutoff);
+  if (!old.length) { showMessage('No sessions older than 30 days.', 'info'); return; }
+  const bytes = (await Promise.all(old.map(s => sessionBytes(s.sessionId).catch(() => 0)))).reduce((a, b) => a + b, 0);
+  // State the blast radius (UX F-19): how many, and roughly how much.
+  if (!confirm(`Permanently delete ${old.length} session${old.length === 1 ? '' : 's'} older than 30 days (about ${formatBytes(bytes)})? This can't be undone. Tip: "Backup All Data" saves them to a file first.`)) return;
+  let deleted = 0;
+  for (const s of old) {
+    try {
+      // Same path as handleDeleteSession: removes the on-disk copy too.
+      await fsStorage.clearSession(s.sessionId);
+      chrome.runtime.sendMessage({ action: 'deleteSession', sessionId: s.sessionId }).catch(() => {});
+      deleted++;
+    } catch (err) {
+      Logger.error('Cleanup failed for', s.sessionId, err);
+    }
+  }
+  showMessage(`Deleted ${deleted} of ${old.length} old session${old.length === 1 ? '' : 's'}.`, deleted === old.length ? 'success' : 'warning');
+  await loadSessions();
+  await updateStorageUsage();
+}
+
+function setupV12PopupFeatures() {
+  document.getElementById('sessionSearch')?.addEventListener('input', applySessionSearch);
+
+  const profile = document.getElementById('settingsProfile');
+  profile?.addEventListener('change', () => applyProfile(profile.value));
+  // Any manual edit to a profiled setting means the form is now "Custom".
+  document.getElementById('settings-tab')?.addEventListener('change', (e) => {
+    if (e.target && e.target.id !== 'settingsProfile' && e.target.id !== 'importSettingsFile') syncProfileSelect();
+  });
+
+  document.getElementById('exportSettingsBtn')?.addEventListener('click', handleExportSettings);
+  const importInput = document.getElementById('importSettingsFile');
+  document.getElementById('importSettingsBtn')?.addEventListener('click', () => importInput?.click());
+  importInput?.addEventListener('change', () => {
+    handleImportSettings(importInput.files && importInput.files[0]);
+    importInput.value = '';
+  });
+
+  document.getElementById('smartCleanupBtn')?.addEventListener('click', handleSmartCleanup);
+}
+
 function setupEventListeners() {
+  setupV12PopupFeatures();
   startBtn.addEventListener("click", handleStart);
   pauseBtn.addEventListener("click", handlePause);
   resumeBtn.addEventListener("click", handleResume);
@@ -383,6 +671,9 @@ async function updateStorageUsage() {
     bar.className = 'storage-usage-bar ' + (pct > 95 ? 'storage-critical' : pct > 80 ? 'storage-warn' : 'storage-ok');
     const mb = (used / (1024 * 1024)).toFixed(1);
     text.textContent = `${mb} MB used`;
+    // R-009: surface the warning where the settings that fix it live.
+    const warn = document.getElementById('storageWarningBanner');
+    if (warn) warn.hidden = pct <= 85;
   } catch {
     text.textContent = 'Storage unavailable';
   }
@@ -462,10 +753,24 @@ async function handleStop() {
   try {
     const response = await chrome.runtime.sendMessage({ action: "stopRecording" });
     if (response.success) {
-      showMessage("Recording stopped!", "success");
+      // P0-1: stopRecording returns { success: true, discarded: true } when the
+      // "keep recordings" setting is off — it has already deleted the session.
+      // Reporting "Recording stopped!" for that was a flat lie, and the review
+      // tab then failed with "Session not found".
+      if (response.discarded) {
+        showMessage("Recording discarded — \"Keep recordings after stopping\" is off. Turn it on in Settings to keep future recordings.", "warning");
+      } else if (response.prunedCount > 0) {
+        // P2-12: pruning was previously silent.
+        showMessage(
+          `Recording stopped. Storage limit reached — ${response.prunedCount} oldest recording${response.prunedCount === 1 ? " was" : "s were"} deleted.`,
+          "warning"
+        );
+      } else {
+        showMessage("Recording stopped!", "success");
+      }
       liveStepsViewer.style.display = "none";
       await updateStorageUsage(); // Update storage after stop
-      setTimeout(() => window.close(), 800);
+      setTimeout(() => window.close(), response.discarded ? 4000 : 800);
     } else {
       showMessage("Failed to stop: " + (response.error || "Unknown error"), "error");
     }
@@ -523,7 +828,15 @@ async function handleExport() {
     await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
     if (result.blob) URL.revokeObjectURL(downloadUrl);
     hideExportProgress();
-    showMessage(`Exported as ${filename}`, "success");
+    // P2-6: .docx is built with the bundled docx library; if that fails to
+    // load, the service falls back to a Word-compatible HTML .doc. That is a
+    // reasonable fallback, but it happened silently under a picker that said
+    // ".docx" — anything downstream that parses OOXML then failed.
+    if (format === 'docx' && !/\.docx$/i.test(filename)) {
+      showMessage(`Exported ${filename} — a Word-compatible .doc, because the .docx library could not load.`, "warning");
+    } else {
+      showMessage(`Exported as ${filename}`, "success");
+    }
   } catch (err) {
     Logger.error("Export failed:", err);
     hideExportProgress();
@@ -702,20 +1015,8 @@ async function handleSaveSettings() {
       return;
     }
 
-    const settings = {
-      autoScreenshot: autoScreenshot?.checked || false,
-      screenshotSeconds: screenshotSecondsValue,
-      captureOnNavigation: document.getElementById('captureOnNavigation')?.checked !== false,
-      smartDedup: document.getElementById('smartDedup')?.checked !== false,
-      autoSave: autoSave?.checked !== false,
-      maxSessions: maxSessionsValue,
-      screenshotFormat: screenshotFormatValue,
-      exportImageQuality: exportImageQualityValue,
-      captureApiCalls: captureApiCalls?.checked || false,
-      captureFailedCalls: captureFailedCalls?.checked || false,
-      captureAllCalls: captureAllCalls?.checked || false,
-      includeTimestamp: includeTimestamp?.checked !== false
-    };
+    // Single source for the field list, shared with settings Export/Import.
+    const settings = { ...readSettingsForm(), screenshotSeconds: screenshotSecondsValue, maxSessions: maxSessionsValue };
 
     const res = await chrome.runtime.sendMessage({
       action: 'saveSettings',
@@ -745,9 +1046,16 @@ async function loadSessions() {
       return;
     }
 
+    // This runs again on every tab switch to Export and on every
+    // session-change broadcast from the background. It rebuilds the options
+    // via innerHTML, which used to silently clear whatever session the user
+    // had just picked — disabling Export under them. Remember it and restore it.
+    const previousSelection = sessionDropdown.value;
+
     // Read directly from filesystem (or buffer for active/pending sessions)
     const sessions = await fsStorage.getAllSessions();
     sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    _sessionCache = sessions;
 
     sessionDropdown.innerHTML = '<option value="">Select a session...</option>';
     sessions.forEach((s) => {
@@ -758,10 +1066,16 @@ async function loadSessions() {
       sessionDropdown.appendChild(opt);
     });
 
-    if (currentSessionId) {
+    // A deliberate user choice wins; otherwise default to the active recording.
+    const stillExists = (id) => id && sessions.some(s => s.sessionId === id);
+    if (stillExists(previousSelection)) {
+      sessionDropdown.value = previousSelection;
+    } else if (currentSessionId) {
       sessionDropdown.value = currentSessionId;
     }
+    applySessionSearch();
     handleSessionSelect();
+    loadStorageBreakdown().catch(() => {});
   } catch (e) {
     Logger.error("Load sessions failed:", e);
   }
@@ -772,41 +1086,15 @@ function handleSessionSelect() {
   exportBtn.disabled = !has;
   viewStepsBtn.disabled = !has;
   deleteSessionBtn.disabled = !has;
+  renderSessionSummary();
 }
 
 async function loadSettings() {
   try {
     const res = await chrome.runtime.sendMessage({ action: "getSettings" });
     if (!res.success) return;
-
-    const s = res.settings;
-
-    // Load settings with null checks
-    if (captureApiCalls) captureApiCalls.checked = s.captureApiCalls || false;
-    if (captureFailedCalls) captureFailedCalls.checked = s.captureFailedCalls || false;
-    if (captureAllCalls) captureAllCalls.checked = s.captureAllCalls || false;
-    if (includeTimestamp) includeTimestamp.checked = s.includeTimestamp !== false;
-    if (autoScreenshot) autoScreenshot.checked = s.autoScreenshot || false;
-    if (screenshotSeconds) screenshotSeconds.value = s.screenshotSeconds || 5;
-    if (autoSave) autoSave.checked = s.autoSave !== false;
-    if (maxSessions) maxSessions.value = s.maxSessions || 25;
-
-    const captureOnNavigationInput = document.getElementById('captureOnNavigation');
-    if (captureOnNavigationInput) captureOnNavigationInput.checked = s.captureOnNavigation !== false;
-
-    const smartDedupInput = document.getElementById('smartDedup');
-    if (smartDedupInput) smartDedupInput.checked = s.smartDedup !== false;
-
-    const screenshotFormatInput = document.getElementById('screenshotFormat');
-    if (screenshotFormatInput) screenshotFormatInput.value = s.screenshotFormat || 'png';
-
-    const exportImageQualityInput = document.getElementById('exportImageQuality');
-    if (exportImageQualityInput) exportImageQualityInput.value = s.exportImageQuality || 'auto';
-
-    // Update visibility
-    if (apiCallsOptions) apiCallsOptions.style.display = captureApiCalls?.checked ? "block" : "none";
-    if (screenshotInterval) screenshotInterval.style.display = autoScreenshot?.checked ? "block" : "none";
-    syncNavScreenshotDependency();
+    applySettingsToForm(res.settings);
+    syncProfileSelect();
   } catch (err) {
     Logger.error("Load settings failed:", err);
   }
@@ -847,17 +1135,23 @@ async function updateState() {
       currentSessionId = response.session?.sessionId || null;
       // BUG-008 FIX: null-guard all DOM element accesses to avoid crashes if
       // an element is ever missing from the DOM.
+      // Not recording and not paused = stopped: shown red, labelled "Stopped"
+      // (was a grey "Idle"). Recording is green, paused amber.
+      const isStopped = currentState !== "recording" && currentState !== "paused";
       if (stateText) {
-        stateText.textContent = currentState.charAt(0).toUpperCase() + currentState.slice(1);
+        stateText.textContent = isStopped ? "Stopped"
+          : currentState.charAt(0).toUpperCase() + currentState.slice(1);
         stateText.classList.toggle("recording", currentState === "recording");
         stateText.classList.toggle("paused", currentState === "paused");
+        stateText.classList.toggle("stopped", isStopped);
       }
       if (stateDot) {
-        stateDot.className = "state-dot " + (currentState === "recording" ? "recording" : currentState === "paused" ? "paused" : "");
+        stateDot.className = "state-dot " + (isStopped ? "stopped" : currentState);
       }
       if (stateIndicator) {
         stateIndicator.classList.toggle("is-recording", currentState === "recording");
         stateIndicator.classList.toggle("is-paused", currentState === "paused");
+        stateIndicator.classList.toggle("is-stopped", isStopped);
       }
 
       // Animate stat values

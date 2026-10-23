@@ -41,6 +41,7 @@ export class ExportService {
     this.storage = storage;
     this.cancelledExports = new Set();
     this._imgOptsMap = new Map(); // per-session imgOpts, prevents cross-export races (MED-020)
+    this._exportOptsMap = new Map(); // per-session export options (v1.2 R-004)
     Logger.debug('ExportService initialized');
   }
 
@@ -92,9 +93,15 @@ export class ExportService {
   /**
    * Main export orchestrator
    */
-  async exportSession(sessionId, format, progressCallback) {
+  async exportSession(sessionId, format, progressCallback, options = {}) {
     const notify =
       typeof progressCallback === 'function' ? progressCallback : () => { };
+
+    // R-004 "Configure Export": per-session export options. Image options are
+    // resolved further down, after steps load (PERF-003).
+    this._exportOptsMap.set(sessionId, {
+      includeScreenshots: options.includeScreenshots !== false
+    });
 
     Logger.info('Starting export:', format, 'for session:', sessionId);
 
@@ -117,7 +124,18 @@ export class ExportService {
     // (MED-020) — done after steps load so a large session can cap its own
     // resolution/format regardless of the user's quality setting.
     const screenshotCount = steps.filter(s => s.hasScreenshot).length;
-    this._imgOptsMap.set(sessionId, await this._resolveExportImageOpts(screenshotCount));
+    const imgOpts = await this._resolveExportImageOpts(screenshotCount);
+    // R-004 screenshot size composes with PERF-003's large-session cap: take
+    // whichever is smaller, so choosing "Full" can never lift that memory cap.
+    // Every image call site spreads these options AFTER its hardcoded
+    // defaults, so maxWidth here wins everywhere (DOCX, DOCX-HTML, PDF).
+    const SIZE_CAPS = { full: null, medium: 800, small: 400 };
+    const cap = SIZE_CAPS[options.screenshotSize];
+    if (cap) {
+      imgOpts.maxWidth = Math.min(imgOpts.maxWidth || Infinity, cap);
+      imgOpts.displayWidth = Math.min(600, cap);
+    }
+    this._imgOptsMap.set(sessionId, imgOpts);
 
     notify({
       percent: 20,
@@ -157,6 +175,7 @@ export class ExportService {
     } finally {
       this._clearCancellation(sessionId);
       this._imgOptsMap.delete(sessionId);
+      this._exportOptsMap.delete(sessionId);
     }
   }
 
@@ -180,6 +199,23 @@ export class ExportService {
    * @param {number} [screenshotCount=0]
    * @returns {Promise<{format: string, quality: number, maxWidth?: number, maxHeight?: number}>}
    */
+  /**
+   * Screenshot assets for an export, honouring "Include screenshots".
+   *
+   * All three document builders (DOCX, DOCX-HTML fallback, PDF) index assets
+   * by stepId from this one call, so returning [] here omits every screenshot
+   * uniformly without touching each builder's layout code.
+   *
+   * @param {string} sessionId - export key for the per-session option maps
+   * @param {string} storageSessionId - id used by the storage layer
+   * @returns {Promise<Array>}
+   */
+  async _getExportAssets(sessionId, storageSessionId) {
+    const opts = this._exportOptsMap.get(sessionId);
+    if (opts && opts.includeScreenshots === false) return [];
+    return this.storage.getAllAssets(storageSessionId);
+  }
+
   async _resolveExportImageOpts(screenshotCount = 0) {
     let pref = 'auto';
     try {
@@ -383,7 +419,9 @@ export class ExportService {
           : (step.value || '');
 
         return [
-          index + 1,
+          // Q-9: was index + 1 AFTER screenshot rows were filtered out, so CSV
+          // numbering drifted from Word/PDF. Gaps now mark omitted steps.
+          step.sequence || index + 1,
           step.action,
           step.fieldName || 'N/A',
           safeValue,
@@ -409,15 +447,47 @@ export class ExportService {
   /**
    * Export to Markdown.
    */
+  /**
+   * Escape text for inline Markdown.
+   *
+   * Q-9: this export used _escapeHtml on the title only — which is the wrong
+   * escaping for Markdown ("Login & Checkout" became "Login &amp; Checkout" in
+   * the raw file) — while fieldName and value, which are lifted from arbitrary
+   * page text, got no escaping at all. A field labelled `<img src=x onerror=…>`
+   * went into the file as raw HTML, and `**` or `[x](…)` in page text became
+   * live formatting or links. Backslash-escape Markdown's inline punctuation
+   * instead; CommonMark renders "\<" as a literal "<", never as a tag.
+   */
+  _mdText(text) {
+    return String(text ?? '')
+      .replace(/[\r\n]+/g, ' ')
+      // `&` is left alone: an entity can never form a tag, and escaping it
+      // made the raw file read "Login \& Checkout".
+      .replace(/([\\`*_{}[\]<>()#|!~])/g, '\\$1');
+  }
+
+  /**
+   * A code span that cannot be broken out of: the fence is one backtick longer
+   * than the longest backtick run in the value (CommonMark §6.1). The old
+   * single-backtick span ended early on any value containing a backtick.
+   */
+  _mdCode(text) {
+    const value = String(text ?? '').replace(/[\r\n]+/g, ' ');
+    const longest = Math.max(0, ...(value.match(/`+/g) || []).map(run => run.length));
+    const fence = '`'.repeat(longest + 1);
+    const pad = /^`|`$/.test(value) || /^ .* $/.test(value) ? ' ' : '';
+    return `${fence}${pad}${value}${pad}${fence}`;
+  }
+
   _exportMarkdown(exportData, sessionId) {
     const { session, steps } = exportData;
     const sessionName = session.name || 'Untitled Session';
     const lines = [
-      `# ${this._escapeHtml(sessionName)}`,
+      `# ${this._mdText(sessionName)}`,
       '',
-      `**Author:** ${this._escapeHtml(session.author || 'N/A')}  `,
-      `**Start Time:** ${this._formatExportTime(session.startTime)}  `,
-      `**End Time:** ${this._formatExportTime(session.endTime)}  `,
+      `**Author:** ${this._mdText(session.author || 'N/A')}  `,
+      `**Start Time:** ${this._mdText(this._formatExportTime(session.startTime))}  `,
+      `**End Time:** ${this._mdText(this._formatExportTime(session.endTime))}  `,
       `**Steps:** ${steps.length}`,
       '',
       '---',
@@ -426,11 +496,13 @@ export class ExportService {
 
     steps.forEach((step, i) => {
       const safeUrl = this._sanitizeUrl(step.url);
-      lines.push(`### Step ${i + 1}: ${step.action}`);
-      if (step.fieldName) lines.push(`- **Field:** ${step.fieldName}`);
-      if (step.value)     lines.push(`- **Value:** \`${step.value}\``);
+      // Q-9: numbered by sequence, like every other format and the review page.
+      lines.push(`### Step ${step.sequence || i + 1}: ${this._mdText(step.action)}`);
+      if (step.fieldName) lines.push(`- **Field:** ${this._mdText(step.fieldName)}`);
+      if (step.value)     lines.push(`- **Value:** ${this._mdCode(step.value)}`);
       // Unified export: no locator line (matches the Word doc).
-      if (safeUrl)        lines.push(`- **URL:** ${safeUrl}`);
+      // URLs go in a code span so page-controlled text cannot form a link.
+      if (safeUrl)        lines.push(`- **URL:** ${this._mdCode(safeUrl)}`);
       lines.push('');
     });
 
@@ -533,7 +605,7 @@ export class ExportService {
     notify({ percent: 30, status: 'Building DOCX...' });
 
     // stepId → asset index; images are loaded lazily as each step is reached.
-    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const screenshotAssets = await this._getExportAssets(sessionId, session.id);
     const assetIndex = new Map();
     for (const asset of screenshotAssets) {
       if (asset.stepId) assetIndex.set(asset.stepId, asset);
@@ -560,14 +632,18 @@ export class ExportService {
     for (const step of regularSteps) {
       if (this._isCancelled(session.id)) { this._clearCancellation(session.id); throw new Error('Export cancelled by user'); }
       stepNumber++;
+      // Q-9: print the number the user sees on the review page. Each format
+      // used to run its own counter over a differently-filtered list, so
+      // "Step 7" named a different step in Word, PDF, CSV and Markdown.
+      const shownNumber = step.sequence || stepNumber;
 
       let text;
       if (step.action === 'screenshot') {
-        text = `${stepNumber}. Manual screenshot`;
+        text = `${shownNumber}. Manual screenshot`;
       } else if (step.description) {
-        text = `${stepNumber}. ${step.description}`;
+        text = `${shownNumber}. ${step.description}`;
       } else {
-        text = `${stepNumber}. ${step.action.toUpperCase()}`;
+        text = `${shownNumber}. ${step.action.toUpperCase()}`;
         if (step.fieldName && step.fieldName !== 'N/A') text += ` on "${step.fieldName}"`;
         if (step.value && step.action !== 'navigate') text += ` with value "${step.value}"`;
         if (step.action === 'navigate') text += ` to ${this._sanitizeUrl(step.value || step.url)}`;
@@ -712,7 +788,7 @@ export class ExportService {
     // Build a lookup: stepId -> asset (reference only, don't load yet)
     // Load images one at a time as we encounter each step
     // ------------------------------------------------------------------
-    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const screenshotAssets = await this._getExportAssets(sessionId, session.id);
     // Build a stepId → asset index (not the data URLs themselves)
     const assetIndex = new Map();
     for (const asset of screenshotAssets) {
@@ -757,7 +833,8 @@ export class ExportService {
 
         if (step.action === 'screenshot') {
           oneliner = 'Manual screenshot captured';
-          html += `<li>${oneliner}`;
+          // Q-9: explicit number — <ol> would count this list's own items.
+          html += `<li value="${Number(step.sequence) || ''}">${oneliner}`;
 
           // Load + process this one asset, then null it out
           const asset = assetIndex.get(step.id);
@@ -955,7 +1032,7 @@ export class ExportService {
     // EXP-IMG-001: build a stepId → asset index so every screenshot step can
     // embed its image. PERF-003: keep only one asset's bytes live at a time —
     // load + embed + null out + delete from the index as we go.
-    const screenshotAssets = await this.storage.getAllAssets(session.id);
+    const screenshotAssets = await this._getExportAssets(sessionId, session.id);
     const assetIndex = new Map();
     for (const asset of screenshotAssets) {
       if (asset.stepId) assetIndex.set(asset.stepId, asset);
@@ -981,7 +1058,8 @@ export class ExportService {
           ? (step.isManual ? 'Manual screenshot' : 'Automated screenshot')
           : `${step.action.toUpperCase()} ${step.fieldName || ''}`);
 
-      const lines = doc.splitTextToSize(`${stepNumber}. ${description}`, contentWidth);
+      // Q-9: same number as the review page and every other format.
+      const lines = doc.splitTextToSize(`${step.sequence || stepNumber}. ${description}`, contentWidth);
       lines.forEach(line => {
         doc.text(line, margin, yPosition);
         yPosition += 5;

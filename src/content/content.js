@@ -121,47 +121,55 @@ function getEnhancedFieldName(element) {
   // Prefer the dedicated FieldNameResolver (Shadow DOM, ARIA, form groups,
   // proximity scoring, etc.) when it is loaded. Fall back to the inline
   // heuristics below if the resolver is absent, throws, or returns null.
+  let resolverSaidNull = false;
   if (fieldNameResolver) {
     try {
       const resolved = fieldNameResolver.resolve(element);
       if (resolved) return resolved;
+      resolverSaidNull = true;
     } catch (e) {
       // Fall through to inline heuristics
     }
   }
 
-  const label = findAssociatedLabel(element);
-  if (label) return cleanFieldName(label);
+  // The resolver returning null is a verdict — "can't name this, ask the
+  // user" — not a failure. These inline heuristics used to override it and
+  // ended at `element.type`, so every unlabelled text box became "Text"
+  // ("Type 'blue' in Text" in the exported document) and the naming prompt
+  // never appeared. Keep the fallbacks, but hold each to the same quality bar
+  // the resolver applies: "Email" (type="email") passes, "Text" does not.
+  const accept = (raw) => {
+    if (!raw) return null;
+    const cleaned = cleanFieldName(raw);
+    if (!cleaned) return null;
+    if (fieldNameResolver && typeof fieldNameResolver._isQualityName === 'function' &&
+        !fieldNameResolver._isQualityName(cleaned)) return null;
+    return cleaned;
+  };
 
-  if (element.placeholder) {
-    return cleanFieldName(element.placeholder);
+  const labelledBy = element.getAttribute('aria-labelledby');
+  const labelledByEl = labelledBy ? document.getElementById(labelledBy) : null;
+  // If the resolver ran and said null, it has already judged label,
+  // placeholder, ARIA, name, id and nearby text — retrying them here would just
+  // override its verdict (e.g. accept the "you@company.com" placeholder it
+  // deliberately rejected, Q-7). The input type is the one signal it does not
+  // use. The full list remains for when the resolver is missing or threw.
+  const candidates = resolverSaidNull ? [() => element.type] : [
+    () => findAssociatedLabel(element),
+    () => element.placeholder,
+    () => element.getAttribute('aria-label'),
+    () => labelledByEl && labelledByEl.textContent,
+    () => element.name,
+    () => element.id,
+    () => element.type,
+    () => findNearbyText(element),
+    () => selectorEngine.extractFieldName(element)
+  ];
+  for (const candidate of candidates) {
+    const name = accept(candidate());
+    if (name) return name;
   }
-
-  if (element.getAttribute('aria-label')) {
-    return cleanFieldName(element.getAttribute('aria-label'));
-  }
-  if (element.getAttribute('aria-labelledby')) {
-    const labelElement = document.getElementById(element.getAttribute('aria-labelledby'));
-    if (labelElement) return cleanFieldName(labelElement.textContent);
-  }
-
-  if (element.name) {
-    return cleanFieldName(element.name);
-  }
-
-  if (element.id) {
-    return cleanFieldName(element.id);
-  }
-
-  if (element.type) {
-    return cleanFieldName(element.type);
-  }
-
-  const nearbyText = findNearbyText(element);
-  if (nearbyText) return cleanFieldName(nearbyText);
-
-  const fallback = selectorEngine.extractFieldName(element);
-  return fallback || null;
+  return null;
 }
 
 function findAssociatedLabel(element) {
@@ -501,7 +509,8 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     var strong = document.createElement('strong');
     strong.textContent = action;
     p.appendChild(strong);
-    p.appendChild(document.createTextNode(' action. Please provide a descriptive name.'));
+    // UX copy: say what the name is FOR, and that skipping keeps the step.
+    p.appendChild(document.createTextNode(' action. A name makes the exported document readable — or name it later on the review page.'));
     var inp = document.createElement('input');
     inp.id = inputId;
     inp.className = 'ts-input';
@@ -513,11 +522,12 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     var skipBtn = document.createElement('button');
     skipBtn.id = cancelId;
     skipBtn.className = 'ts-btn ts-btn-cancel';
-    skipBtn.textContent = 'Skip';
+    // F-4: was "Skip", which read as discarding and (until now) did.
+    skipBtn.textContent = 'Name later';
     var okBtn = document.createElement('button');
     okBtn.id = confirmId;
     okBtn.className = 'ts-btn ts-btn-confirm';
-    okBtn.textContent = 'Confirm';
+    okBtn.textContent = 'Save name';
     actions.appendChild(skipBtn);
     actions.appendChild(okBtn);
     modalDiv.appendChild(h3);
@@ -570,19 +580,17 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
       }
     });
 
-    // Reset auto-close timeout on input; submit typed value on timeout (not null)
-    function resetTimeout() {
-      if (state.timeout) clearTimeout(state.timeout);
-      state.timeout = setTimeout(function() {
-        window.Logger?.warn('Modal auto-closed after timeout:', modalId);
-        var typedValue = input ? input.value.trim() : '';
-        closeWithRestore(typedValue || null);
-      }, 30000);
-    }
-
-    if (input) {
-      input.addEventListener('input', function() { resetTimeout(); });
-    }
+    // A-5 (WCAG 2.2.1 Timing Adjustable): this dialog used to self-destruct
+    // after 30s and DISCARD the step. The timer reset only on 'input' events,
+    // so a screen-reader user reading the dialog with a virtual cursor — or
+    // anyone who simply read it carefully — fired none and lost their work
+    // mid-sentence, with nothing announced. There is no warning, no extend, and
+    // no way to switch it off, which is a Level A failure.
+    //
+    // The dialog already has Skip, Escape and Confirm; a timer adds nothing but
+    // data loss, so it is gone. resetTimeout() is kept as a no-op shim because
+    // it is called from several places below.
+    function resetTimeout() { /* intentionally empty — see A-5 above */ }
 
     confirmBtn.onclick = function() {
       var value = input ? input.value.trim() : '';
@@ -592,6 +600,18 @@ function showManualEntryModalInternal(element, action, stepData, modalId) {
     cancelBtn.onclick = function() {
       closeWithRestore(null);
     };
+
+    // A-8 (WCAG 2.1.2): Escape was bound only to the input, so tabbing to Skip
+    // or Confirm disarmed it and the only way out was a mouse. Bind it to the
+    // whole overlay in the capture phase so it works from any focused control
+    // and the host page cannot swallow it first.
+    overlayDiv.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelBtn.click();
+      }
+    }, true);
 
     if (input) {
       input.onkeydown = function(e) {
@@ -633,8 +653,15 @@ async function processStepWithManualEntry(element, action, stepData) {
     }
 
     if (!fieldName) {
-      window.Logger?.debug('⏭️ User skipped field name entry');
-      return null;
+      // UX F-4: "Skip" used to return null here, and every caller then did
+      // `if (!stepData) return;` — so skipping the naming prompt DISCARDED the
+      // click or keystroke itself. Every user's mental model of "Skip" is
+      // "skip the name, keep the step". Keep it, with a placeholder name the
+      // review page lets them edit.
+      window.Logger?.debug('⏭️ Field name skipped — keeping step as "Unnamed field"');
+      stepData.fieldName = 'Unnamed field';
+      stepData.needsName = true;
+      return stepData;
     }
 
     window.Logger?.info('✅ Manual field name entered:', fieldName);
@@ -738,10 +765,29 @@ function isInputElement(element) {
   return tag === 'input' || tag === 'textarea' || tag === 'select';
 }
 
+/**
+ * Q-3: event.target is the deepest node under the pointer. In any icon-button
+ * design system that is an <svg> or its <path>, which has no id, no name, no
+ * data-testid and an empty SVGAnimatedString className — so every attribute
+ * strategy in the selector engine contributes nothing and the winner is a
+ * positional absolute XPath, while the perfectly good [data-testid="save-btn"]
+ * one node up is never considered. Normalize to the interactive ancestor.
+ */
+var INTERACTIVE_ANCESTOR_SELECTOR =
+  'button, a, input, select, textarea, label, summary, ' +
+  '[role="button"], [role="link"], [role="menuitem"], [role="tab"], ' +
+  '[role="option"], [role="checkbox"], [role="radio"], [role="switch"], ' +
+  '[onclick], [tabindex]:not([tabindex="-1"])';
+
+function resolveInteractiveTarget(node) {
+  if (!node || typeof node.closest !== 'function') return node;
+  return node.closest(INTERACTIVE_ANCESTOR_SELECTOR) || node;
+}
+
 async function handleClick(event) {
   if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
   try {
-    const element = event.target;
+    const element = resolveInteractiveTarget(event.target);
 
     if (element.id?.startsWith('testsnapper-')) return;
 
@@ -873,24 +919,28 @@ function showRateLimitFeedback() {
  * auto-screenshots, now covering the explicit Ctrl+Shift+S action too.
  */
 function showSensitiveScreenshotBlockedFeedback() {
-  showToastNotification('Screenshot skipped — a sensitive field is focused', 'warning');
+  showToastNotification('Screenshot skipped — a password or payment field is focused.', 'warning');
 }
 
-function handleInput(event) {
-  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
-
+/**
+ * Record the current typed value of `element` as a 'type' step.
+ *
+ * Extracted from handleInput's debounce timer so that an action which consumes
+ * the typed text — pressing Enter in a search box — can commit it FIRST.
+ * Otherwise the 800ms debounce recorded "Press Enter" before the text it
+ * submitted, and if Enter navigated away the text was never recorded at all.
+ */
+async function commitInput(element) {
   try {
-    const element = event.target;
-    // Use the element object itself as the Map key to avoid calling
-    // generateSelector() synchronously on every keystroke. generateSelector() is
-    // deferred to the debounced callback body where it runs only once per burst.
-    const elementKey = element;
+      // P2-11: the entry was only deleted on the success path, so the two
+      // early returns below (duplicate input, and a skipped/timed-out
+      // field-name modal) orphaned it. pendingInputs is keyed by the element
+      // OBJECT, so each orphan pinned a live DOM node for the rest of the
+      // session — nodes an SPA had since re-rendered away could never be
+      // collected. Release it first.
+      pendingInputs.delete(element);
+      const elementKey = element;
 
-    if (pendingInputs.has(elementKey)) {
-      clearTimeout(pendingInputs.get(elementKey));
-    }
-
-    const timeoutId = setTimeout(async () => {
       // generateSelector is now called here (deferred), not in the outer scope.
       const selector = selectorEngine.generateSelector(element);
       const fieldName = getEnhancedFieldName(element);
@@ -924,16 +974,81 @@ function handleInput(event) {
       if (!stepData) return;
 
       updateLastInteraction(element, 'type', value);
-      sendStepToBackground(stepData);
+      await sendStepToBackground(stepData);
       pendingInputs.delete(elementKey);
 
       window.Logger?.info('Input captured:', stepData.fieldName, value);
-    }, 800);
-
-    pendingInputs.set(elementKey, timeoutId);
   } catch (error) {
     window.Logger?.error('❌ Error capturing input:', error);
     // Don't stop recording, just log and continue
+  }
+}
+
+function handleInput(event) {
+  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
+
+  const element = event.target;
+  // Use the element object itself as the Map key to avoid calling
+  // generateSelector() synchronously on every keystroke. generateSelector() is
+  // deferred to commitInput, where it runs only once per burst.
+  if (pendingInputs.has(element)) {
+    clearTimeout(pendingInputs.get(element));
+  }
+  pendingInputs.set(element, setTimeout(() => { commitInput(element); }, 800));
+}
+
+// Input types where Enter is not a meaningful "submit this" action.
+var ENTER_IGNORED_TYPES = ['checkbox', 'radio', 'button', 'submit', 'reset',
+  'file', 'image', 'hidden', 'range', 'color'];
+
+/**
+ * Q-1: Enter was never recorded. Inside a <form> it triggers implicit
+ * submission, which handleSubmit already records — but the very common
+ * JS-driven search box has no form, so "type a term, press Enter" produced the
+ * typed text and nothing else, and the document could not be followed.
+ *
+ * Records Enter only on a single-line input outside a form. Textareas are
+ * excluded (Enter there is a newline, not an action), as are modified presses
+ * and IME composition.
+ */
+async function handleKeydown(event) {
+  if (!isRecording || !selectorEngine || !redactor || isModalOpen) return;
+  if (event.key !== 'Enter' || event.isComposing ||
+      event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+
+  const element = event.target;
+  if (!element || element.tagName !== 'INPUT') return;
+  if (ENTER_IGNORED_TYPES.indexOf((element.type || 'text').toLowerCase()) !== -1) return;
+  if (element.form) return; // implicit submission -> handleSubmit records it
+
+  try {
+    // Commit the text Enter is acting on, so it precedes the Enter step and
+    // survives a navigation. This listener runs in the capture phase and the
+    // awaits below settle as microtasks, so both steps are sent before the
+    // page's own Enter handler gets a chance to navigate.
+    if (pendingInputs.has(element)) {
+      clearTimeout(pendingInputs.get(element));
+      await commitInput(element);
+    }
+
+    if (isDuplicateInteraction(element, 'keypress', 'Enter')) return;
+
+    const stepData = {
+      action: 'keypress',
+      selector: selectorEngine.generateSelector(element),
+      fieldName: getEnhancedFieldName(element),
+      targetLabel: selectorEngine.getElementText(element),
+      url: window.location.href,
+      value: 'Enter',
+      isSensitive: false
+    };
+    // No naming prompt: the preceding 'type' step already asked, and a modal
+    // here would interrupt the very navigation Enter is triggering.
+    updateLastInteraction(element, 'keypress', 'Enter');
+    sendStepToBackground(stepData);
+    window.Logger?.info('Enter captured:', stepData.fieldName);
+  } catch (error) {
+    window.Logger?.error('❌ Error capturing Enter:', error);
   }
 }
 
@@ -957,10 +1072,21 @@ async function handleChange(event) {
     let action;
     let isSensitive = false;
 
+    // Q-1: these two used to `return` outright, on the assumption that the
+    // click handler already covers them. It only covers *mouse* toggles — a
+    // keyboard user pressing Space, a label-click routed oddly, or a
+    // programmatic "Select all" fired change with no click, and the
+    // interaction vanished from the recording. isDuplicateInteraction()
+    // downstream suppresses the double-record when a click did also fire.
     if (element.type === 'checkbox') {
-      return;
+      action = 'check';
+      value = element.checked ? 'checked' : 'unchecked';
     } else if (element.type === 'radio') {
-      return;
+      // Must match handleClick's action/value for this element exactly, or
+      // isDuplicateInteraction() below won't recognise the mouse-driven pair
+      // and every clicked radio would be recorded twice.
+      action = 'select_radio';
+      value = element.value;
     } else if (element.tagName.toLowerCase() === 'select') {
       action = 'select';
       value = element.options[element.selectedIndex]?.text || element.value;
@@ -1107,10 +1233,15 @@ function sendStepToBackground(stepData, isRetry) {
     return;
   }
 
+  // Resolves once the background has answered, so flushPendingInputs can
+  // tell it the step is stored before recording stops. Callers that don't
+  // care about ordering ignore the return value.
+  return new Promise(function(resolve) {
   chrome.runtime.sendMessage({
     action: 'addStep',
     stepData: stepData
   }, function(response) {
+    resolve();
     if (chrome.runtime.lastError) {
       window.Logger?.error('Failed to send step:', chrome.runtime.lastError);
       if (!isRetry) {
@@ -1130,9 +1261,38 @@ function sendStepToBackground(stepData, isRetry) {
           showToastNotification('TestSnapper: Session lost — stopping recording', 'warning');
           stopRecording();
         }
+      } else if (response.error === 'Wrong tab') {
+        // P0-2: this branch previously fell through to silence, so a whole
+        // session's worth of interactions could be dropped without a word.
+        // Tear the panel down here too — this tab should never have armed.
+        showToastNotification(
+          'TestSnapper is recording a different tab — this page is not being captured.',
+          'warning'
+        );
+        stopRecording();
       }
     }
   });
+  });
+}
+
+/**
+ * Commit every input still waiting on its 800ms debounce, right now.
+ *
+ * Stopping from the popup or the floating panel usually moved focus first,
+ * but the stop keyboard shortcut does not, and in every case the stop cleared
+ * the timers — so whatever the tester typed just before stopping was lost.
+ * The background calls this (via 'flushPendingInputs') before it changes
+ * state, and waits for it with a timeout.
+ */
+function flushPendingInputs() {
+  if (!pendingInputs || pendingInputs.size === 0) return Promise.resolve();
+  var elements = [];
+  pendingInputs.forEach(function(timeoutId, element) {
+    clearTimeout(timeoutId);
+    elements.push(element);
+  });
+  return Promise.all(elements.map(function(element) { return commitInput(element); }));
 }
 
 /**
@@ -1170,6 +1330,7 @@ function _finishStartRecording(sessionId, isRestoring, startTime) {
   document.addEventListener('input', handleInput, { capture: true, signal: signal });
   document.addEventListener('change', handleChange, { capture: true, signal: signal });
   document.addEventListener('submit', handleSubmit, { capture: true, signal: signal });
+  document.addEventListener('keydown', handleKeydown, { capture: true, signal: signal });
 
   // Pre-fetch iframe label context for cross-frame field name resolution (MED-010)
   if (fieldNameResolver && typeof fieldNameResolver.initFrameContext === 'function') {
@@ -1402,7 +1563,8 @@ function addRecordingIndicator(startTime = Date.now()) {
     .status-dot {
       width: 6px;
       height: 6px;
-      background: #dc2626;
+      /* Recording = green (was red), per product-owner request. */
+      background: #16a34a;
       border-radius: 50%;
       animation: pulse 2s infinite;
     }
@@ -1615,6 +1777,16 @@ function removeRecordingIndicator() {
   }
 }
 
+// P1-3: this registration sits OUTSIDE the __testSnapperInitialized guard, so
+// a double injection (manifest static injection at document_end racing the
+// programmatic injection from background.js:846 when the ping fails) bound the
+// handler twice. Both copies then ran 'beforeScreenshot', and the second pass
+// recorded the already-hidden display:'none' as the "original" — so
+// afterScreenshot restored the panel to hidden and it never came back for the
+// rest of the session. State vars survive re-injection; the listener must too.
+if (!window.__testSnapperListenerBound) {
+  window.__testSnapperListenerBound = true;
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   window.Logger?.debug('Content script received message:', message.action);
 
@@ -1661,6 +1833,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
+    case 'flushPendingInputs':
+      // Every frame gets this message and the first reply wins, so only the
+      // frame that actually holds pending text answers. When no frame does,
+      // the background sees the channel close at once and carries on.
+      if (!isRecording || !pendingInputs || pendingInputs.size === 0) return false;
+      flushPendingInputs().then(
+        function() { sendResponse({ success: true }); },
+        function() { sendResponse({ success: false }); }
+      );
+      return true; // keep the channel open for the async response
+
     // Background queries before auto-capturing to skip sensitive pages
     case 'isSensitiveFieldActive': {
       var activeEl = document.activeElement;
@@ -1670,6 +1853,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case 'beforeScreenshot': {
+      // P1-3 belt-and-braces: if a snapshot is already outstanding, do not take
+      // a second one — it would capture display:'none' as the original and
+      // afterScreenshot would restore the panel to hidden permanently.
+      if (window.__testSnapperHiddenEls && window.__testSnapperHiddenEls.length) {
+        sendResponse({ success: true });
+        break;
+      }
       var hiddenEls = [];
       document.querySelectorAll('[id^="testsnapper-"]').forEach(function(el) {
         hiddenEls.push({ el: el, display: el.style.display });
@@ -1730,6 +1920,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+} // end __testSnapperListenerBound guard (P1-3)
+
 function formatTime(totalSeconds) {
   const mins = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
   const secs = (totalSeconds % 60).toString().padStart(2, '0');
@@ -1739,11 +1931,19 @@ function formatTime(totalSeconds) {
 window.Logger?.info('TestSnapper content script loaded');
 
 // Check for active recording on load to restore overlay and state.
-// Gate auto-restore to the top frame only — iframes must not capture
-// events or add their own panel/heartbeat.
-if (window !== window.top) {
-  window.Logger?.debug('TestSnapper: skipping restore in sub-frame');
-} else {
+//
+// P1-2: this used to return early in every sub-frame, which directly
+// contradicted FD-2 in _finishStartRecording ("event capture must run in every
+// frame — clicks inside iframes are only visible to the iframe's own
+// listeners"). Frames present when Record was pressed got listeners via the
+// startRecording broadcast; after any navigation, or for a lazy-loaded iframe,
+// nothing re-armed them — so every click and keystroke inside an iframe was
+// silently dropped while the top-frame panel still read RECORDING.
+//
+// Sub-frames now restore too. _finishStartRecording keeps its own top-frame
+// gate, so they attach capture listeners and nothing else: no panel, no
+// heartbeat, no navigation polling, no auto-screenshot interval.
+{
   chrome.runtime.sendMessage({ action: 'getState' }, function(response) {
     if (chrome.runtime.lastError) {
       window.Logger?.debug('Background connection error:', chrome.runtime.lastError);

@@ -40,12 +40,13 @@ curl -o docx.min.js https://unpkg.com/docx@7.8.2/build/index.js
 curl -o html2pdf.bundle.min.js https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js
 ```
 
-## Fallback Behavior
+## Loading Behavior
 
-The extension has built-in CDN fallback:
-- If local library files are not found, the extension will attempt to load from CDN
-- This requires an internet connection
-- Local files are preferred for offline functionality and faster loading
+Libraries are loaded **only** from the extension package via
+`chrome.runtime.getURL()`. There is no CDN fallback and no remote code path:
+Manifest V3 forbids remote hosted code, and both extension pages ship
+`script-src 'self'`. If a local library is missing, the affected export
+format fails cleanly rather than fetching anything.
 
 ## License Information
 

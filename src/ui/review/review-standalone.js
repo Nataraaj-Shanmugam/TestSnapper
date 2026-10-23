@@ -97,12 +97,39 @@ let _modalTriggerElement = null;
 
 // ==================== Utils ====================
 
+/**
+ * F-20: saves that are still in flight. Edits save on blur, asynchronously, and
+ * "Done" used to call window.close() immediately — the tab could die before the
+ * write landed and the edit was silently lost. Done now waits for these.
+ */
+const _pendingWrites = new Set();
+function trackWrite(promise) {
+  const p = Promise.resolve(promise);
+  _pendingWrites.add(p);
+  p.finally(() => _pendingWrites.delete(p));
+  return p;
+}
+
 function debounce(fn, delay = 300) {
   let timer;
   return (...args) => {
     clearTimeout(timer);
     timer = setTimeout(() => fn(...args), delay);
   };
+}
+
+/**
+ * Grow a textarea to fit its content.
+ *
+ * The previous version set `height = scrollHeight`. scrollHeight excludes the
+ * border, but these textareas are `box-sizing: border-box`, so the height it
+ * set included the border and left the content permanently 2px short — every
+ * description was clipped by exactly its border width. Add the border back.
+ */
+function autosizeTextarea(textarea) {
+  textarea.style.height = 'auto';
+  const border = textarea.offsetHeight - textarea.clientHeight;
+  textarea.style.height = (textarea.scrollHeight + border) + 'px';
 }
 
 // ==================== Initialization ====================
@@ -132,9 +159,16 @@ async function init() {
 }
 
 function setupEventListeners() {
+  setupV12Features();
   bulkDeleteBtn.addEventListener('click', handleBulkDelete);
   saveExportBtn.addEventListener('click', handleSaveAndExport);
-  cancelBtn.addEventListener('click', () => window.close());
+  cancelBtn.addEventListener('click', async () => {
+    // The field being edited blurs on this button's mousedown, so its save has
+    // already started by the time this click runs; wait for it (F-20).
+    cancelBtn.disabled = true;
+    await Promise.allSettled([..._pendingWrites]);
+    window.close();
+  });
 
   // UX-008: Persistent keyboard-accessible "Add Step" button
   const addStepAtEndBtn = document.getElementById('addStepAtEndBtn');
@@ -151,10 +185,10 @@ function setupEventListeners() {
   stepsContainer.addEventListener('drop', handleContainerDrop);
 
   // Session name / author / start / end time auto-save
-  sessionNameInput.addEventListener('blur', saveSessionName);
-  sessionAuthorInput.addEventListener('blur', saveSessionAuthor);
-  sessionStartTimeInput.addEventListener('change', saveSessionStartTime);
-  sessionEndTimeInput.addEventListener('change', saveSessionEndTime);
+  sessionNameInput.addEventListener('blur', () => trackWrite(saveSessionName()));
+  sessionAuthorInput.addEventListener('blur', () => trackWrite(saveSessionAuthor()));
+  sessionStartTimeInput.addEventListener('change', () => trackWrite(saveSessionStartTime()));
+  sessionEndTimeInput.addEventListener('change', () => trackWrite(saveSessionEndTime()));
 
   // Add Step Modal
   screenshotUpload.addEventListener('click', () => screenshotInput.click());
@@ -249,6 +283,13 @@ function setupEventListeners() {
       e.preventDefault();
       closeAddStepModal();
     }
+
+    // A-7 (WCAG 2.1.2): Escape was scoped to the Add Step modal only, so during
+    // an export the user was inside a dialog with no keyboard way out.
+    if (e.key === 'Escape' && progressModal && progressModal.classList.contains('active')) {
+      e.preventDefault();
+      cancelExportBtn?.click();
+    }
   });
 
   // UX-012: Focus trap inside modal
@@ -280,10 +321,17 @@ function setupEventListeners() {
   // FUNC-009: cancel the LOCAL exportService instance (not a background
   // message — this page owns its own ExportService and background has no
   // export in flight to cancel). exportSession() checks this flag at each
-  // stage and throws, so the download never fires.
+  // stage and throws, so the download never fires. The dialog is also closed
+  // here so Cancel feels immediate even if the export is past its last check.
   if (cancelExportBtn) {
     cancelExportBtn.addEventListener('click', () => {
-      exportService.cancelExport(sessionId);
+      try {
+        exportService.cancelExport(sessionId);
+      } catch (err) {
+        Logger.error('Cancel export failed:', err);
+      }
+      hideProgressModal();
+      showMessage('Export cancelled.', 'info');
     });
   }
 }
@@ -307,6 +355,14 @@ async function loadSession() {
     sessionNameInput.value = sessionData.sessionName ||
       `Session ${Utils.formatTimestamp(sessionData.createdAt)}`;
     sessionStepCount.textContent = stepsData.length;
+    // Session panel: when the session was recorded.
+    const sessionDateEl = document.getElementById('sessionDate');
+    if (sessionDateEl) {
+      const created = sessionData.createdAt ? new Date(sessionData.createdAt) : null;
+      sessionDateEl.textContent = created && !isNaN(created)
+        ? created.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+        : '-';
+    }
 
     // Author — default to the last-used author (convenience) when this
     // session doesn't have one set yet.
@@ -341,6 +397,16 @@ async function loadSession() {
 
     await renderSteps();
     hideMessage();
+
+    // F-7: the incomplete flag replaces the old "[INCOMPLETE]" name prefix.
+    // Shown AFTER hideMessage() — shown any earlier, the line above clears it
+    // along with "Loading session…" and the user never sees it.
+    if (sessionData.incomplete) {
+      showMessage(
+        `This recording ended unexpectedly — the tab was closed. The ${stepsData.length} step${stepsData.length === 1 ? '' : 's'} captured before that are all here.`,
+        'warning'
+      );
+    }
 
     Logger.info('✅ Session loaded:', sessionId, 'Steps:', stepsData.length);
   } catch (error) {
@@ -455,6 +521,29 @@ function applyFilters() {
   if (noResultsMsg) {
     noResultsMsg.classList.toggle('hidden', visibleSteps.length !== 0);
   }
+
+  // R-001: Table view has no persistent cards to hide — re-render it from the
+  // same filtered list, so search and the action filter work in both views.
+  if (currentView === 'table') {
+    renderTableView(visibleSteps);
+    return;
+  }
+
+  // A-3: "first"/"last" for the Move up/down buttons means first/last VISIBLE
+  // card. With PERF-008 hiding cards rather than removing them, computing this
+  // over every card left Move up enabled on the first visible card.
+  updateMoveButtonEdges();
+}
+
+function updateMoveButtonEdges() {
+  const visibleCards = [...document.querySelectorAll('.step-card:not(.is-filtered-out)')];
+  document.querySelectorAll('.step-card').forEach(card => {
+    const i = visibleCards.indexOf(card);
+    const up = card.querySelector('.step-move[data-dir="up"]');
+    const down = card.querySelector('.step-move[data-dir="down"]');
+    if (up) up.setAttribute('aria-disabled', String(i <= 0));
+    if (down) down.setAttribute('aria-disabled', String(i === -1 || i === visibleCards.length - 1));
+  });
 }
 
 function saveToHistory(actionLabel) {
@@ -535,9 +624,21 @@ async function restoreFromHistory(targetIndex) {
   updateHistoryButtons();
 }
 
-function undo() {
-  if (historyIndex <= 0) return;
-  restoreFromHistory(historyIndex - 1);
+async function undo() {
+  // P1-1: saveToHistory() snapshots state BEFORE each mutation and leaves
+  // historyIndex pointing at that snapshot — so history[historyIndex] IS the
+  // one-step-back state. Restoring historyIndex - 1 went one further and
+  // reverted TWO operations, then persisted the result via updateAllSteps().
+  // It looked correct only because history[0] and history[1] are duplicates.
+  //
+  // restoreFromHistory() sets historyIndex = targetIndex, so we walk the
+  // pointer back afterwards; otherwise a second Undo would replay the same
+  // snapshot forever.
+  if (historyIndex <= 0 || !history[historyIndex]) return;
+  const snapshotIndex = historyIndex;
+  await restoreFromHistory(snapshotIndex);
+  historyIndex = snapshotIndex - 1;
+  updateHistoryButtons();
 }
 
 // ==================== Asset Cache ====================
@@ -637,6 +738,18 @@ async function renderSteps() {
   }
   const screenshotMap = _assetCache;
 
+  // R-001: Table view renders the filtered list itself (a table rebuild is
+  // cheap and has no per-card listeners), so branch off before building cards.
+  const tableContainer = document.getElementById('tableContainer');
+  if (currentView === 'table') {
+    container.hidden = true;
+    if (tableContainer) tableContainer.hidden = false;
+    applyFilters();
+    return;
+  }
+  container.hidden = false;
+  if (tableContainer) tableContainer.hidden = true;
+
   // PERF-008: build cards for the FULL list, not just what currently
   // matches search/filter. applyFilters() (below) then hides non-matching
   // cards via a CSS class instead of rebuilding the DOM — search keystrokes
@@ -662,41 +775,66 @@ async function renderSteps() {
              .step-main tall. -->
         <div class="step-top" style="align-items: flex-start;">
 
-          <!-- UX-009: draggable="true" on handle only, not whole card -->
-          <div class="step-handle" draggable="true" tabindex="0" role="button"
-               aria-label="Drag to reorder step ${badgeNum}"
-               title="Drag to reorder" style="font-size: 20px; padding-top: 10px; cursor: grab;">⋮⋮</div>
+          <!-- A-3 (WCAG 2.5.7 Dragging Movements, AA): dragging was the ONLY
+               pointer route to reorder. 2.5.7 requires a single-pointer
+               alternative specifically — the ArrowUp/Down handler does not
+               discharge it, and it was undiscoverable anyway. These buttons
+               share moveStep() with drag and the arrow keys, so all three
+               routes behave identically. -->
+          <div class="step-reorder">
+            <button type="button" class="step-move" data-dir="up" data-step-id="${safeId}"
+                    aria-label="Move step ${badgeNum} up" title="Move up">▲</button>
+            <!-- UX-009: draggable="true" on handle only, not whole card -->
+            <div class="step-handle" draggable="true" tabindex="0" role="button"
+                 aria-roledescription="sortable step handle"
+                 aria-label="Reorder step ${badgeNum}"
+                 aria-keyshortcuts="ArrowUp ArrowDown"
+                 title="Drag to reorder, or press Arrow Up / Arrow Down" style="cursor: grab;">⋮⋮</div>
+            <button type="button" class="step-move" data-dir="down" data-step-id="${safeId}"
+                    aria-label="Move step ${badgeNum} down" title="Move down">▼</button>
+          </div>
 
           <!-- checkbox – fixed width, top-aligned -->
-          <div style="display: flex; align-items: flex-start; justify-content: center; width: 40px; flex-shrink: 0; padding-top: 8px;">
+          <div style="display: flex; align-items: flex-start; justify-content: center; width: 24px; flex-shrink: 0; padding-top: 8px;">
             <input type="checkbox" class="step-checkbox" data-step-id="${safeId}"
                    ${step.selected ? 'checked' : ''}
                    draggable="false"
-                   style="width: 22px; height: 22px; cursor: pointer; accent-color: var(--primary);">
+                   aria-label="Select step ${badgeNum} for bulk actions"
+                   style="cursor: pointer; accent-color: var(--accent);">
           </div>
 
-          <!-- main content (textarea + optional screenshot) -->
+          <!-- main content: description + meta line (v1.2 design) -->
           <div class="step-main">
             <textarea
               class="step-description-area"
               data-step-id="${safeId}"
               placeholder="Describe this step..."
+              aria-label="Description for step ${badgeNum}"
               draggable="false"
               rows="1">${safeDescription}</textarea>
 
-            ${screenshotData ? `
-              <div class="screenshot-container" id="img-${safeId}" data-step-id="${safeId}">
-                <img src="${screenshotData}" alt="Interaction Screenshot" loading="lazy">
-              </div>
-            ` : ''}
+            <!-- P2-4: the card used to show none of what was captured — action,
+                 field and URL were stored on every step and rendered nowhere,
+                 so filtering to "Navigate" looked identical to "Click". The
+                 selector is deliberately NOT shown (acd82c4, reconfirmed for
+                 this port). -->
+            ${renderStepMeta(step)}
           </div>
 
-          <!-- delete button – top-aligned -->
-          <div class="step-actions" style="flex-shrink: 0; padding-top: 4px;">
-            <button class="icon-btn delete-btn" title="Delete Step" aria-label="Delete step ${badgeNum}"
-                    data-step-id="${safeId}" style="border: none; background: transparent; font-size: 20px; color: var(--text-muted);">
-              ✕
+          <!-- v1.2: screenshot as a right-hand thumbnail instead of a
+               full-width block. This also resolves P2-3 — full-width images
+               made a 200-step session ~110,000px tall. -->
+          ${screenshotData ? `
+            <button type="button" class="step-thumb" data-step-id="${safeId}"
+                    aria-label="View screenshot for step ${badgeNum}" title="View screenshot">
+              <img src="${screenshotData}" alt="" loading="lazy">
             </button>
+          ` : ''}
+
+          <!-- delete button – top-aligned -->
+          <div class="step-actions">
+            <button class="icon-btn delete-btn" title="Delete Step" aria-label="Delete step ${badgeNum}"
+                    data-step-id="${safeId}">✕</button>
           </div>
         </div>
       </div>
@@ -712,10 +850,92 @@ async function renderSteps() {
   applyFilters();
 }
 
+/**
+ * v1.2 design: the badge/label shown for each recorded action.
+ *
+ * A fixed map rather than interpolating step.action, for two reasons: the
+ * value feeds a CSS attribute selector and visible text, so it must never be
+ * attacker-influenced; and several raw actions intentionally share one visual
+ * style (select, select_radio and check are all "a choice was made").
+ */
+const ACTION_BADGES = {
+  click:        { style: 'click',      label: 'Click' },
+  type:         { style: 'type',       label: 'Type' },
+  navigate:     { style: 'navigate',   label: 'Navigate' },
+  select:       { style: 'select',     label: 'Select' },
+  select_radio: { style: 'select',     label: 'Radio' },
+  check:        { style: 'select',     label: 'Check' },
+  submit:       { style: 'submit',     label: 'Submit' },
+  keypress:     { style: 'submit',     label: 'Key' },
+  screenshot:   { style: 'screenshot', label: 'Screenshot' },
+  apicall:      { style: 'apicall',    label: 'API call' }
+};
+
+/** Path + query of a URL, for a compact meta line. Falls back to the raw string. */
+function shortUrl(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  try {
+    const u = new URL(raw);
+    return (u.pathname + u.search) || '/';
+  } catch (_) {
+    return raw;
+  }
+}
+
+/**
+ * The meta line under a step's description: action badge, field, URL and —
+ * when the value was masked — a redaction marker.
+ *
+ * UX F-22: every step carries isSensitive, but no UI read it, so a compliance
+ * user exporting audit evidence could neither confirm masking happened nor
+ * spot a value that should have been masked and wasn't. The marker also warns
+ * that screenshots are NOT redacted, since the text column looking clean makes
+ * the screenshot beside it look trustworthy when it is not.
+ */
+function renderStepMeta(step) {
+  const badge = ACTION_BADGES[step.action] || { style: 'default', label: 'Step' };
+  const parts = [
+    `<span class="step-action" data-action="${badge.style}">${badge.label}</span>`
+  ];
+
+  if (step.fieldName && step.action !== 'navigate' && step.action !== 'screenshot') {
+    parts.push(`<span class="step-field">${Utils.escapeHtml(step.fieldName)}</span>`);
+  }
+
+  const url = step.action === 'navigate' ? (step.value || step.url) : step.url;
+  const path = shortUrl(url);
+  if (path) {
+    parts.push(`<span class="step-url" title="${Utils.escapeHtml(url)}">${Utils.escapeHtml(path)}</span>`);
+  }
+
+  // F-4: steps whose naming prompt was deferred ("Name later").
+  if (step.needsName) {
+    parts.push(`<span class="step-needs-name" title="Name this field in Table view or edit the description.">Needs a name</span>`);
+  }
+
+  if (step.isSensitive) {
+    parts.push(
+      `<span class="step-redacted" title="This value was masked before saving. Screenshots are not redacted — check them before sharing.">` +
+      `<svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>` +
+      `Redacted</span>`
+    );
+  }
+
+  return `<div class="step-meta">${parts.join('')}</div>`;
+}
+
+/**
+ * Plain-text description of a step. Returns UNESCAPED text: every caller
+ * escapes at the point it inserts into HTML (card textarea, table cell, export
+ * preview), and one compares against a textarea's already-decoded value.
+ * This used to escape field and value here as well, so they were escaped twice
+ * and "Terms & Conditions" displayed as "Terms &amp; Conditions" — and saving
+ * the card persisted the "&amp;" into the description and every export.
+ */
 function generateStepDescription(step) {
   const action = step.action || 'Action';
-  const field = step.fieldName ? Utils.escapeHtml(step.fieldName.trim()) : '';
-  const value = step.value ? Utils.escapeHtml(step.value.trim()) : '';
+  const field = step.fieldName ? String(step.fieldName).trim() : '';
+  const value = step.value ? String(step.value).trim() : '';
 
   switch (action.toLowerCase()) {
     case 'click':
@@ -730,11 +950,14 @@ function generateStepDescription(step) {
       return `Check the box ${field ? `for "${field}"` : ''}`;
     case 'submit':
       return `Submit the form`;
+    case 'keypress':
+      // Q-1: Enter in a field outside a form (e.g. a JS search box).
+      return `Press ${value || 'Enter'} in ${field || 'field'}`;
     case 'screenshot':
       if (step.isManual) return '📸 Manual screenshot';
       return step.screenshotTrigger === 'navigation' ? '📸 Navigation screenshot' : '📸 Auto screenshot';
     case 'apicall':
-      return step.description ? `🌐 ${Utils.escapeHtml(step.description)}` : `🌐 API ${value}`.trim();
+      return step.description ? `🌐 ${step.description}` : `🌐 API ${value}`.trim();
     default:
       return `${action} ${field} ${value ? `→ "${value}"` : ''}`.trim();
   }
@@ -769,12 +992,8 @@ function attachStepEventListeners() {
 
   // Auto-resize textareas
   document.querySelectorAll('.step-description-area').forEach(textarea => {
-    const resize = () => {
-      textarea.style.height = 'auto';
-      textarea.style.height = (textarea.scrollHeight) + 'px';
-    };
-    textarea.addEventListener('input', resize);
-    resize(); // Initial
+    textarea.addEventListener('input', () => autosizeTextarea(textarea));
+    autosizeTextarea(textarea); // Initial
 
     textarea.addEventListener('blur', async (e) => {
       const stepId = e.target.dataset.stepId;
@@ -785,13 +1004,17 @@ function attachStepEventListeners() {
       const oldText = step.description || generateStepDescription(step);
 
       if (newText && newText !== oldText) {
+        const previousDescription = step.description;
         try {
           saveToHistory('edit');
           step.description = newText;
-          await storage.updateStep(step);
+          await trackWrite(storage.updateStep(step));
           showMessage('Step updated', 'success');
         } catch (err) {
           Logger.error('Failed to update step:', err);
+          // Restore the in-memory step too — only resetting the textarea left
+          // stepsData disagreeing with storage (the P1-6 failure shape).
+          step.description = previousDescription;
           showMessage('Failed to update step: ' + err.message, 'error');
           e.target.value = oldText;
         }
@@ -810,28 +1033,80 @@ function attachStepEventListeners() {
       e.preventDefault();
       const card = handle.closest('.step-card');
       if (!card) return;
-      const stepId = card.dataset.stepId;
-      const currentIndex = stepsData.findIndex(s => s.id === stepId);
-      if (currentIndex === -1) return;
-
-      const targetIndex = e.key === 'ArrowUp' ? currentIndex - 1 : currentIndex + 1;
-      if (targetIndex < 0 || targetIndex >= stepsData.length) return;
-
-      saveToHistory('reorder');
-      const [moved] = stepsData.splice(currentIndex, 1);
-      stepsData.splice(targetIndex, 0, moved);
-      await resequenceAndPersist();
-
-      // Restore focus to the moved handle
-      setTimeout(() => {
-        const handles = document.querySelectorAll('.step-handle');
-        if (handles[targetIndex]) handles[targetIndex].focus();
-      }, 50);
+      await moveStep(card.dataset.stepId, e.key === 'ArrowUp' ? -1 : 1);
     });
   });
 
+  // A-3: pointer alternative to dragging. Delegated so it survives re-render.
+  document.querySelectorAll('.step-move').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const b = e.currentTarget;
+      await moveStep(b.dataset.stepId, b.dataset.dir === 'up' ? -1 : 1);
+      // Focus the equivalent button on the card in its new position, so
+      // repeated clicks keep working without re-aiming.
+      const moved = document.querySelector(
+        `.step-card[data-step-id="${CSS.escape(b.dataset.stepId)}"] .step-move[data-dir="${b.dataset.dir}"]`
+      );
+      if (moved) moved.focus();
+    });
+  });
+
+  // v1.2: thumbnails open the full-size screenshot.
+  document.querySelectorAll('.step-thumb').forEach(btn => {
+    btn.addEventListener('click', () => openScreenshotViewer(btn.dataset.stepId));
+  });
+
+  // A-3: edge (first/last visible) state is set by applyFilters(), which runs
+  // after every render and every filter change. aria-disabled rather than
+  // disabled, so the control keeps its place in the tab order.
+
   // UX-009: dragover/drop are handled once at the container level (see
   // setupEventListeners) so dropping past the last card still works.
+}
+
+/**
+ * A-4: move one step relative to its neighbours in the VISIBLE list.
+ *
+ * The previous inline handler took `currentIndex` from the full `stepsData`
+ * but then focused `handles[targetIndex]` from `querySelectorAll`, which only
+ * returns the cards a filter left on screen. With any search term or action
+ * filter active the two index spaces diverge: the move swapped against hidden
+ * neighbours (so the visible order appeared not to change) and focus landed on
+ * an unrelated step or was dropped to <body> entirely. Nothing was announced.
+ *
+ * Operating on the filtered list makes "up" and "down" mean what the user sees,
+ * and re-querying by data-step-id removes the index/DOM race the 50ms
+ * setTimeout was papering over.
+ *
+ * @param {string} stepId - id of the step to move
+ * @param {number} delta  - -1 to move up, +1 to move down
+ */
+async function moveStep(stepId, delta) {
+  const visible = filterSteps();
+  const vIdx = visible.findIndex(s => s.id === stepId);
+  if (vIdx === -1) return;
+
+  const neighbour = visible[vIdx + delta];
+  if (!neighbour) return; // already at the edge of the visible list
+
+  const from = stepsData.findIndex(s => s.id === stepId);
+  const to = stepsData.findIndex(s => s.id === neighbour.id);
+  if (from === -1 || to === -1) return;
+
+  saveToHistory('reorder');
+  const [moved] = stepsData.splice(from, 1);
+  stepsData.splice(to, 0, moved);
+  await resequenceAndPersist();
+
+  // Re-query by identity, never by index — the list has just re-rendered.
+  const handle = document.querySelector(
+    `.step-card[data-step-id="${CSS.escape(stepId)}"] .step-handle`
+  );
+  if (handle) handle.focus();
+
+  // A-4 (WCAG 4.1.3): the move used to be completely silent.
+  showMessage(`Step moved to position ${vIdx + delta + 1} of ${visible.length}.`, 'info');
 }
 
 // ==================== Add Step Modal ====================
@@ -843,8 +1118,10 @@ function openAddStepModal(afterStepId, triggerElement) {
   newStepDescription.value = '';
   newStepAction.value = 'click';
   newStepScreenshotBlob = null;
-  screenshotPreview.style.display = 'none';
-  screenshotPreview.src = '';
+  // v1.2 port: toggled via the `hidden` attribute rather than style.display,
+  // so the markup and the script agree on one mechanism.
+  screenshotPreview.hidden = true;
+  screenshotPreview.removeAttribute('src');
   addStepModal.classList.add('active');
   newStepDescription.focus();
 }
@@ -873,7 +1150,7 @@ function processScreenshotFile(file) {
   const reader = new FileReader();
   reader.onload = (e) => {
     screenshotPreview.src = e.target.result;
-    screenshotPreview.style.display = 'block';
+    screenshotPreview.hidden = false;
     screenshotUpload.classList.add('has-image');
   };
   reader.readAsDataURL(file);
@@ -1152,37 +1429,354 @@ async function resequenceAndPersist() {
 
 // ==================== Export + Progress ====================
 
+// ==================== v1.2 features (ported) ====================
+//
+// Re-implemented on the current code rather than copied: v1.2's own versions
+// interpolated step.id into attributes unescaped, numbered rows by filtered
+// index instead of step.sequence, called a storage variable (fsStorage) that
+// does not exist here, and mutated steps before writes with no rollback.
+
+// R-001: current view. Per-viewer convenience, so localStorage (guarded —
+// the accessor itself can throw in some contexts).
+let currentView = 'cards';
+try {
+  if (localStorage.getItem('testsnapper_view') === 'table') currentView = 'table';
+} catch (_) { /* default to cards */ }
+
+function switchView(view) {
+  currentView = view === 'table' ? 'table' : 'cards';
+  try { localStorage.setItem('testsnapper_view', currentView); } catch (_) { /* non-critical */ }
+  const cardsBtn = document.getElementById('viewCardsBtn');
+  const tableBtn = document.getElementById('viewTableBtn');
+  cardsBtn?.classList.toggle('active', currentView === 'cards');
+  tableBtn?.classList.toggle('active', currentView === 'table');
+  cardsBtn?.setAttribute('aria-pressed', String(currentView === 'cards'));
+  tableBtn?.setAttribute('aria-pressed', String(currentView === 'table'));
+  // "Add step at end" belongs to the card layout.
+  const addFooter = document.querySelector('.add-step-footer');
+  if (addFooter) addFooter.hidden = currentView === 'table';
+}
+
+// Columns a user may edit in the table. A fixed allowlist — data-field is read
+// back from the DOM on blur and used as a property key, so it must never be
+// free-form.
+const TABLE_EDITABLE = {
+  fieldName: 'Field name',
+  value: 'Value',
+  description: 'Description'
+};
+
+function tableCellValue(step, field) {
+  return field === 'description'
+    ? (step.description || generateStepDescription(step))
+    : (step[field] || '');
+}
+
+function editableCell(step, field, n) {
+  return `<td contenteditable="true" class="table-editable" role="textbox"
+      data-step-id="${Utils.escapeHtml(step.id)}" data-field="${field}"
+      aria-label="${TABLE_EDITABLE[field]} for step ${n}">${Utils.escapeHtml(tableCellValue(step, field))}</td>`;
+}
+
+function renderTableView(steps) {
+  const container = document.getElementById('tableContainer');
+  if (!container) return;
+  if (!steps.length) { container.innerHTML = ''; return; }
+
+  const rows = steps.map((s, i) => {
+    const n = s.sequence || (i + 1);
+    const badge = ACTION_BADGES[s.action] || { style: 'default', label: 'Step' };
+    const url = s.action === 'navigate' ? (s.value || s.url) : s.url;
+    // Redacted values are read-only. v1.2 made them editable, so correcting a
+    // "••••" cell would have overwritten the stored value with mask characters.
+    const valueCell = s.isSensitive
+      ? `<td class="table-sensitive">${Utils.escapeHtml(s.value || '')} <span class="step-redacted">Redacted</span></td>`
+      : editableCell(s, 'value', n);
+    return `<tr>
+      <td class="table-time">${n}</td>
+      <td><span class="step-action" data-action="${badge.style}">${badge.label}</span></td>
+      ${editableCell(s, 'fieldName', n)}
+      ${valueCell}
+      ${editableCell(s, 'description', n)}
+      <td class="table-url" title="${Utils.escapeHtml(url || '')}">${Utils.escapeHtml(shortUrl(url))}</td>
+      <td class="table-time">${s.timestamp ? Utils.escapeHtml(new Date(s.timestamp).toLocaleTimeString()) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // No Selector column — acd82c4 removed locators, reconfirmed for this port.
+  container.innerHTML = `
+    <table class="review-table">
+      <caption class="visually-hidden">Recorded steps</caption>
+      <thead><tr>
+        <th scope="col">#</th><th scope="col">Action</th><th scope="col">Field name</th>
+        <th scope="col">Value</th><th scope="col">Description</th><th scope="col">URL</th><th scope="col">Time</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  container.querySelectorAll('.table-editable').forEach(cell => {
+    cell.addEventListener('blur', handleTableCellEdit);
+    // Enter commits rather than inserting a line break into a single-line field.
+    cell.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); cell.blur(); }
+    });
+  });
+}
+
+async function handleTableCellEdit(e) {
+  const cell = e.currentTarget;
+  const field = cell.dataset.field;
+  if (!Object.prototype.hasOwnProperty.call(TABLE_EDITABLE, field)) return;
+  const step = stepsData.find(s => s.id === cell.dataset.stepId);
+  if (!step) return;
+
+  const newVal = cell.innerText.trim();
+  const oldVal = tableCellValue(step, field);
+  if (newVal === oldVal) return;
+
+  saveToHistory('edit');
+  const previous = step[field];
+  const previousNeedsName = step.needsName;
+  step[field] = newVal;
+  // Naming the field resolves a deferred "Name later" (F-4).
+  if (field === 'fieldName' && newVal) delete step.needsName;
+  try {
+    await trackWrite(storage.updateStep(step));
+  } catch (err) {
+    // Roll back — otherwise the table shows an edit that was never persisted
+    // (the same failure shape as P1-6).
+    step[field] = previous;
+    if (previousNeedsName) step.needsName = previousNeedsName;
+    cell.innerText = oldVal;
+    showMessage(`Couldn't save that edit — ${err.message}. The previous value was restored.`, 'error');
+  }
+}
+
+// R-004: export configuration. Per-viewer convenience, so localStorage.
+const SCREENSHOT_SIZES = ['full', 'medium', 'small'];
+
+function readExportConfig() {
+  const size = document.getElementById('ecScreenshotSize')?.value;
+  const config = {
+    includeScreenshots: document.getElementById('ecIncludeScreenshots')?.checked !== false,
+    screenshotSize: SCREENSHOT_SIZES.includes(size) ? size : 'full'
+  };
+  try { localStorage.setItem('testsnapper_export_config', JSON.stringify(config)); } catch (_) { /* non-critical */ }
+  return config;
+}
+
+function restoreExportConfig() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('testsnapper_export_config') || 'null'); } catch (_) { /* ignore */ }
+  if (!saved || typeof saved !== 'object') return;
+  const include = document.getElementById('ecIncludeScreenshots');
+  const size = document.getElementById('ecScreenshotSize');
+  if (include && typeof saved.includeScreenshots === 'boolean') include.checked = saved.includeScreenshots;
+  if (size && SCREENSHOT_SIZES.includes(saved.screenshotSize)) size.value = saved.screenshotSize;
+}
+
+function showExportPreview() {
+  const config = readExportConfig();
+  const content = document.getElementById('exportPreviewContent');
+  if (!content) return;
+  // Exports include every step in sequence order regardless of on-screen
+  // filters, so the preview does too — otherwise it would misrepresent the file.
+  const preview = [...stepsData]
+    .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+    .slice(0, 5);
+  const sizeLabel = { full: 'full size', medium: '800px', small: '400px' }[config.screenshotSize];
+  const rows = preview.map(s => {
+    const badge = ACTION_BADGES[s.action] || { style: 'default', label: 'Step' };
+    return `<tr>
+      <td class="table-time">${s.sequence || ''}</td>
+      <td><span class="step-action" data-action="${badge.style}">${badge.label}</span></td>
+      <td>${Utils.escapeHtml(s.description || generateStepDescription(s))}</td>
+    </tr>`;
+  }).join('');
+  content.innerHTML = `
+    <p class="preview-note">Screenshots: ${config.includeScreenshots ? `included (${sizeLabel})` : 'omitted'} ·
+      ${stepsData.length} step${stepsData.length === 1 ? '' : 's'} in the full export.</p>
+    <table class="review-table">
+      <thead><tr><th scope="col">#</th><th scope="col">Action</th><th scope="col">Step</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  openDialog(document.getElementById('exportPreviewModal'));
+}
+
+// R-003: privacy audit, driven by the authoritative isSensitive flag. v1.2
+// counted redactions by matching the literal strings '[REDACTED]' and '***',
+// but the redactor writes '••••••••', '***-**-****', '**** **** **** ****' and
+// others — so its count was effectively always zero.
+function showPrivacyAudit() {
+  const content = document.getElementById('privacyAuditContent');
+  if (!content) return;
+  const redacted = [...stepsData]
+    .filter(s => s.isSensitive)
+    .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  const withShots = redacted.filter(s => _assetCache && _assetCache.has(s.id)).length;
+
+  let html = `<p class="audit-summary"><strong>${redacted.length}</strong> value${redacted.length === 1 ? '' : 's'} masked before saving.</p>`;
+  if (withShots) {
+    html += `<p class="audit-warning">Of these, <strong>${withShots}</strong> ${withShots === 1 ? 'has' : 'have'} a screenshot.
+      Screenshots are <strong>not</strong> redacted — the value may be visible in the image. Review them before sharing.</p>`;
+  }
+  if (redacted.length) {
+    html += `<table class="review-table">
+      <thead><tr><th scope="col">#</th><th scope="col">Field</th><th scope="col">Stored value</th><th scope="col">Screenshot</th></tr></thead>
+      <tbody>${redacted.map(s => `<tr>
+        <td class="table-time">${s.sequence || ''}</td>
+        <td>${Utils.escapeHtml(s.fieldName || '—')}</td>
+        <td class="table-sensitive">${Utils.escapeHtml(s.value || '—')}</td>
+        <td>${_assetCache && _assetCache.has(s.id) ? 'Yes — review' : '—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } else {
+    html += '<p class="audit-empty">No values in this session were identified as sensitive.</p>';
+  }
+  content.innerHTML = html;
+  openDialog(document.getElementById('privacyAuditModal'));
+}
+
+function setupV12Features() {
+  switchView(currentView);
+  restoreExportConfig();
+
+  // Descriptions were sized once at render and never again, so resizing the
+  // window re-wrapped the text inside a fixed height and clipped it.
+  window.addEventListener('resize', debounce(() => {
+    document.querySelectorAll('.step-description-area').forEach(autosizeTextarea);
+  }, 150));
+
+  document.getElementById('viewCardsBtn')?.addEventListener('click', () => { switchView('cards'); renderSteps(); });
+  document.getElementById('viewTableBtn')?.addEventListener('click', () => { switchView('table'); renderSteps(); });
+  document.getElementById('previewExportBtn')?.addEventListener('click', showExportPreview);
+  document.getElementById('privacyAuditBtn')?.addEventListener('click', showPrivacyAudit);
+  document.getElementById('ecIncludeScreenshots')?.addEventListener('change', readExportConfig);
+  document.getElementById('ecScreenshotSize')?.addEventListener('change', readExportConfig);
+
+  wireDialog(document.getElementById('screenshotViewer'), document.getElementById('closeScreenshotViewer'));
+  wireDialog(document.getElementById('exportPreviewModal'), document.getElementById('closeExportPreview'));
+  wireDialog(document.getElementById('privacyAuditModal'), document.getElementById('closePrivacyAudit'));
+
+}
+
+// ==================== Generic dialog helper (v1.2 port) ====================
+//
+// The v1.2 design adds three dialogs (screenshot viewer, export preview,
+// privacy audit). v1.2's own versions were bare <div>s shown with inline
+// display:flex — no role, no focus management, no Escape, background still
+// tabbable. Rather than repeat A-7's fix three times, they share this helper.
+
+const _dialogReturnFocus = new WeakMap();
+
+function openDialog(overlay) {
+  if (!overlay) return;
+  _dialogReturnFocus.set(overlay, document.activeElement);
+  overlay.classList.add('active');
+  const appWrapper = document.querySelector('.app-wrapper');
+  if (appWrapper) appWrapper.inert = true;
+  const first = overlay.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  if (first) first.focus();
+}
+
+function closeDialog(overlay) {
+  if (!overlay || !overlay.classList.contains('active')) return;
+  overlay.classList.remove('active');
+  // Only release inert when no other dialog is still open.
+  if (!document.querySelector('.modal-overlay.active')) {
+    const appWrapper = document.querySelector('.app-wrapper');
+    if (appWrapper) appWrapper.inert = false;
+  }
+  const back = _dialogReturnFocus.get(overlay);
+  if (back && typeof back.focus === 'function') back.focus();
+}
+
+/** Wire close button, backdrop click and Escape for a dialog overlay. */
+function wireDialog(overlay, closeBtn) {
+  if (!overlay) return;
+  if (closeBtn) closeBtn.addEventListener('click', () => closeDialog(overlay));
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeDialog(overlay); });
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDialog(overlay); }
+  });
+}
+
+function openScreenshotViewer(stepId) {
+  const overlay = document.getElementById('screenshotViewer');
+  const img = document.getElementById('screenshotViewerImg');
+  const title = document.getElementById('screenshotViewerTitle');
+  const thumb = document.querySelector(`.step-thumb[data-step-id="${CSS.escape(stepId)}"] img`);
+  if (!overlay || !img || !thumb) return;
+  const step = stepsData.find(s => s.id === stepId);
+  const n = step?.sequence || '';
+  img.src = thumb.src;
+  img.alt = `Screenshot for step ${n}`;
+  img.hidden = false;
+  if (title) title.textContent = n ? `Step ${n} — screenshot` : 'Screenshot';
+  openDialog(overlay);
+}
+
+// A-7: remembers what to hand focus back to when the export modal closes.
+let _progressTriggerElement = null;
+
 function showProgressModal() {
   if (!progressModal) return;
+  _progressTriggerElement = document.activeElement;
   progressModal.classList.add('active');
   updateProgressUI(0, 'Starting export...');
+
+  // A-7 (WCAG 2.4.3/2.1.2): focus stayed on the Export button BEHIND the scrim,
+  // and Tab walked every step textarea underneath the overlay. Move focus in
+  // and make the rest of the page inert for the duration.
+  const appWrapper = document.querySelector('.app-wrapper') || document.querySelector('main');
+  if (appWrapper) appWrapper.inert = true;
+  if (cancelExportBtn) cancelExportBtn.focus();
 }
 
 function hideProgressModal() {
   if (!progressModal) return;
   progressModal.classList.remove('active');
+  const appWrapper = document.querySelector('.app-wrapper') || document.querySelector('main');
+  if (appWrapper) appWrapper.inert = false;
+  if (_progressTriggerElement && typeof _progressTriggerElement.focus === 'function') {
+    _progressTriggerElement.focus();
+  }
+  _progressTriggerElement = null;
 }
 
 // FUNC-009: shared by the local export's progressCallback (exportSession runs
 // in-process now — there is no background 'exportProgress' message to listen for).
 function updateProgressUI(percent, status) {
   const circle = document.getElementById('progressCircle');
-  if (progressPercent) progressPercent.textContent = `${percent}%`;
+  const pct = Math.round(percent || 0);
+  if (progressPercent) {
+    progressPercent.textContent = `${pct}%`;
+    // A-7: expose progress to assistive tech, not just to sighted users.
+    progressPercent.setAttribute('aria-valuenow', String(pct));
+    progressPercent.setAttribute('aria-valuetext', `${pct} percent`);
+  }
   if (progressStatus) progressStatus.textContent = status || 'Exporting...';
-  if (circle) circle.style.strokeDashoffset = 125.6 - (percent / 100) * 125.6;
+  if (circle) circle.style.strokeDashoffset = 125.6 - (pct / 100) * 125.6;
 }
 
 async function handleSaveAndExport() {
-  showMessage('Saving changes...', 'info');
-  await saveSessionName();
-
-  const format = exportFormatSelect.value;
-  showProgressModal();
+  // P1-9: saveExportBtn was never disabled, so the natural response to an
+  // apparently-hung export (click it again) launched a SECOND concurrent export
+  // of the same session.
+  if (saveExportBtn.disabled) return;
+  saveExportBtn.disabled = true;
 
   try {
+    showMessage('Saving changes...', 'info');
+    await saveSessionName();
+
+    const format = exportFormatSelect.value;
+    showProgressModal();
+
+    // R-004: the Configure Export panel's choices reach the export.
     const result = await exportService.exportSession(sessionId, format, (progress) => {
       updateProgressUI(progress.percent || 0, progress.status);
-    });
+    }, readExportConfig());
 
     let downloadUrl;
     const filename = result.filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
@@ -1199,22 +1793,37 @@ async function handleSaveAndExport() {
     }
 
     await chrome.downloads.download({ url: downloadUrl, filename, saveAs: false, conflictAction: 'uniquify' });
-    if (result.blob) URL.revokeObjectURL(downloadUrl);
+    // P1-9: revoking on the next line races the download's own read of the
+    // blob. chrome.downloads.download resolves when the item is CREATED, not
+    // when the bytes have been consumed.
+    if (result.blob) setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000);
 
     hideProgressModal();
-    showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
+    // P2-6: .docx is built with the bundled docx library; if that fails to
+    // load, the service falls back to a Word-compatible HTML .doc. Say so.
+    if (format === 'docx' && !/\.docx$/i.test(filename)) {
+      showMessage('Exported as a Word-compatible .doc — the .docx library could not load. Word opens it, but tools that read .docx may not.', 'warning');
+    } else {
+      showMessage(`Exported as ${format.toUpperCase()} successfully!`, 'success');
+    }
   } catch (error) {
     hideProgressModal();
     // FUNC-009: a user-triggered cancelExport() surfaces here as a thrown
     // error from exportSession — show it as a neutral cancellation, not a failure.
-    if (/cancelled/i.test(error.message)) {
+    if (/cancel/i.test(error?.message || '')) {
       showMessage('Export cancelled.', 'info');
     } else {
       Logger.error('Save and export failed:', error);
-      showMessage('Failed: ' + error.message, 'error');
+      showMessage(
+        `Export failed — ${error.message}. Your session is safe; CSV and JSON don't need the Word/PDF libraries.`,
+        'error'
+      );
     }
   } finally {
+    // FUNC-009: clear the cancel flag, or the NEXT export would be treated as
+    // pre-cancelled and abort before it starts.
     exportService.resetCancellation(sessionId);
+    saveExportBtn.disabled = false;
   }
 }
 
@@ -1233,27 +1842,26 @@ function showMessageWithUndo(text) {
     clearTimeout(messageDiv._msgTimer);
     messageDiv._msgTimer = null;
   }
-  // Set innerHTML with a link to trigger undo
   messageDiv.innerHTML = '';
   const span = document.createElement('span');
   span.textContent = text + ' — ';
-  const undoLink = document.createElement('a');
-  undoLink.href = '#';
-  undoLink.textContent = 'Undo';
-  undoLink.style.cssText = 'font-weight:bold; text-decoration:underline; cursor:pointer;';
-  undoLink.addEventListener('click', (e) => {
-    e.preventDefault();
+  // A-1 (4.1.2): a real <button>, not <a href="#"> with a click handler.
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'link-button';
+  undoBtn.textContent = 'Undo';
+  undoBtn.addEventListener('click', () => {
     messageDiv.style.display = 'none';
     undo();
   });
   messageDiv.appendChild(span);
-  messageDiv.appendChild(undoLink);
+  messageDiv.appendChild(undoBtn);
   messageDiv.className = 'message success';
   messageDiv.style.display = 'block';
-  messageDiv._msgTimer = setTimeout(() => {
-    messageDiv.style.display = 'none';
-    messageDiv._msgTimer = null;
-  }, 6000);
+  // F-18 / WCAG 2.2.1: this vanished after 6 seconds, and it is the one
+  // affordance for recovering deleted steps — a slower reader, or anyone who
+  // glanced away, lost it for good. It now stays until the next message
+  // replaces it. (Ctrl+Z / the header Undo button still work regardless.)
 }
 
 function hideMessage() {

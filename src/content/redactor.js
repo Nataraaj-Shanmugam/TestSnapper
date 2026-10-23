@@ -26,7 +26,19 @@ class Redactor {
       /api[_-]?key/i,
       /auth/i,
       /credit[_-]?card/i,
+      // Q-8: /credit[_-]?card/ never matched the names payment forms actually
+      // use — cardNumber, cc-number, card_number — so those fields were not
+      // classified sensitive at all.
+      /card[_-]?number/i,
+      /\bcc[_-]?(number|num|csc|cvc|exp)/i,
+      /cardnumber/i,
       /cvv/i,
+      // Q-8: /cvv/ misses every other spelling of the same field, and a bare
+      // "123" matches no PII pattern, so the CVC reached the export in clear.
+      /\bcvc\b/i,
+      /\bcsc\b/i,
+      /security[_-]?code/i,
+      /card[_-]?verification/i,
       /ssn/i,
       /social[_-]?security/i,
       /\bpin\b/i,
@@ -36,6 +48,11 @@ class Redactor {
       /dob/i,
       /date[_-]?of[_-]?birth/i,
       /birthdate/i,
+      // Q-8: neither /birthdate/ nor /date[_-]?of[_-]?birth/ matches the very
+      // common `birth_date` / `birthDate`, so a DOB picker named that exported
+      // the exact date of birth.
+      /birth[_-]?date/i,
+      /birth[_-]?day/i,
       /tax[_-]?id/i,
       /\bein\b/i,
       /driver[_-]?license/i,
@@ -51,7 +68,12 @@ class Redactor {
     this.phonePattern = /(\+\d{1,3}[\s.-]?)?(\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}\b/;
     // Card candidate: 13–16 digits, optional space/hyphen grouping (Amex 15 + Visa/MC 16).
     // Validated with Luhn before masking to avoid corrupting order ids.
-    this.creditCardPattern = /\b(?:\d[ -]?){13,16}\b/;
+    // Q-8: was {13,16}, which let 19-digit PANs (UnionPay, some Maestro)
+    // through unmasked. Luhn still guards against masking plain long ids.
+    // Shaped digit-(sep-digit)*, so a match always ENDS on a digit. The old
+    // (?:\d[ -]?){n} let the last digit swallow a trailing space, gluing the
+    // mask onto the next word ("**** **** **** ****end").
+    this.creditCardPattern = /\b\d(?:[ -]?\d){12,18}\b/;
     this.ssnPattern = /\b\d{3}-\d{2}-\d{4}\b/;
     this._routingPattern = /\b\d{9}\b/; // private — only valid in financial field context (LOW-016)
     this.dobPattern = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/; // MM/DD/YYYY or MM-DD-YY
@@ -72,7 +94,7 @@ class Redactor {
    * @returns {boolean}
    */
   _luhnValid(digits) {
-    if (!/^\d{13,16}$/.test(digits)) return false;
+    if (!/^\d{13,19}$/.test(digits)) return false;
     let sum = 0;
     let alt = false;
     for (let i = digits.length - 1; i >= 0; i--) {
@@ -93,6 +115,34 @@ class Redactor {
     if (element.type === 'password') return true;
 
     if (element.dataset.sensitive === 'true' || element.dataset.sensitive === '') return true;
+
+    // Q-8: `autocomplete` is the single most reliable sensitivity signal in
+    // HTML and was not consulted at all. These tokens are standardised, so an
+    // exact-match check has no false-positive risk — unlike the name/id
+    // heuristics below, which depend on whatever the developer happened to
+    // call the field.
+    const AUTOCOMPLETE_SENSITIVE = new Set([
+      'cc-number', 'cc-csc', 'cc-exp', 'cc-exp-month', 'cc-exp-year',
+      'cc-name', 'cc-given-name', 'cc-family-name', 'cc-type',
+      'current-password', 'new-password', 'one-time-code',
+      'bday', 'bday-day', 'bday-month', 'bday-year'
+    ]);
+    const autocomplete = (element.getAttribute('autocomplete') || '').trim().toLowerCase();
+    if (autocomplete) {
+      // The attribute may carry section/billing/shipping prefixes.
+      const token = autocomplete.split(/\s+/).pop();
+      if (AUTOCOMPLETE_SENSITIVE.has(token)) return true;
+    }
+
+    // Q-8: <input type="date"> reports .value as an ISO string (1985-03-14),
+    // which matches no DOB regex — the heuristics are structurally unable to
+    // catch it. Treat date inputs whose naming hints at a birth date as
+    // sensitive regardless of value format.
+    if (element.type === 'date' && /birth|dob|\bbday\b/i.test(
+      [element.name, element.id, element.getAttribute('aria-label')].filter(Boolean).join(' ')
+    )) {
+      return true;
+    }
 
     // Concatenate labeling attributes only — class names excluded to avoid
     // false positives on utility classes like "auth-button" or "token-input-wrapper"
@@ -184,6 +234,24 @@ class Redactor {
     if (looksFinancial) {
       this._routingPatternG.lastIndex = 0;
       result = result.replace(this._routingPatternG, '*********');
+    }
+
+    // Q-8: the phone pattern requires a separator, so a number typed the way
+    // people type on mobile — 5551234567 — passed through. Masking every
+    // 10-15 digit run would corrupt order ids, so, like the routing-number
+    // rule above, only do it where the field itself says it holds a phone.
+    const looksLikePhone = element && (
+      element.type === 'tel' ||
+      /^tel(-|$)/i.test((element.getAttribute && element.getAttribute('autocomplete')) || '') ||
+      /phone|mobile|\btel\b|cell/i.test([
+        element.name,
+        element.id,
+        element.placeholder,
+        element.getAttribute && element.getAttribute('aria-label')
+      ].filter(Boolean).join(' '))
+    );
+    if (looksLikePhone) {
+      result = result.replace(/\+?\d{10,15}\b/g, (m) => m.replace(/\d/g, '*'));
     }
 
     // Mask dates of birth with length-accurate year mask (LOW-015)

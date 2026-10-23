@@ -80,8 +80,19 @@ module.exports = {
         // Assets
         { from: 'src/assets', to: 'src/assets', noErrorOnMissing: true },
 
-        // Libraries
-        { from: 'libs', to: 'libs', noErrorOnMissing: true },
+        // Libraries.
+        // P0-4: `from: 'libs'` copied the directory wholesale, so libs/README.md
+        // — a build note, not code — shipped inside the uploaded CRX. It stated
+        // the extension falls back to a CDN, which is exactly the behaviour MV3's
+        // remote-hosted-code policy forbids; a reviewer grepping the package for
+        // "CDN" found a first-party document asserting a violation. A package
+        // should contain code, not build notes.
+        {
+          from: 'libs',
+          to: 'libs',
+          noErrorOnMissing: true,
+          globOptions: { ignore: ['**/README.md'] }
+        },
       ]
     })
   ],

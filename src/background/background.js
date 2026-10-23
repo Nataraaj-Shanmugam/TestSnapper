@@ -29,6 +29,12 @@ function sanitizeStepForStorage(step) {
     step.value = maskGenericPII(step.value);
   }
   if (typeof step.targetLabel === 'string') step.targetLabel = maskGenericPII(step.targetLabel);
+  // P0-6: fieldName was the one free-text field this pass skipped, and the
+  // resolver's proximity strategies lift arbitrary page text into it (e.g. a
+  // header reading "Signed in as jane@acme.com" becomes a nearby control's
+  // field name). It reaches every export verbatim, routing around redaction
+  // rather than failing it.
+  if (typeof step.fieldName === 'string') step.fieldName = maskGenericPII(step.fieldName);
   return step;
 }
 
@@ -428,6 +434,21 @@ const recoveryReady = (async () => {
           await BadgeManager.setPaused(recordingTab.id);
         }
 
+        // P1-7: chrome.webRequest listeners are registered at runtime and are
+        // NOT persisted across a service-worker restart. Recovery restored the
+        // state manager, badge and content scripts but never re-armed API
+        // capture, so ~30s of idle silently ended it for the rest of the
+        // session with nothing in the UI to say so.
+        try {
+          const recoveredSettings = await settingsManager.get();
+          if (recoveredSettings.captureApiCalls && activeRecording.state === 'recording') {
+            ApiCapture.start(recordingTab.id, recoveredSettings);
+            Logger.debug('🔄 API capture re-armed after worker restart');
+          }
+        } catch (apiErr) {
+          Logger.warn('Could not re-arm API capture on recovery:', apiErr);
+        }
+
         Logger.debug('✅ Recording session fully recovered');
       } catch (err) {
         Logger.error('Failed to restore recording state:', err);
@@ -447,7 +468,7 @@ const recoveryReady = (async () => {
           type: 'basic',
           iconUrl: 'src/assets/icons/icon128.png',
           title: 'TestSnapper - Recording Recovery Failed',
-          message: `Your previous recording session could not be recovered because the tab was closed. The session has been saved as incomplete.`,
+          message: `TestSnapper stopped when the tab closed. The steps recorded before that are saved — open TestSnapper to review or export them.`,
           priority: 1
         });
       } catch (notifErr) {
@@ -468,7 +489,11 @@ async function markSessionIncomplete(sessionId) {
   try {
     const session = await storage.getSession(sessionId);
     if (session) {
-      session.sessionName = `[INCOMPLETE] ${session.sessionName || 'Session'}`;
+      // UX F-7: this used to prefix the name with "[INCOMPLETE] ". The name is
+      // the session's identity everywhere — the popup list, the review page,
+      // the export FILENAME and the title inside the DOCX/PDF — so a crash
+      // stamped every deliverable. The flag below carries the same fact; the
+      // popup and review page now surface it without touching the name.
       session.incomplete = true;
       await storage.updateSession(session);
     }
@@ -479,22 +504,46 @@ async function markSessionIncomplete(sessionId) {
 
 // ==================== Badge Management ====================
 
+/**
+ * P0-3: every chrome.action.* call here rejects with "No tab with id: N." once
+ * the tab is gone. These were awaited unguarded on the stop/pause/resume paths,
+ * where the badge update sits BEFORE the session flush and the review-tab open —
+ * so closing the recorded tab and then pressing Stop threw, and the session was
+ * never written to disk (`addPendingFlush` and `tabs.create` are downstream of
+ * the badge call). A cosmetic badge must never be able to abort a data path, so
+ * failures are swallowed here rather than at six call sites.
+ */
 class BadgeManager {
+  static async _apply(ops) {
+    try {
+      for (const op of ops) await op();
+    } catch (err) {
+      Logger.debug('Badge update skipped (tab likely closed):', err?.message);
+    }
+  }
+
   static async setRecording(tabId) {
-    await chrome.action.setBadgeText({ text: '●', tabId });
-    await chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId });
-    await chrome.action.setTitle({ title: 'TestSnapper - Recording', tabId });
+    await BadgeManager._apply([
+      () => chrome.action.setBadgeText({ text: '●', tabId }),
+      // Recording = green (was red). #15803D keeps the white ● at 5.02:1.
+      () => chrome.action.setBadgeBackgroundColor({ color: '#15803D', tabId }),
+      () => chrome.action.setTitle({ title: 'TestSnapper - Recording', tabId })
+    ]);
   }
 
   static async setPaused(tabId) {
-    await chrome.action.setBadgeText({ text: '❚❚', tabId });
-    await chrome.action.setBadgeBackgroundColor({ color: '#d97706', tabId });
-    await chrome.action.setTitle({ title: 'TestSnapper - Paused', tabId });
+    await BadgeManager._apply([
+      () => chrome.action.setBadgeText({ text: '❚❚', tabId }),
+      () => chrome.action.setBadgeBackgroundColor({ color: '#d97706', tabId }),
+      () => chrome.action.setTitle({ title: 'TestSnapper - Paused', tabId })
+    ]);
   }
 
   static async clear(tabId) {
-    await chrome.action.setBadgeText({ text: '', tabId });
-    await chrome.action.setTitle({ title: 'TestSnapper - Record UI Tests', tabId });
+    await BadgeManager._apply([
+      () => chrome.action.setBadgeText({ text: '', tabId }),
+      () => chrome.action.setTitle({ title: 'TestSnapper - Record UI Tests', tabId })
+    ]);
   }
 }
 
@@ -825,11 +874,15 @@ async function startRecording(tabId, tabInfo) {
   // Reset duplicate tracker for new session
   _lastAddedStep = null;
 
+  // P1-5: hoisted out of the try so the catch can clean up the session row it
+  // created before the failure point.
+  let session = null;
+
   try {
     // Add tabId to tabInfo
     tabInfo.tabId = tabId;
 
-    const session = await createSession(tabInfo);
+    session = await createSession(tabInfo);
     stateManager.startRecording(session);
     await persistActiveRecording();
 
@@ -877,6 +930,20 @@ async function startRecording(tabId, tabInfo) {
     Logger.error('Failed to start recording:', error);
     stateManager.stopRecording();
     await persistActiveRecording();
+    // P1-5: the session row and the badge were both created before the throw
+    // point, and neither was undone — so a failed start (e.g. a file:// page
+    // without "Allow access to file URLs") left the tab showing a red
+    // RECORDING badge indefinitely and an empty session in the export dropdown,
+    // counting against maxSessions forever.
+    await BadgeManager.clear(tabId);
+    ApiCapture.stop();
+    if (session?.sessionId) {
+      try {
+        await storage.clearSession(session.sessionId);
+      } catch (cleanupErr) {
+        Logger.warn('Could not clean up orphaned session after failed start:', cleanupErr);
+      }
+    }
     return { success: false, error: error.message };
   }
 }
@@ -919,7 +986,38 @@ async function resumeRecording(tabId) {
   return { success: true };
 }
 
+/**
+ * Ask the recorded tab to commit typed input still waiting on its debounce.
+ * Resolves after the content script has stored those steps, when no frame has
+ * anything pending, or after FLUSH_TIMEOUT_MS — whichever comes first.
+ * @param {number} tabId
+ * @returns {Promise<void>}
+ */
+async function flushPendingInputs(tabId) {
+  const FLUSH_TIMEOUT_MS = 1500;
+  if (!tabId || stateManager.state !== 'recording') return;
+  try {
+    await Promise.race([
+      chrome.tabs.sendMessage(tabId, { action: 'flushPendingInputs' }),
+      new Promise(resolve => setTimeout(resolve, FLUSH_TIMEOUT_MS))
+    ]);
+  } catch (err) {
+    // "Receiving end does not exist" / "message port closed": nothing pending.
+    Logger.debug('flushPendingInputs: no pending input to commit', err?.message);
+  }
+}
+
 async function stopRecording(tabId) {
+  if (stateManager.isIdle()) {
+    return { success: false, error: 'Not recording' };
+  }
+
+  // Let the page commit text typed within the last 800ms (still debounced)
+  // while addStep will still accept it. Bounded: a field-name prompt opened by
+  // that commit must not hold the stop hostage.
+  await flushPendingInputs(stateManager.session?.tabId ?? tabId);
+  // A second stop (double-click, shortcut + panel) may have finished while
+  // this one waited on the page.
   if (stateManager.isIdle()) {
     return { success: false, error: 'Not recording' };
   }
@@ -966,6 +1064,7 @@ async function stopRecording(tabId) {
     }
 
     // Enforce maxSessions limit — delete oldest sessions beyond the cap
+    let prunedCount = 0;
     try {
       const allSessions = await storage.getAllSessions();
       const maxSessions = settings.maxSessions || 25;
@@ -978,6 +1077,11 @@ async function stopRecording(tabId) {
           broadcastSessionChange(old.sessionId, 'deleted');
           Logger.debug('🗑️ Pruned old session:', old.sessionId);
         }
+        // P2-12: this pruning was visible only in a Logger.warn nobody reads.
+        // The setting is labelled as a retention cap, so lowering it from 100
+        // to 10 silently destroyed 90 finished recordings at the next Stop —
+        // no prompt, no undo, no notification. Say it happened.
+        prunedCount = toDelete.length;
       }
     } catch (err) {
       Logger.warn('Session limit enforcement failed:', err);
@@ -1006,7 +1110,7 @@ async function stopRecording(tabId) {
       await chrome.tabs.create({ url: reviewUrl });
     }
 
-    return { success: true, sessionId };
+    return { success: true, sessionId, prunedCount };
   } catch (error) {
     Logger.error('Failed to stop recording:', error);
     stateManager.stopRecording();
@@ -1019,6 +1123,7 @@ async function stopRecording(tabId) {
 
 // Track the last step to detect consecutive duplicates at the background level
 let _lastAddedStep = null;
+let _lastAddedAt = 0;
 
 async function addStep(stepData, senderTabId) {
   // Reject steps when not actively recording (e.g. paused) — MED-001
@@ -1041,7 +1146,7 @@ async function addStep(stepData, senderTabId) {
     const settings = await settingsManager.get();
 
     // Server-side consecutive duplicate detection (gated on smartDedup setting)
-    if (settings.smartDedup !== false && _isConsecutiveDuplicate(stepData, _lastAddedStep)) {
+    if (settings.smartDedup !== false && _isConsecutiveDuplicate(stepData, _lastAddedStep, Date.now() - _lastAddedAt)) {
       Logger.debug('⏭️ Skipping consecutive duplicate step:', stepData.action, stepData.fieldName);
       return { success: true, skipped: true };
     }
@@ -1062,6 +1167,7 @@ async function addStep(stepData, senderTabId) {
     sanitizeStepForStorage(step);
 
     _lastAddedStep = stepData;
+    _lastAddedAt = Date.now();
 
     await storage.addStep(step);
     await storage.updateSession(stateManager.session);

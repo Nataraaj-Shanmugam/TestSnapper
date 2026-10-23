@@ -50,7 +50,9 @@ const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 const PHONE_RE = /(\+\d{1,3}[\s.-]?)?(\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}\b/g;
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
 // Candidate card numbers: 13–16 digits, optional space/hyphen grouping.
-const CARD_CANDIDATE_RE = /\b(?:\d[ -]?){13,16}\b/g;
+// Q-8: 13–19 digits (was 16), matching the content-script redactor.
+// Ends on a digit so the mask never swallows the following space.
+const CARD_CANDIDATE_RE = /\b\d(?:[ -]?\d){12,18}\b/g;
 
 /**
  * Luhn checksum — used to avoid masking arbitrary 13–16 digit numbers (order
@@ -97,7 +99,7 @@ export function maskGenericPII(text) {
 
   out = out.replace(CARD_CANDIDATE_RE, (match) => {
     const digits = match.replace(/[ -]/g, '');
-    if (digits.length >= 13 && digits.length <= 16 && luhnValid(digits)) {
+    if (digits.length >= 13 && digits.length <= 19 && luhnValid(digits)) {
       return '**** **** **** ****';
     }
     return match; // not a real card — leave untouched

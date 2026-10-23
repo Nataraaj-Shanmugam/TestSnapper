@@ -159,7 +159,13 @@ class StorageManager {
   async _readSteps(sessionId) {
     // FIX: PERF-005 — serve from cache when available
     if (this._stepsCache.has(sessionId)) {
-      return this._stepsCache.get(sessionId);
+      // P1-6: this used to hand back the cached array itself. addStep() and
+      // updateStep() mutate the result BEFORE awaiting _writeSteps(), so a
+      // rejected write (quota exceeded) left the cache holding steps that were
+      // never persisted — the popup and review page showed them as saved until
+      // the next service-worker restart silently dropped them. Copy defensively;
+      // the write path re-seeds the cache on success.
+      return this._stepsCache.get(sessionId).slice();
     }
 
     const key = `testsnapper_steps_${sessionId}`;

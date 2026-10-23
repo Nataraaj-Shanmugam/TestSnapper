@@ -105,13 +105,34 @@ export class OrphanCleaner {
             allStorage = {};
         }
 
+        // P1-4: liveSessionIds was snapshotted before Phase 1, which reads every
+        // asset of every session — hundreds of MB, seconds of wall time. A
+        // session created in that window (the user clicking Record is itself a
+        // common trigger for the cold start that runs this sweep) was absent
+        // from the stale snapshot, so its steps/assets keys were deleted out
+        // from under an active recording. Re-read the index immediately before
+        // the diff so the window is as narrow as possible.
+        let currentLiveIds = liveSessionIds;
+        try {
+            const freshSessions = await this._storage._readSessions();
+            currentLiveIds = new Set([
+                ...liveSessionIds,
+                ...freshSessions.map(s => s.sessionId)
+            ]);
+        } catch (err) {
+            Logger.warn('OrphanCleaner: could not re-read session index; skipping key sweep:', err);
+            currentLiveIds = null;
+        }
+
         const keysToRemove = [];
-        for (const key of Object.keys(allStorage)) {
-            const match = ORPHAN_KEY_RE.exec(key);
-            if (!match) continue;
-            const sessionId = match[1];
-            if (!liveSessionIds.has(sessionId)) {
-                keysToRemove.push(key);
+        if (currentLiveIds) {
+            for (const key of Object.keys(allStorage)) {
+                const match = ORPHAN_KEY_RE.exec(key);
+                if (!match) continue;
+                const sessionId = match[1];
+                if (!currentLiveIds.has(sessionId)) {
+                    keysToRemove.push(key);
+                }
             }
         }
 

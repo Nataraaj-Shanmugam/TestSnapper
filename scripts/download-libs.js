@@ -36,12 +36,12 @@ const LIBRARIES = [
     // sha384 of the copy currently shipped in libs/ (TOFU-pinned 2026-07-04).
     knownSha384: 'QxNyiozsFHtk+CF8nwd9MwE50MZuAAGZuwp/tHHW790X9zq+45L4/LS1Yhi+NJRU'
   },
-  {
-    name: 'html2pdf.bundle.min.js',
-    url: 'https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js',
-    // sha384 of the copy currently shipped in libs/ (TOFU-pinned 2026-07-04).
-    knownSha384: 'x0pf6PlKg8dNEMtgviNo4aEmRQJc11QyHXYibt9al8MH6yWkcffjV4tvwJwti1ed'
-  },
+  // P2-7: html2pdf.bundle.min.js removed. `grep -rn html2pdf src/` returned
+  // zero matches — PDF export goes through jspdf.umd.min.js — yet the bundle
+  // was 906 KB, roughly a quarter of the shipped package, downloaded by every
+  // user for nothing. It also bundled its own copy of jsPDF and html2canvas,
+  // widening both the review surface and the CVE surface with no functionality
+  // behind it.
   {
     // FUNC-005: jsPDF UMD build for local CSP-safe PDF export.
     // Extension CSP (script-src 'self') blocks CDN scripts; this local copy

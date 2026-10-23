@@ -22,11 +22,17 @@ var FieldNameResolver = (function () {
   'use strict';
 
   // ── Generic name blocklist ─────────────────────────────────────────
+  // Q-7: 'email', 'password', 'tel', 'url', 'search', 'number', 'date' and
+  // 'time' used to be here. They are input *type* names, but they are also
+  // perfectly good field names — "Type into Email" is what a reader wants —
+  // and rejecting them sent a plain name="email" field down to the proximity
+  // strategy, which returns nearby page text (often the site's brand name).
+  // Only names that tell a reader nothing remain.
   var GENERIC_NAMES = new Set([
-    'text', 'password', 'email', 'number', 'tel', 'url', 'search',
+    'text',
     'button', 'submit', 'reset', 'input', 'field', 'div', 'span',
     'form', 'select', 'textarea', 'checkbox', 'radio',
-    'hidden', 'file', 'image', 'range', 'color', 'date', 'time',
+    'hidden', 'file', 'image', 'range', 'color',
     'click here', 'enter', 'type here', 'unknown field',
     'click', 'type', 'option', 'label', 'a', 'li', 'td', 'th',
     'section', 'article', 'main', 'header', 'footer', 'nav'
@@ -232,9 +238,29 @@ var FieldNameResolver = (function () {
    * @param {Element} element - Form element
    * @returns {string|null} Placeholder text or null
    */
+  /**
+   * Q-7: placeholders are often example DATA, not labels. This strategy runs
+   * before name/id, so `<input name="workEmail" placeholder="you@company.com">`
+   * was named "You@company.com" and `placeholder="e.g. 555-0123"` became
+   * "E.g. 555 0123". Reordering would hurt forms whose placeholder IS the
+   * label ("Search products", "Enter your email"), so instead reject only
+   * placeholders that look like a sample value, and let name/id answer.
+   */
+  function looksLikeExampleValue(s) {
+    if (/@/.test(s)) return true;                                        // you@company.com
+    if (/^(e\.g\.|eg\b|ex[:.]|example\b|for example\b)/i.test(s)) return true; // e.g. 555-0123
+    if (/^(https?:\/\/|www\.)/i.test(s)) return true;                     // https://…
+    if (/^[dmy]{1,4}([\/.\- ][dmy]{1,4}){2}$/i.test(s)) return true;      // MM/DD/YYYY
+    var compact = s.replace(/\s/g, '');
+    var digits = (s.match(/\d/g) || []).length;
+    return digits > 0 && digits / compact.length > 0.4;                   // 555-0123, 12/31/1999
+  }
+
   FieldNameResolver.prototype._fromPlaceholder = function (element) {
     var ph = element.placeholder || element.getAttribute('placeholder');
-    return ph && ph.trim() ? ph.trim() : null;
+    ph = ph && ph.trim();
+    if (!ph || looksLikeExampleValue(ph)) return null;
+    return ph;
   };
 
   /**
@@ -483,15 +509,43 @@ var FieldNameResolver = (function () {
    * @returns {string} Cleaned field name
    */
   FieldNameResolver.prototype._cleanFieldName = function (text) {
-    return text
+    var cleaned = text
       .replace(/^\*+|\*+$/g, '')                     // Remove leading/trailing asterisks
       .replace(/:\s*$/g, '')                         // Remove trailing colons
-      .replace(/([a-z])([A-Z])/g, '$1 $2')          // camelCase to spaces
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')       // camelCase to spaces
+      // Q-7: the rule above only splits lower→upper, so an acronym butted
+      // against a word stayed fused: customerPONumber → "customer PONumber",
+      // which then title-cased to the meaningless "Customer Ponumber". Split
+      // ACRONYM+Word too, so it becomes "Customer PO Number".
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
       .replace(/[_-]+/g, ' ')                        // Underscores/hyphens to spaces
       .replace(/\s+/g, ' ')                          // Multiple spaces to single
-      .trim()
+      .trim();
+
+    // Q-7: the mapper below used to lowercase the tail of every word
+    // unconditionally, destroying acronyms — SSN became "Ssn", IBAN "Iban",
+    // VAT ID "Vat Id", DOB "Dob", customerPONumber "Customer Ponumber". Those
+    // are unrecognisable in an exported document.
+    //
+    // "All-caps token = acronym" is too broad: an all-caps LABEL is usually
+    // just shouting ("FIRST NAME" must still become "First Name"). Two narrower
+    // signals are used instead:
+    //   1. a known form-field acronym, in any input casing; and
+    //   2. an all-caps run inside otherwise mixed-case text — which only
+    //      arises from camelCase splitting (userURL, customerPONumber), never
+    //      from a shouted label.
+    var KNOWN_ACRONYMS = [
+      'SSN', 'IBAN', 'VAT', 'DOB', 'URL', 'ID', 'ZIP', 'EIN', 'PIN', 'CVV',
+      'CVC', 'PO', 'NHS', 'TIN', 'ABN', 'GST', 'VIN', 'IMEI', 'ITIN', 'SIN',
+      'BSB', 'NIF', 'API', 'OTP', 'IP', 'PAN', 'UPI', 'IFSC', 'SWIFT', 'BIC'
+    ];
+    var isAllCapsInput = cleaned === cleaned.toUpperCase();
+
+    return cleaned
       .split(' ')
       .map(function (word) {
+        if (KNOWN_ACRONYMS.indexOf(word.toUpperCase()) !== -1) return word.toUpperCase();
+        if (!isAllCapsInput && /^[A-Z0-9]{2,5}$/.test(word)) return word;
         return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
       })
       .join(' ');

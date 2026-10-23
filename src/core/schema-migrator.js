@@ -13,6 +13,26 @@ const META_KEY = 'testsnapper_meta';
 const SESSIONS_KEY = 'testsnapper_sessions';
 const V1_DATA_KEY = 'testsnapper_data';
 
+const LEGACY_INCOMPLETE_PREFIX = /^(?:\s*\[INCOMPLETE\]\s*)+/i;
+
+/**
+ * Return the session with any legacy "[INCOMPLETE] " name prefix removed and
+ * the `incomplete` flag set, or the same object when there is nothing to do.
+ * Also used by FSStorageManager, whose folder copies are not rewritten here.
+ *
+ * @param {Object} session - session metadata ({ sessionName, … })
+ * @returns {Object}
+ */
+export function normalizeLegacyIncompleteName(session) {
+    if (!session || typeof session.sessionName !== 'string' ||
+        !LEGACY_INCOMPLETE_PREFIX.test(session.sessionName)) {
+        return session;
+    }
+    // The old code wrote "[INCOMPLETE] Session" when there was no name.
+    const sessionName = session.sessionName.replace(LEGACY_INCOMPLETE_PREFIX, '').trim() || 'Session';
+    return { ...session, sessionName, incomplete: true };
+}
+
 export class SchemaMigrator {
     /**
      * @param {StorageManager} storageManager - The StorageManager instance (for _writeSteps / _writeAssets)
@@ -32,10 +52,16 @@ export class SchemaMigrator {
         // If testsnapper_data exists with sessions, we need to migrate no matter what
         // the meta says.  This handles users whose meta was missing (defaulted to v2).
         const v1Check = await chrome.storage.local.get(V1_DATA_KEY);
-        if (v1Check[V1_DATA_KEY] && v1Check[V1_DATA_KEY].sessions) {
+        const hasV1Data = !!(v1Check[V1_DATA_KEY] && v1Check[V1_DATA_KEY].sessions);
+        if (hasV1Data) {
             await this._migrateV1toV2(v1Check[V1_DATA_KEY]);
-            return;
         }
+
+        // Not tied to a schema version: any older build may have left the
+        // "[INCOMPLETE] " name prefix, and the pass is a no-op once names are clean.
+        await this._normalizeIncompleteNames();
+
+        if (hasV1Data) return;
 
         // No v1 data — check meta version for any other migrations
         const metaResult = await chrome.storage.local.get(META_KEY);
@@ -48,6 +74,35 @@ export class SchemaMigrator {
 
         // Placeholder: future migrations (v2→v3, etc.) go here.
         Logger.debug(`SchemaMigrator: no migration path from v${meta.version} to v${STORAGE_VERSION}`);
+    }
+
+    /**
+     * F-7 follow-up: builds before 1.1.8 marked a session that ended
+     * unexpectedly by renaming it to "[INCOMPLETE] <name>". The flag
+     * `incomplete` replaced that, but the renamed sessions were left as they
+     * were, so the prefix still showed up in the popup, the review page and
+     * every export. Strip it (repeated prefixes too) and set the flag instead.
+     * Writes only when a session actually changed.
+     *
+     * @returns {Promise<number>} number of sessions updated
+     */
+    async _normalizeIncompleteNames() {
+        const result = await chrome.storage.local.get(SESSIONS_KEY);
+        const sessions = result[SESSIONS_KEY];
+        if (!Array.isArray(sessions)) return 0;
+
+        let changed = 0;
+        const updated = sessions.map(s => {
+            const clean = normalizeLegacyIncompleteName(s);
+            if (clean !== s) changed++;
+            return clean;
+        });
+
+        if (changed) {
+            await chrome.storage.local.set({ [SESSIONS_KEY]: updated });
+            Logger.info(`SchemaMigrator: removed "[INCOMPLETE]" prefix from ${changed} session name(s)`);
+        }
+        return changed;
     }
 
     /**
