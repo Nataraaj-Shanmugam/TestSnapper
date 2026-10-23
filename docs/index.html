@@ -180,7 +180,7 @@
 
     /* ---------- Trust strip ---------- */
     .trust { border-block: 1px solid var(--rule); background: var(--surface); }
-    .trust ul { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .trust ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .trust li { padding: 1.1rem 1rem; text-align: center; border-left: 1px solid var(--rule); }
     .trust li:first-child { border-left: 0; }
     .trust strong { display: block; font-size: 1.15rem; font-weight: 700; letter-spacing: -.01em; }
@@ -262,14 +262,19 @@
     .format dd { color: var(--ink-soft); font-size: .95rem; }
     .format dd a { font-weight: 600; }
 
-    /* Privacy */
-    .privacy { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 4rem); align-items: center; }
-    .checks li { display: flex; gap: .75rem; padding-block: .7rem; border-top: 1px solid var(--rule); }
-    .checks li:first-child { border-top: 0; padding-top: 0; }
-    .checks .icon { color: var(--ok); margin-top: .2rem; }
-    .privacy-shot { border-radius: 12px; border: 1px solid var(--rule); box-shadow: var(--shadow); overflow: hidden; }
-    .privacy-shot img { width: 100%; }
-    .privacy-shot figcaption { padding: .6rem .9rem; font-size: .85rem; color: var(--ink-soft); background: var(--surface); border-top: 1px solid var(--rule); }
+    /* Privacy band: highlighted near the top */
+    .privacy-band { border-block: 1px solid #263568; background: #142247; color: #fff; padding-block: clamp(2.5rem, 6vw, 4rem); }
+    .privacy-band .wrap { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: clamp(1.5rem, 4vw, 3.5rem); align-items: center; }
+    .privacy-band .badge { display: inline-grid; place-items: center; width: 3rem; height: 3rem; border-radius: 12px; background: color-mix(in srgb, #fff 14%, transparent); margin-bottom: 1rem; }
+    .privacy-band .badge .icon { width: 1.6rem; height: 1.6rem; color: #7EE2A8; }
+    .privacy-band h2 { font-size: clamp(1.6rem, 1.2rem + 1.4vw, 2.25rem); line-height: 1.15; font-weight: 800; letter-spacing: -.025em; }
+    .privacy-band .lead { margin-top: .75rem; opacity: .85; }
+    .privacy-band .lead a { color: inherit; font-weight: 600; }
+    .privacy-points { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .privacy-points li { display: flex; gap: .75rem; padding: 1.1rem 1.2rem; border-radius: 12px; background: color-mix(in srgb, #fff 8%, transparent); border: 1px solid color-mix(in srgb, #fff 16%, transparent); }
+    .privacy-points .icon { color: #7EE2A8; margin-top: .15rem; }
+    .privacy-points strong { display: block; font-weight: 700; }
+    .privacy-points span { font-size: .925rem; opacity: .85; }
 
     /* Install */
     .install { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
@@ -292,12 +297,21 @@
     .faq details > div { padding: 0 0 1.2rem; color: var(--ink-soft); max-width: 44rem; }
     .faq details > div p + p { margin-top: .6rem; }
 
-    /* About + footer */
-    .about { display: grid; grid-template-columns: auto 1fr; gap: 1.5rem; align-items: start; max-width: 44rem; }
-    .about-mark { width: 3.5rem; height: 3.5rem; border-radius: 50%; display: grid; place-items: center; background: var(--brand-wash); color: var(--brand-strong); font-weight: 700; }
-    .about h2 { font-size: 1.125rem; font-weight: 700; }
-    .about p { margin-top: .5rem; color: var(--ink-soft); }
-    .about .links { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin-top: .75rem; }
+    /* Maker: highlighted card */
+    .maker-card {
+      display: grid; grid-template-columns: auto 1fr; gap: clamp(1.25rem, 3vw, 2.25rem); align-items: center;
+      padding: clamp(1.5rem, 4vw, 2.75rem); border-radius: 18px;
+      background: linear-gradient(135deg, var(--brand-wash), var(--surface) 70%);
+      border: 1px solid var(--rule); box-shadow: var(--shadow);
+    }
+    .maker-photo { width: 6rem; height: 6rem; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 4px var(--surface), 0 0 0 6px var(--brand); }
+    .maker-initials { display: grid; place-items: center; background: var(--brand); color: var(--on-brand); font-size: 1.75rem; font-weight: 800; }
+    .maker-kicker { font-size: .9rem; font-weight: 600; color: var(--brand); }
+    .maker h2 { margin-top: .25rem; font-size: clamp(1.5rem, 1.1rem + 1.2vw, 2rem); font-weight: 800; letter-spacing: -.02em; line-height: 1.2; }
+    .maker-text { margin-top: .6rem; color: var(--ink-soft); max-width: 46rem; font-size: 1.05rem; }
+    .maker-links { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.25rem; }
+    @media (max-width: 560px) { .maker-card { grid-template-columns: 1fr; } }
+
     .site-footer { border-top: 1px solid var(--rule); padding-block: 2.5rem; font-size: .925rem; color: var(--ink-soft); }
     .site-footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1.5rem; }
     .site-footer ul { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; }
@@ -309,9 +323,6 @@
       .hero .wrap { grid-template-columns: 1fr; }
       .hero h1 { max-width: 16ch; }
       .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .trust ul { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .trust li:nth-child(4) { border-left: 0; }
-      .trust li:nth-child(n + 4) { border-top: 1px solid var(--rule); }
       .output { grid-template-columns: 1fr; }
       .formats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .format, .format:nth-child(n + 4) { grid-column: auto; }
@@ -329,15 +340,13 @@
       .nav .btn { margin-top: .5rem; }
       .tiles { grid-template-columns: 1fr; }
       .tile.wide { grid-column: auto; }
-      .privacy, .install { grid-template-columns: minmax(0, 1fr); }
+      .install, .privacy-band .wrap, .privacy-points { grid-template-columns: minmax(0, 1fr); }
     }
     @media (max-width: 560px) {
       .steps, .formats { grid-template-columns: 1fr; }
       .format:last-child { grid-column: auto; }
-      .trust ul { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .trust li { border-left: 0; border-top: 1px solid var(--rule); }
-      .trust li:nth-child(even) { border-left: 1px solid var(--rule); }
-      .trust li:nth-child(-n + 2) { border-top: 0; }
+      .trust li { padding: .9rem .4rem; }
+      .trust strong { font-size: 1rem; }
       .hero .actions .btn { flex: 1 1 100%; }
       .walk-chapter { font-size: .7rem; }
       .walk-caption { font-size: .72rem; }
@@ -450,11 +459,25 @@
     <section class="trust" aria-label="At a glance">
       <ul class="wrap" role="list">
         <li><strong><span class="stars" aria-hidden="true">★</span> 4.7 / 5</strong><span>Chrome Web Store rating</span></li>
-        <li><strong>1.1.8</strong><span>Updated October 2026</span></li>
-        <li><strong>443</strong><span>Automated tests</span></li>
         <li><strong>0</strong><span>Servers your data touches</span></li>
         <li><strong>MIT</strong><span>Open source</span></li>
       </ul>
+    </section>
+
+    <section class="privacy-band" id="privacy" aria-labelledby="privacy-title">
+      <div class="wrap">
+        <div>
+          <span class="badge" aria-hidden="true"><svg class="icon"><use href="#i-shield"/></svg></span>
+          <h2 id="privacy-title">Your recordings stay on your machine</h2>
+          <p class="lead">Test environments are full of real accounts and real data. None of it leaves your browser. <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/PRIVACY_POLICY.md">Privacy policy</a></p>
+        </div>
+        <ul class="privacy-points" role="list">
+          <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><div><strong>Stored locally</strong><span>Sessions and screenshots live in Chrome on your computer. Nothing is uploaded, no analytics.</span></div></li>
+          <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><div><strong>Masked as you record</strong><span>Passwords, card numbers, SSNs and tokens are hidden before they're saved.</span></div></li>
+          <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><div><strong>Audited</strong><span>Every session has a privacy audit listing what was masked.</span></div></li>
+          <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><div><strong>No remote code</strong><span>The Word and PDF libraries ship inside the extension.</span></div></li>
+        </ul>
+      </div>
     </section>
 
     <section class="section" id="features" aria-labelledby="features-title">
@@ -615,28 +638,6 @@
       </div>
     </section>
 
-    <section class="section" id="privacy" aria-labelledby="privacy-title">
-      <div class="wrap privacy">
-        <div>
-          <div class="section-head">
-            <h2 id="privacy-title">Your recordings stay on your machine</h2>
-            <p>Test environments are full of real accounts and real data. TestSnapper is built so none of it leaves your browser.</p>
-          </div>
-          <ul class="checks" role="list">
-            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Sessions and screenshots are stored locally in Chrome. Nothing is uploaded and there is no analytics.</span></li>
-            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Sensitive values are masked as they're recorded, not at export time.</span></li>
-            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Every session has a privacy audit listing what was masked.</span></li>
-            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>No remote code: the Word and PDF libraries ship inside the extension.</span></li>
-          </ul>
-          <p style="margin-top:1.25rem"><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/PRIVACY_POLICY.md">Read the privacy policy</a></p>
-        </div>
-        <figure class="privacy-shot">
-          <img src="img/walk-08-privacy.png" alt="Privacy Audit Report: one value masked before saving, the Password field, stored as dots" width="1200" height="750" loading="lazy">
-          <figcaption>The privacy audit from the walkthrough's recording.</figcaption>
-        </figure>
-      </div>
-    </section>
-
     <section class="section" id="install" aria-labelledby="install-title">
       <div class="wrap">
         <div class="section-head">
@@ -706,16 +707,20 @@ npm run build</code></pre>
       </div>
     </section>
 
-    <section class="section" id="about" aria-labelledby="about-title">
+    <section class="section maker" id="about" aria-labelledby="about-title">
       <div class="wrap">
-        <div class="about">
-          <span class="about-mark" aria-hidden="true">NS</span>
+        <div class="maker-card">
+          <span class="maker-photo maker-initials" aria-hidden="true">NS</span>
           <div>
+            <p class="maker-kicker">The maker</p>
             <h2 id="about-title">Made by Nataraaj Shanmugam</h2>
-            <p>I build QA tooling. TestSnapper started as a way to stop retyping test steps after exploratory sessions. Bug reports and pull requests are welcome.</p>
-            <div class="links">
-              <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/issues">Report an issue</a>
-              <a href="https://github.com/Nataraaj-Shanmugam">GitHub profile</a>
+            <p class="maker-text">I build QA tooling. TestSnapper started as a way to stop retyping test steps after exploratory sessions. Bug reports, ideas and pull requests are welcome.</p>
+            <div class="maker-links">
+              <a class="btn btn-primary" href="https://github.com/Nataraaj-Shanmugam">
+                <svg class="icon" aria-hidden="true"><use href="#i-github"/></svg>
+                Follow on GitHub
+              </a>
+              <a class="btn btn-quiet" href="https://github.com/Nataraaj-Shanmugam/TestSnapper/issues">Report an issue</a>
             </div>
           </div>
         </div>
