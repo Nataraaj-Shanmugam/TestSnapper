@@ -1,53 +1,44 @@
-# TestSnapper Libraries
+# Bundled libraries
 
-This directory contains third-party libraries used by TestSnapper.
+Third-party libraries used for Word and PDF export. They are committed to the
+repository and copied into `dist/libs/` by the build. This README is not
+included in the build.
 
-## Required Libraries
+| File | Library | Version | Used for | License | Notice |
+|---|---|---|---|---|---|
+| `docx.min.js` | [docx](https://github.com/dolanmiu/docx) | 7.8.2 | Word (.docx) export | MIT | `docx.min.js.LICENSE.txt` |
+| `jspdf.umd.min.js` | [jsPDF](https://github.com/parallax/jsPDF) | 2.5.1 | PDF export | MIT | `jspdf.umd.min.js.LICENSE.txt` |
 
-### 1. docx.min.js
-- **Purpose:** Generate .docx (Word) documents
-- **Version:** 7.8.2 or higher
-- **Source:** https://unpkg.com/docx@7.8.2/build/index.js
-- **License:** MIT
-- **Download:**
-  ```bash
-  curl -o libs/docx.min.js https://unpkg.com/docx@7.8.2/build/index.js
-  ```
+Both libraries are MIT licensed. The `*.LICENSE.txt` files carry their
+copyright and permission notices, which the license requires to ship with the
+code, so keep them next to the library files.
 
-### 2. html2pdf.bundle.min.js
-- **Purpose:** Generate PDF documents from HTML
-- **Version:** 0.10.1 or higher
-- **Source:** https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js
-- **License:** MIT
-- **Download:**
-  ```bash
-  curl -o libs/html2pdf.bundle.min.js https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js
-  ```
-
-## Installation
-
-Run the setup script to download all required libraries:
+## Verifying or restoring the files
 
 ```bash
 npm run setup-libs
 ```
 
-Or manually download using curl:
+`scripts/download-libs.js` checks each file against a pinned SHA-384 hash and
+downloads any file that is missing from its pinned source:
 
-```bash
-cd libs
-curl -o docx.min.js https://unpkg.com/docx@7.8.2/build/index.js
-curl -o html2pdf.bundle.min.js https://unpkg.com/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js
-```
+- `https://unpkg.com/docx@7.8.2/build/index.js` → `docx.min.js`
+- `https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js` → `jspdf.umd.min.js`
 
-## Loading Behavior
+The build (`webpack.config.js`) fails if either file is missing.
 
-Libraries are loaded **only** from the extension package via
-`chrome.runtime.getURL()`. There is no CDN fallback and no remote code path:
-Manifest V3 forbids remote hosted code, and both extension pages ship
-`script-src 'self'`. If a local library is missing, the affected export
-format fails cleanly rather than fetching anything.
+To upgrade a library, change its URL and hash in `scripts/download-libs.js`,
+run `npm run setup-libs`, and update the version and notice file here.
 
-## License Information
+## Line endings
 
-All libraries are used under their respective MIT licenses. See individual library documentation for details.
+`.gitattributes` marks `libs/*` as `-text` so Git never converts line endings.
+A CRLF conversion changes the bytes and breaks the hash check even though the
+code is unchanged.
+
+## Loading
+
+Libraries load only from the extension package via `chrome.runtime.getURL()`.
+There is no CDN fallback: Manifest V3 forbids remotely hosted code, and the
+extension pages use `script-src 'self'`. If a library is missing, that export
+format fails with an error instead of fetching anything.

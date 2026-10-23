@@ -3,6 +3,7 @@
 [![Version](https://img.shields.io/badge/version-1.1.8-blue.svg)](https://github.com/Nataraaj-Shanmugam/TestSnapper/releases)
 [![Chrome](https://img.shields.io/badge/chrome-105%2B-brightgreen.svg)](https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala)
 [![Manifest](https://img.shields.io/badge/manifest-v3-informational.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A Chrome extension that records what you do on a web page — clicks, typing, navigation and screenshots — and turns it into step-by-step test documentation you can export to Word, PDF, CSV, JSON or Markdown.
 
@@ -23,6 +24,7 @@ Each recorded step gets a human-readable field name, CSS and XPath selectors, an
 - [Troubleshooting](#troubleshooting)
 - [Version history](#version-history)
 - [Further documentation](#further-documentation)
+- [License](#license)
 
 ---
 
@@ -281,4 +283,11 @@ Storage uses split keys — `testsnapper_sessions`, `testsnapper_steps_{sessionI
 
 Bug reports and questions: [GitHub Issues](https://github.com/Nataraaj-Shanmugam/TestSnapper/issues).
 
-Third-party libraries: [docx](https://github.com/dolanmiu/docx) 7.8.2 and [jsPDF](https://github.com/parallax/jsPDF) 2.5.1, both MIT licensed.
+
+---
+
+## License
+
+TestSnapper is released under the [MIT License](LICENSE).
+
+It bundles [docx](https://github.com/dolanmiu/docx) 7.8.2 and [jsPDF](https://github.com/parallax/jsPDF) 2.5.1, both MIT licensed. Their notices are in `libs/*.LICENSE.txt`; see [libs/README.md](libs/README.md).
