@@ -1,1461 +1,1050 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description"
-        content="TestSnapper - Professional automated Test recording Chrome extension with high-quality screenshots and multi-format export. Built with modern web technologies.">
-    <meta name="keywords"
-        content="test automation, QA tools, Test recorder, screenshot capture, Test documentation, Chrome extension, Manifest V3">
-    <meta name="author" content="Nataraaj Shanmugam">
-    <meta property="og:title" content="TestSnapper - Automated Test Recording & Documentation">
-    <meta property="og:description"
-        content="Stop writing manual Test steps. Capture interactions, screenshots, and export professional documentation instantly.">
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://nataraaj-shanmugam.github.io/TestSnapper/">
-    <title>TestSnapper - Automated Test Recording & Documentation</title>
-
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            --primary: #0284c7;
-            --primary-dark: #0369a1;
-            --primary-light: #0ea5e9;
-            --secondary: #64748b;
-            --success: #10b981;
-            --accent: #06b6d4;
-            --bg-light: #f8fafc;
-            --bg-white: #ffffff;
-            --bg-dark: #0f172a;
-            --text-dark: #0f172a;
-            --text-muted: #64748b;
-            --border: #e2e8f0;
-            --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-            --shadow-lg: 0 20px 25px -5px rgb(0 0 0 / 0.1);
-            --shadow-xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
-            --gradient-primary: linear-gradient(135deg, #0284c7 0%, #0369a1 50%, #0c4a6e 100%);
-            --gradient-accent: linear-gradient(135deg, #06b6d4 0%, #0284c7 100%);
-        }
-
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            color: var(--text-dark);
-            background: var(--bg-light);
-            overflow-x: hidden;
-        }
-
-        /* Header */
-        header {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            padding: 1rem 0;
-            position: fixed;
-            width: 100%;
-            top: 0;
-            z-index: 1000;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-            transition: all 0.3s;
-        }
-
-        header.scrolled {
-            background: rgba(255, 255, 255, 0.98);
-            box-shadow: var(--shadow);
-        }
-
-        nav {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .logo {
-            font-size: 1.5rem;
-            font-weight: 800;
-            color: var(--primary);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            text-decoration: none;
-        }
-
-        .logo-icon {
-            width: 36px;
-            height: 36px;
-            background: var(--gradient-primary);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 1.25rem;
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 2rem;
-            list-style: none;
-            align-items: center;
-        }
-
-        .nav-links a {
-            color: var(--text-dark);
-            text-decoration: none;
-            font-weight: 500;
-            font-size: 0.95rem;
-            transition: color 0.2s;
-        }
-
-        .nav-links a:hover {
-            color: var(--primary);
-        }
-
-        .nav-cta {
-            background: var(--gradient-primary);
-            color: white !important;
-            padding: 0.5rem 1.25rem;
-            border-radius: 8px;
-            font-weight: 600 !important;
-            transition: transform 0.2s, box-shadow 0.2s !important;
-        }
-
-        .nav-cta:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
-        }
-
-        /* Hero Section */
-        .hero {
-            background: var(--gradient-primary);
-            color: white;
-            padding: 10rem 2rem 6rem;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-            opacity: 0.5;
-        }
-
-        .hero-content {
-            max-width: 1200px;
-            margin: 0 auto;
-            position: relative;
-            z-index: 1;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 4rem;
-            align-items: center;
-        }
-
-        .hero-text h1 {
-            font-size: 3.5rem;
-            font-weight: 800;
-            margin-bottom: 1.5rem;
-            line-height: 1.1;
-            letter-spacing: -0.02em;
-        }
-
-        .hero-text h1 span {
-            background: linear-gradient(135deg, #ffffff 0%, #bae6fd 100%);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-        }
-
-        .hero-text p {
-            font-size: 1.25rem;
-            margin-bottom: 2rem;
-            opacity: 0.95;
-            line-height: 1.7;
-        }
-
-        .hero-badges {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
-        }
-
-        .badge {
-            background: rgba(255, 255, 255, 0.2);
-            backdrop-filter: blur(10px);
-            padding: 0.5rem 1rem;
-            border-radius: 999px;
-            font-size: 0.875rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .cta-buttons {
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-        }
-
-        .btn {
-            padding: 1rem 2rem;
-            border-radius: 12px;
-            font-weight: 600;
-            text-decoration: none;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            border: none;
-            cursor: pointer;
-            font-size: 1rem;
-        }
-
-        .btn-primary {
-            background: white;
-            color: var(--primary-dark);
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-        }
-
-        .btn-secondary {
-            background: rgba(255, 255, 255, 0.15);
-            color: white;
-            border: 2px solid rgba(255, 255, 255, 0.3);
-            backdrop-filter: blur(10px);
-        }
-
-        .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.25);
-            border-color: rgba(255, 255, 255, 0.5);
-        }
-
-        .hero-visual {
-            position: relative;
-        }
-
-        .hero-mockup {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 16px;
-            padding: 2rem;
-            box-shadow: var(--shadow-xl);
-        }
-
-        .mockup-header {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 1.5rem;
-        }
-
-        .mockup-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-        }
-
-        .mockup-dot.red {
-            background: #ef4444;
-        }
-
-        .mockup-dot.yellow {
-            background: #f59e0b;
-        }
-
-        .mockup-dot.green {
-            background: #10b981;
-        }
-
-        .mockup-content {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 8px;
-            padding: 1.5rem;
-            color: var(--text-dark);
-        }
-
-        .mockup-step {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            padding: 0.75rem;
-            background: var(--bg-light);
-            border-radius: 8px;
-            margin-bottom: 0.75rem;
-            font-size: 0.875rem;
-        }
-
-        .mockup-step-num {
-            width: 24px;
-            height: 24px;
-            background: var(--primary);
-            color: white;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 0.75rem;
-        }
-
-        /* Stats Section */
-        .stats {
-            background: var(--bg-white);
-            padding: 3rem 2rem;
-            margin-top: -3rem;
-            position: relative;
-            z-index: 10;
-        }
-
-        .stats-container {
-            max-width: 1000px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 2rem;
-            background: white;
-            padding: 2.5rem;
-            border-radius: 16px;
-            box-shadow: var(--shadow-lg);
-        }
-
-        .stat-item {
-            text-align: center;
-        }
-
-        .stat-number {
-            font-size: 2.5rem;
-            font-weight: 800;
-            color: var(--primary);
-            line-height: 1;
-            margin-bottom: 0.5rem;
-        }
-
-        .stat-label {
-            color: var(--text-muted);
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
-
-        /* Container */
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 2rem;
-        }
-
-        /* Section */
-        section {
-            padding: 6rem 0;
-        }
-
-        .section-header {
-            text-align: center;
-            margin-bottom: 4rem;
-        }
-
-        .section-label {
-            display: inline-block;
-            background: linear-gradient(135deg, rgba(2, 132, 199, 0.1), rgba(6, 182, 212, 0.1));
-            color: var(--primary);
-            padding: 0.5rem 1rem;
-            border-radius: 999px;
-            font-size: 0.875rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-        }
-
-        .section-header h2 {
-            font-size: 2.75rem;
-            font-weight: 800;
-            margin-bottom: 1rem;
-            color: var(--text-dark);
-            letter-spacing: -0.02em;
-        }
-
-        .section-header p {
-            font-size: 1.125rem;
-            color: var(--text-muted);
-            max-width: 600px;
-            margin: 0 auto;
-        }
-
-        /* Features Grid */
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 2rem;
-        }
-
-        .feature-card {
-            background: var(--bg-white);
-            padding: 2rem;
-            border-radius: 16px;
-            box-shadow: var(--shadow);
-            transition: all 0.3s ease;
-            border: 1px solid transparent;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .feature-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: var(--gradient-accent);
-            transform: scaleX(0);
-            transition: transform 0.3s;
-        }
-
-        .feature-card:hover {
-            transform: translateY(-8px);
-            box-shadow: var(--shadow-xl);
-            border-color: rgba(2, 132, 199, 0.1);
-        }
-
-        .feature-card:hover::before {
-            transform: scaleX(1);
-        }
-
-        .feature-icon {
-            width: 56px;
-            height: 56px;
-            background: linear-gradient(135deg, rgba(2, 132, 199, 0.1), rgba(6, 182, 212, 0.1));
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .feature-card h3 {
-            font-size: 1.25rem;
-            font-weight: 700;
-            margin-bottom: 0.75rem;
-            color: var(--text-dark);
-        }
-
-        .feature-card p {
-            color: var(--text-muted);
-            line-height: 1.7;
-            margin-bottom: 1rem;
-        }
-
-        .feature-card ul {
-            list-style: none;
-            padding: 0;
-        }
-
-        .feature-card li {
-            color: var(--text-muted);
-            padding: 0.375rem 0;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.9rem;
-        }
-
-        .feature-card li::before {
-            content: '✓';
-            color: var(--success);
-            font-weight: 700;
-        }
-
-        /* How It Works */
-        .workflow {
-            background: var(--bg-white);
-        }
-
-        .workflow-steps {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 2rem;
-            position: relative;
-        }
-
-        .workflow-steps::before {
-            content: '';
-            position: absolute;
-            top: 40px;
-            left: 60px;
-            right: 60px;
-            height: 2px;
-            background: linear-gradient(90deg, var(--primary), var(--accent));
-            z-index: 0;
-        }
-
-        .workflow-step {
-            text-align: center;
-            position: relative;
-            z-index: 1;
-        }
-
-        .step-number {
-            width: 80px;
-            height: 80px;
-            background: var(--gradient-primary);
-            color: white;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.75rem;
-            font-weight: 800;
-            margin: 0 auto 1.5rem;
-            box-shadow: 0 10px 30px rgba(2, 132, 199, 0.3);
-        }
-
-        .workflow-step h3 {
-            font-size: 1.125rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
-        }
-
-        .workflow-step p {
-            color: var(--text-muted);
-            font-size: 0.95rem;
-        }
-
-        /* Export Formats */
-        .export-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 1.5rem;
-        }
-
-        .export-card {
-            background: var(--bg-white);
-            padding: 2rem;
-            border-radius: 12px;
-            text-align: center;
-            border: 2px solid var(--border);
-            transition: all 0.3s;
-        }
-
-        .export-card:hover {
-            border-color: var(--primary);
-            transform: translateY(-4px);
-            box-shadow: var(--shadow-lg);
-        }
-
-        .export-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-        }
-
-        .export-card h4 {
-            font-weight: 700;
-            font-size: 1.125rem;
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
-        }
-
-        .export-card p {
-            font-size: 0.875rem;
-            color: var(--text-muted);
-        }
-
-        /* Tech Stack */
-        .tech-section {
-            background: var(--bg-dark);
-            color: white;
-        }
-
-        .tech-section .section-header h2 {
-            color: white;
-        }
-
-        .tech-section .section-header p {
-            color: rgba(255, 255, 255, 0.7);
-        }
-
-        .tech-grid {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 1.5rem;
-        }
-
-        .tech-item {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 1.5rem;
-            border-radius: 12px;
-            text-align: center;
-            transition: all 0.3s;
-        }
-
-        .tech-item:hover {
-            background: rgba(255, 255, 255, 0.1);
-            transform: translateY(-4px);
-        }
-
-        .tech-item-icon {
-            font-size: 2rem;
-            margin-bottom: 0.75rem;
-        }
-
-        .tech-item h4 {
-            font-weight: 600;
-            font-size: 0.95rem;
-            margin-bottom: 0.25rem;
-        }
-
-        .tech-item p {
-            font-size: 0.75rem;
-            color: rgba(255, 255, 255, 0.6);
-        }
-
-        /* Installation */
-        .install-card {
-            background: var(--bg-white);
-            border-radius: 16px;
-            box-shadow: var(--shadow-lg);
-            overflow: hidden;
-            display: grid;
-            grid-template-columns: 1fr 1px 1fr;
-            align-items: stretch;
-        }
-
-        .install-main {
-            padding: 3rem;
-        }
-
-        .install-main h3 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 1.5rem;
-            color: var(--primary);
-        }
-
-        .install-main ol {
-            padding-left: 1.5rem;
-        }
-
-        .install-main li {
-            margin-bottom: 1rem;
-            font-size: 1rem;
-            color: var(--text-dark);
-        }
-
-        .install-main code {
-            background: var(--bg-light);
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            font-family: 'Courier New', monospace;
-            color: var(--primary);
-            font-size: 0.875rem;
-        }
-
-        .install-divider {
-            width: 1px;
-            background: var(--border);
-            margin: 2rem 0;
-            height: auto;
-        }
-
-        /* About Creator */
-        .about-section {
-            background: linear-gradient(135deg, var(--bg-light) 0%, white 100%);
-        }
-
-        .about-card {
-            background: var(--bg-white);
-            border-radius: 16px;
-            box-shadow: var(--shadow-lg);
-            padding: 3rem;
-            display: grid;
-            grid-template-columns: auto 1fr;
-            gap: 3rem;
-            align-items: center;
-        }
-
-        .about-avatar {
-            width: 150px;
-            height: 150px;
-            background: var(--gradient-primary);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 4rem;
-            color: white;
-            box-shadow: 0 10px 40px rgba(2, 132, 199, 0.3);
-        }
-
-        .about-content h3 {
-            font-size: 1.75rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-
-        .about-title {
-            color: var(--primary);
-            font-weight: 600;
-            margin-bottom: 1rem;
-        }
-
-        .about-content p {
-            color: var(--text-muted);
-            line-height: 1.8;
-            margin-bottom: 1.5rem;
-        }
-
-        .about-links {
-            display: flex;
-            gap: 1rem;
-        }
-
-        .about-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            transition: all 0.2s;
-        }
-
-        .about-link.primary {
-            background: var(--gradient-primary);
-            color: white;
-        }
-
-        .about-link.secondary {
-            background: var(--bg-light);
-            color: var(--text-dark);
-            border: 1px solid var(--border);
-        }
-
-        .about-link:hover {
-            transform: translateY(-2px);
-        }
-
-        /* CTA Section */
-        .cta-section {
-            background: var(--gradient-primary);
-            color: white;
-            text-align: center;
-            padding: 5rem 2rem;
-        }
-
-        .cta-section h2 {
-            font-size: 2.5rem;
-            font-weight: 800;
-            margin-bottom: 1rem;
-        }
-
-        .cta-section p {
-            font-size: 1.25rem;
-            opacity: 0.9;
-            margin-bottom: 2rem;
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        /* Footer */
-        footer {
-            background: var(--bg-dark);
-            color: white;
-            padding: 4rem 0 2rem;
-        }
-
-        .footer-content {
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr;
-            gap: 3rem;
-            margin-bottom: 3rem;
-        }
-
-        .footer-brand p {
-            color: rgba(255, 255, 255, 0.7);
-            margin-top: 1rem;
-            line-height: 1.7;
-        }
-
-        .footer-section h4 {
-            margin-bottom: 1.5rem;
-            font-size: 1rem;
-            font-weight: 700;
-        }
-
-        .footer-section ul {
-            list-style: none;
-        }
-
-        .footer-section a {
-            color: rgba(255, 255, 255, 0.7);
-            text-decoration: none;
-            display: block;
-            padding: 0.375rem 0;
-            transition: color 0.2s;
-            font-size: 0.95rem;
-        }
-
-        .footer-section a:hover {
-            color: white;
-        }
-
-        .footer-bottom {
-            text-align: center;
-            padding-top: 2rem;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 0.875rem;
-        }
-
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .hero-content {
-                grid-template-columns: 1fr;
-                text-align: center;
-            }
-
-            .hero-visual {
-                display: none;
-            }
-
-            .features-grid,
-            .workflow-steps,
-            .export-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .stats-container {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .tech-grid {
-                grid-template-columns: repeat(3, 1fr);
-            }
-
-            .install-card {
-                grid-template-columns: 1fr;
-            }
-
-            .install-divider {
-                width: 100%;
-                height: 1px;
-                margin: 0;
-            }
-
-            .install-alt {
-                border-left: none;
-                border-top: 1px solid var(--border);
-            }
-
-            .footer-content {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
-        @media (max-width: 768px) {
-            .nav-links {
-                display: none;
-            }
-
-            .hero-text h1 {
-                font-size: 2.5rem;
-            }
-
-            .features-grid,
-            .workflow-steps,
-            .export-grid,
-            .tech-grid,
-            .stats-container {
-                grid-template-columns: 1fr;
-            }
-
-            .workflow-steps::before {
-                display: none;
-            }
-
-            .about-card {
-                grid-template-columns: 1fr;
-                text-align: center;
-            }
-
-            .about-links {
-                justify-content: center;
-            }
-
-            .footer-content {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        /* Animations */
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .animate-in {
-            animation: fadeInUp 0.6s ease-out forwards;
-        }
-
-        @keyframes float {
-
-            0%,
-            100% {
-                transform: translateY(0);
-            }
-
-            50% {
-                transform: translateY(-10px);
-            }
-        }
-
-        .float-animation {
-            animation: float 3s ease-in-out infinite;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TestSnapper: turn clicks into test steps</title>
+  <meta name="description" content="TestSnapper is a free Chrome extension that records your clicks and typing as test steps with field names, selectors and screenshots, then exports them to Word, PDF, CSV, JSON or Markdown. Everything stays in your browser.">
+  <meta name="author" content="Nataraaj Shanmugam">
+  <meta name="theme-color" content="#14263B">
+  <meta property="og:title" content="TestSnapper: turn clicks into test steps">
+  <meta property="og:description" content="Record a test once in Chrome. Get numbered steps, field names, selectors and screenshots, ready to export.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://nataraaj-shanmugam.github.io/TestSnapper/">
+  <meta property="og:image" content="https://nataraaj-shanmugam.github.io/TestSnapper/icon.png">
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --ink: #14263B;
+      --ink-soft: #46586C;
+      --steel: #3A6699;
+      --steel-strong: #2D4F78;
+      --steel-wash: #E8EFF7;
+      --paper: #F6F8FA;
+      --surface: #FFFFFF;
+      --rule: #D9E1EA;
+      --record: #C8281C;
+      --ok: #157F3D;
+      --ok-wash: #E3F4E8;
+      --mask: #8A5A00;
+      --mask-wash: #FCF1DC;
+      --focus: #3A6699;
+      --shadow: 0 1px 2px rgb(20 38 59 / .06), 0 12px 32px -12px rgb(20 38 59 / .18);
+
+      --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+      --step--1: .875rem;
+      --step-0: 1rem;
+      --step-1: 1.25rem;
+      --step-2: 1.625rem;
+      --step-3: clamp(2rem, 1.4rem + 2.4vw, 3.25rem);
+
+      --gutter: clamp(1rem, 4vw, 2.5rem);
+      --max: 72rem;
+      color-scheme: light;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #E5ECF4;
+        --ink-soft: #A3B3C5;
+        --steel: #8AB6DB;
+        --steel-strong: #B4D2EA;
+        --steel-wash: #1B2D44;
+        --paper: #0E1824;
+        --surface: #152233;
+        --rule: #26384E;
+        --record: #FF6B5E;
+        --ok: #5FD08A;
+        --ok-wash: #143424;
+        --mask: #F2C46B;
+        --mask-wash: #3A2D12;
+        --focus: #8AB6DB;
+        --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 16px 40px -16px rgb(0 0 0 / .6);
+        color-scheme: dark;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 5rem; }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+    body {
+      margin: 0;
+      font: 400 var(--step-0)/1.6 var(--sans);
+      color: var(--ink);
+      background: var(--paper);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    h1, h2, h3, p, ol, ul, dl, dd { margin: 0; }
+    ul[role="list"], ol[role="list"] { list-style: none; padding: 0; }
+    img, svg { display: block; }
+    a { color: var(--steel); text-underline-offset: .18em; }
+    a:hover { color: var(--steel-strong); }
+    code, kbd { font-family: var(--mono); font-size: .9em; }
+    kbd {
+      padding: .05em .4em;
+      border: 1px solid var(--rule);
+      border-bottom-width: 2px;
+      border-radius: 4px;
+      background: var(--surface);
+      white-space: nowrap;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 3px;
+      border-radius: 4px;
+    }
+
+    .skip {
+      position: absolute;
+      left: 1rem;
+      top: -4rem;
+      padding: .6rem 1rem;
+      background: var(--ink);
+      color: var(--paper);
+      border-radius: 6px;
+      z-index: 100;
+    }
+    .skip:focus { top: 1rem; }
+
+    .wrap {
+      width: min(100% - 2 * var(--gutter), var(--max));
+      margin-inline: auto;
+    }
+
+    .icon { width: 1.25rem; height: 1.25rem; flex: none; }
+
+    /* ---------- Header ---------- */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: color-mix(in srgb, var(--paper) 88%, transparent);
+      backdrop-filter: saturate(1.4) blur(10px);
+      border-bottom: 1px solid var(--rule);
+    }
+    .site-header .wrap {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      min-height: 4rem;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: .6rem;
+      font-weight: 700;
+      font-size: 1.125rem;
+      color: var(--ink);
+      text-decoration: none;
+      letter-spacing: -.01em;
+    }
+    .brand img { width: 2rem; height: 2rem; }
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 1.75rem;
+      margin-left: auto;
+    }
+    .nav a {
+      color: var(--ink-soft);
+      text-decoration: none;
+      font-weight: 500;
+      font-size: .95rem;
+    }
+    .nav a:hover { color: var(--ink); }
+    .nav-toggle {
+      display: none;
+      margin-left: auto;
+      align-items: center;
+      justify-content: center;
+      width: 2.75rem;
+      height: 2.75rem;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    /* ---------- Buttons ---------- */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .55rem;
+      min-height: 2.75rem;
+      padding: .7rem 1.2rem;
+      border-radius: 8px;
+      font: 600 .975rem/1.2 var(--sans);
+      text-decoration: none;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: background-color .15s, border-color .15s, color .15s;
+    }
+    .btn-primary { background: var(--steel-strong); color: #fff; }
+    .btn-primary:hover { background: var(--ink); color: var(--paper); }
+    @media (prefers-color-scheme: dark) {
+      .btn-primary { background: var(--steel); color: #0E1824; }
+      .btn-primary:hover { background: var(--steel-strong); color: #0E1824; }
+    }
+    .btn-quiet { background: var(--surface); color: var(--ink); border-color: var(--rule); }
+    .btn-quiet:hover { border-color: var(--ink-soft); color: var(--ink); }
+    .nav .btn { color: #fff; padding: .5rem 1rem; min-height: 2.5rem; }
+    @media (prefers-color-scheme: dark) { .nav .btn { color: #0E1824; } }
+
+    /* ---------- Hero ---------- */
+    .hero { padding-block: clamp(3rem, 7vw, 6rem) clamp(3rem, 6vw, 5rem); }
+    .hero .wrap {
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      gap: clamp(2rem, 5vw, 4.5rem);
+      align-items: center;
+    }
+    .hero h1 {
+      font-size: var(--step-3);
+      line-height: 1.08;
+      font-weight: 700;
+      letter-spacing: -.025em;
+      max-width: 14ch;
+    }
+    .hero .lede {
+      margin-top: 1.25rem;
+      font-size: var(--step-1);
+      line-height: 1.5;
+      color: var(--ink-soft);
+      max-width: 34ch;
+    }
+    .hero .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem;
+      margin-top: 2rem;
+    }
+    .hero .fine {
+      margin-top: 1rem;
+      font-size: var(--step--1);
+      color: var(--ink-soft);
+    }
+
+    /* Demo: a page being tested on the left, the recorded test case on the right */
+    .demo {
+      position: relative;
+      margin: 0;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .demo-bar {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      padding: .6rem .9rem;
+      border-bottom: 1px solid var(--rule);
+      font-size: .8rem;
+      color: var(--ink-soft);
+    }
+    .demo-url {
+      flex: 1;
+      min-width: 0;
+      padding: .25rem .7rem;
+      border-radius: 999px;
+      background: var(--paper);
+      font-family: var(--mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .rec {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      font-weight: 600;
+      color: var(--record);
+    }
+    .rec::before {
+      content: "";
+      width: .55rem;
+      height: .55rem;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .demo[data-state="done"] .rec { color: var(--ok); }
+    .demo-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+    }
+    .demo-page {
+      padding: 1.25rem;
+      border-right: 1px solid var(--rule);
+      background: var(--paper);
+    }
+    .demo-page h2 {
+      font-size: .95rem;
+      font-weight: 600;
+      margin-bottom: .9rem;
+    }
+    .fake-field { margin-bottom: .75rem; }
+    .fake-field span {
+      display: block;
+      font-size: .75rem;
+      color: var(--ink-soft);
+      margin-bottom: .25rem;
+    }
+    .fake-input {
+      height: 2rem;
+      padding: 0 .6rem;
+      display: flex;
+      align-items: center;
+      border: 1px solid var(--rule);
+      border-radius: 6px;
+      background: var(--surface);
+      font-size: .8rem;
+      font-family: var(--mono);
+      overflow: hidden;
+      white-space: nowrap;
+      transition: border-color .2s;
+    }
+    .fake-input.is-active { border-color: var(--steel); }
+    .fake-button {
+      margin-top: .4rem;
+      height: 2rem;
+      border-radius: 6px;
+      background: var(--steel-strong);
+      color: #fff;
+      font-size: .8rem;
+      font-weight: 600;
+      display: grid;
+      place-items: center;
+      transition: transform .12s;
+    }
+    @media (prefers-color-scheme: dark) { .fake-button { background: var(--steel); color: #0E1824; } }
+    .fake-button.is-pressed { transform: scale(.97); }
+
+    .demo-steps { padding: 1rem 1.1rem 1.1rem; }
+    .demo-steps h3 {
+      display: flex;
+      justify-content: space-between;
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--ink-soft);
+      margin-bottom: .6rem;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 1.6rem 1fr;
+      gap: .25rem .6rem;
+      padding: .6rem 0;
+      border-top: 1px solid var(--rule);
+      font-size: .85rem;
+      line-height: 1.4;
+    }
+    .step:first-of-type { border-top: 0; }
+    .step-n {
+      grid-row: span 2;
+      width: 1.6rem;
+      height: 1.6rem;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: var(--steel-wash);
+      color: var(--steel-strong);
+      font-weight: 600;
+      font-size: .75rem;
+    }
+    .step-what strong { font-weight: 600; }
+    .step-sel {
+      font-family: var(--mono);
+      font-size: .72rem;
+      color: var(--ink-soft);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tag {
+      display: inline-block;
+      margin-left: .35rem;
+      padding: 0 .4rem;
+      border-radius: 4px;
+      font-size: .7rem;
+      font-weight: 600;
+      vertical-align: .1em;
+    }
+    .tag-mask { background: var(--mask-wash); color: var(--mask); }
+    .tag-shot { background: var(--ok-wash); color: var(--ok); }
+    .js .step { opacity: 0; transform: translateY(4px); transition: opacity .3s, transform .3s; }
+    .js .step.is-in { opacity: 1; transform: none; }
+    .replay {
+      margin-top: .6rem;
+      font: 500 .8rem var(--sans);
+      color: var(--steel);
+      background: none;
+      border: 0;
+      padding: .4rem 0;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+      visibility: hidden;
+    }
+    .demo[data-state="done"] .replay { visibility: visible; }
+    .replay .icon { width: 1rem; height: 1rem; }
+
+    /* ---------- Sections ---------- */
+    .section { padding-block: clamp(3.5rem, 8vw, 6rem); }
+    .section + .section { border-top: 1px solid var(--rule); }
+    .section-head { max-width: 40rem; margin-bottom: clamp(2rem, 4vw, 3rem); }
+    .section-head h2 {
+      font-size: var(--step-2);
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: -.015em;
+    }
+    .section-head p {
+      margin-top: .75rem;
+      color: var(--ink-soft);
+      font-size: 1.075rem;
+    }
+
+    /* Features: plain two-column list, icon + text, separated by rules */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: clamp(2rem, 5vw, 4rem);
+    }
+    .feature {
+      display: grid;
+      grid-template-columns: 2.5rem 1fr;
+      gap: 1rem;
+      padding-block: 1.5rem;
+      border-top: 1px solid var(--rule);
+    }
+    .feature-icon {
+      width: 2.5rem;
+      height: 2.5rem;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--steel-wash);
+      color: var(--steel-strong);
+    }
+    .feature h3 { font-size: 1.075rem; font-weight: 600; line-height: 1.35; }
+    .feature p { margin-top: .35rem; color: var(--ink-soft); max-width: 46ch; }
+
+    /* How it works: a real sequence, so it is numbered */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1.5rem;
+      counter-reset: step;
+    }
+    .steps li {
+      counter-increment: step;
+      padding-top: 1rem;
+      border-top: 2px solid var(--steel);
+    }
+    .steps li::before {
+      content: counter(step);
+      display: block;
+      font-weight: 700;
+      font-size: 1.5rem;
+      color: var(--steel);
+      line-height: 1;
+      margin-bottom: .75rem;
+    }
+    .steps h3 { font-size: 1.075rem; font-weight: 600; }
+    .steps p { margin-top: .35rem; color: var(--ink-soft); font-size: .975rem; }
+
+    /* Export formats: a definition table */
+    .formats {
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .format {
+      display: grid;
+      grid-template-columns: 2.5rem 9rem 1fr;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+      border-top: 1px solid var(--rule);
+    }
+    .format:first-child { border-top: 0; }
+    .format dt { font-weight: 600; }
+    .format dt small { display: block; font-weight: 400; font-family: var(--mono); font-size: .8rem; color: var(--ink-soft); }
+    .format dd { color: var(--ink-soft); }
+    .format .icon { color: var(--steel); width: 1.5rem; height: 1.5rem; }
+
+    /* Privacy */
+    .privacy {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: clamp(2rem, 5vw, 4rem);
+      align-items: start;
+    }
+    .checks li {
+      display: flex;
+      gap: .75rem;
+      padding-block: .7rem;
+      border-top: 1px solid var(--rule);
+    }
+    .checks li:first-child { border-top: 0; padding-top: 0; }
+    .checks .icon { color: var(--ok); margin-top: .2rem; }
+    .redact-sample {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+      padding: 1.25rem;
+      font-family: var(--mono);
+      font-size: .85rem;
+    }
+    .redact-sample p { color: var(--ink-soft); font-family: var(--sans); font-size: .875rem; margin-bottom: .75rem; }
+    .redact-row {
+      display: grid;
+      grid-template-columns: 9rem 1fr;
+      gap: 1rem;
+      padding-block: .5rem;
+      border-top: 1px solid var(--rule);
+    }
+    .redact-row span:first-child { color: var(--ink-soft); font-family: var(--sans); }
+
+    /* Install */
+    .install {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1.5rem;
+    }
+    .install-path {
+      padding: 1.5rem;
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+    .install-path h3 { font-size: 1.125rem; font-weight: 600; }
+    .install-path > p { margin-top: .35rem; color: var(--ink-soft); }
+    .install-path ol { margin-top: 1rem; padding-left: 1.25rem; }
+    .install-path li { padding-block: .25rem; }
+    .install-path li::marker { color: var(--ink-soft); }
+    .install-path .btn { margin-top: 1.25rem; }
+    pre {
+      margin: 1rem 0 0;
+      padding: 1rem;
+      border-radius: 8px;
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      overflow-x: auto;
+      font: .85rem/1.6 var(--mono);
+    }
+
+    /* Shortcuts strip */
+    .shortcuts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem 2rem;
+      margin-top: 2rem;
+      color: var(--ink-soft);
+      font-size: .95rem;
+    }
+
+    /* About */
+    .about {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1.5rem;
+      align-items: start;
+      max-width: 44rem;
+    }
+    .about-mark {
+      width: 3.5rem;
+      height: 3.5rem;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--steel-wash);
+      color: var(--steel-strong);
+      font-weight: 700;
+    }
+    .about h2 { font-size: 1.125rem; font-weight: 600; }
+    .about p { margin-top: .5rem; color: var(--ink-soft); }
+    .about .links { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin-top: .75rem; }
+
+    /* Footer */
+    .site-footer {
+      border-top: 1px solid var(--rule);
+      padding-block: 2.5rem;
+      font-size: .925rem;
+      color: var(--ink-soft);
+    }
+    .site-footer .wrap {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 1.5rem;
+    }
+    .site-footer ul { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; }
+    .site-footer a { color: var(--ink-soft); }
+    .site-footer a:hover { color: var(--ink); }
+
+    /* ---------- Responsive ---------- */
+    @media (max-width: 960px) {
+      .hero .wrap { grid-template-columns: 1fr; }
+      .hero h1 { max-width: 18ch; }
+      .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 2rem; }
+    }
+    @media (max-width: 760px) {
+      .nav-toggle { display: inline-flex; }
+      .nav {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+        padding: .5rem var(--gutter) 1rem;
+        background: var(--paper);
+        border-bottom: 1px solid var(--rule);
+      }
+      .nav.is-open { display: flex; }
+      .nav a { padding: .8rem 0; border-top: 1px solid var(--rule); }
+      .nav a:first-child { border-top: 0; }
+      .nav .btn { margin-top: .5rem; border-top: 0; }
+      .features, .privacy, .install { grid-template-columns: 1fr; }
+      .format { grid-template-columns: 2rem 1fr; }
+      .format dd { grid-column: 2; }
+    }
+    @media (max-width: 560px) {
+      .demo-body { grid-template-columns: 1fr; }
+      .demo-page { border-right: 0; border-bottom: 1px solid var(--rule); }
+      .steps { grid-template-columns: 1fr; }
+      .redact-row { grid-template-columns: 1fr; gap: .1rem; }
+      .hero .actions .btn { flex: 1 1 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: 0s !important; }
+    }
+  </style>
 </head>
 
 <body>
-    <!-- Header -->
-    <header id="header">
-        <nav>
-            <a href="#" class="logo">
-                <span class="logo-icon">📸</span>
-                TestSnapper
+  <!-- Icon sprite (stroke icons, 24px grid) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-record" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></symbol>
+      <symbol id="i-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.25" fill="currentColor"/></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="2"/></symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="4"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
+      <symbol id="i-network" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h11M4 7l3-3M4 7l3 3"/><path d="M20 17H9M20 17l-3-3M20 17l-3 3"/></symbol>
+      <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v4h4M8.5 12h7M8.5 16h5"/></symbol>
+      <symbol id="i-pdf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v4h4"/><rect x="7.5" y="11" width="9" height="6" rx="1"/></symbol>
+      <symbol id="i-table" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 9.5h18M3 15h18M9.5 4v16"/></symbol>
+      <symbol id="i-braces" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4c-2 0-3 1-3 3v2.5c0 1-.7 2-2 2.5 1.3.5 2 1.5 2 2.5V17c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2.5c0 1 .7 2 2 2.5-1.3.5-2 1.5-2 2.5V17c0 2-1 3-3 3"/></symbol>
+      <symbol id="i-markdown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M6 15V9l2.5 3L11 9v6M15.5 9v6M13.5 13l2 2 2-2"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-chrome" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path d="M12 8.5h8.5M8.97 13.75L4.7 6.4M15.03 13.75L10.8 21"/></symbol>
+      <symbol id="i-github" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.56 9.56 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/></symbol>
+    </defs>
+  </svg>
+
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="#top" aria-label="TestSnapper home">
+        <img src="icon.png" alt="" width="32" height="32">
+        TestSnapper
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu">
+        <svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg>
+      </button>
+      <nav class="nav" id="site-nav" aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="#export">Export</a>
+        <a href="#privacy">Privacy</a>
+        <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper">GitHub</a>
+        <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala">Add to Chrome</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="wrap">
+        <div>
+          <h1 id="hero-title">Click through your test once. Get the test case.</h1>
+          <p class="lede">TestSnapper records what you do in Chrome as numbered test steps, with field names, selectors and screenshots. Review them, then export to Word, PDF, CSV, JSON or Markdown.</p>
+          <div class="actions">
+            <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala">
+              <svg class="icon" aria-hidden="true"><use href="#i-chrome"/></svg>
+              Add to Chrome, it's free
             </a>
-            <ul class="nav-links">
-                <li><a href="#features">Features</a></li>
-                <li><a href="#how-it-works">How It Works</a></li>
-                <li><a href="#tech-stack">Tech Stack</a></li>
-                <li><a href="#about">About</a></li>
-                <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper" target="_blank">GitHub</a></li>
-                <li><a href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
-                        target="_blank" class="nav-cta">Install Free</a></li>
-            </ul>
-        </nav>
-    </header>
-
-    <!-- Hero Section -->
-    <section class="hero">
-        <div class="hero-content">
-            <div class="hero-text animate-in">
-                <div class="hero-badges">
-                    <span class="badge">✨ Chrome Extension</span>
-                    <span class="badge">🚀 Open Source</span>
-                    <span class="badge">🔒 Privacy First</span>
-                </div>
-                <h1>Automate Your <span>Test Documentation</span></h1>
-                <p>Stop writing manual Test steps. TestSnapper captures every interaction, takes high-quality
-                    screenshots, and exports professional documentation in seconds.</p>
-                <div class="cta-buttons">
-                    <a href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
-                        class="btn btn-primary" target="_blank">
-                        🛒 Install from Chrome Web Store
-                    </a>
-                    <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper" class="btn btn-secondary"
-                        target="_blank">
-                        ⭐ Star on GitHub
-                    </a>
-                </div>
-            </div>
-            <div class="hero-visual float-animation">
-                <div class="hero-mockup">
-                    <div class="mockup-header">
-                        <span class="mockup-dot red"></span>
-                        <span class="mockup-dot yellow"></span>
-                        <span class="mockup-dot green"></span>
-                    </div>
-                    <div class="mockup-content">
-                        <div class="mockup-step">
-                            <span class="mockup-step-num">1</span>
-                            Click on "Login" button
-                        </div>
-                        <div class="mockup-step">
-                            <span class="mockup-step-num">2</span>
-                            Enter username "john@example.com"
-                        </div>
-                        <div class="mockup-step">
-                            <span class="mockup-step-num">3</span>
-                            Enter password "••••••••"
-                        </div>
-                        <div class="mockup-step">
-                            <span class="mockup-step-num">4</span>
-                            Click "Submit" button
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <a class="btn btn-quiet" href="https://github.com/Nataraaj-Shanmugam/TestSnapper">
+              <svg class="icon" aria-hidden="true"><use href="#i-github"/></svg>
+              View source on GitHub
+            </a>
+          </div>
+          <p class="fine">Open source under MIT. Runs entirely in your browser. Chrome 105 or later.</p>
         </div>
+
+        <figure class="demo" id="demo" data-state="done" aria-label="Example: signing in to a test site produces four recorded steps">
+          <div class="demo-bar" aria-hidden="true">
+            <span class="rec" id="demo-status">Recorded</span>
+            <span class="demo-url">staging.example.com/sign-in</span>
+          </div>
+          <div class="demo-body">
+            <div class="demo-page" aria-hidden="true">
+              <h2>Sign in</h2>
+              <div class="fake-field">
+                <span>Username</span>
+                <div class="fake-input" id="f-email">qa_lead</div>
+              </div>
+              <div class="fake-field">
+                <span>Password</span>
+                <div class="fake-input" id="f-pass">••••••••••</div>
+              </div>
+              <div class="fake-button" id="f-btn">Sign in</div>
+            </div>
+            <div class="demo-steps">
+              <h3><span>Recorded steps</span><span id="demo-count">4 steps</span></h3>
+              <ol role="list">
+                <li class="step">
+                  <span class="step-n" aria-hidden="true">1</span>
+                  <span class="step-what">Type <strong>qa_lead</strong> into <strong>Username</strong></span>
+                  <span class="step-sel">#username</span>
+                </li>
+                <li class="step">
+                  <span class="step-n" aria-hidden="true">2</span>
+                  <span class="step-what">Type into <strong>Password</strong><span class="tag tag-mask">masked</span></span>
+                  <span class="step-sel">input[name="password"]</span>
+                </li>
+                <li class="step">
+                  <span class="step-n" aria-hidden="true">3</span>
+                  <span class="step-what">Click <strong>Sign in</strong></span>
+                  <span class="step-sel">[data-testid="sign-in-submit"]</span>
+                </li>
+                <li class="step">
+                  <span class="step-n" aria-hidden="true">4</span>
+                  <span class="step-what">Navigate to <strong>/dashboard</strong><span class="tag tag-shot">screenshot</span></span>
+                  <span class="step-sel">staging.example.com/dashboard</span>
+                </li>
+              </ol>
+              <button class="replay" type="button" id="demo-replay">
+                <svg class="icon" aria-hidden="true"><use href="#i-replay"/></svg>
+                Replay example
+              </button>
+            </div>
+          </div>
+        </figure>
+      </div>
     </section>
 
-    <!-- Stats Section -->
-    <section class="stats">
-        <div class="stats-container">
-            <div class="stat-item">
-                <div class="stat-number">5K+</div>
-                <div class="stat-label">Lines of Code</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-number">10+</div>
-                <div class="stat-label">Core Modules</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-number">4</div>
-                <div class="stat-label">Export Formats</div>
-            </div>
-            <div class="stat-item">
-                <div class="stat-number">95%</div>
-                <div class="stat-label">Screenshot Quality</div>
-            </div>
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="features-title">Steps someone else can follow</h2>
+          <p>Manual test cases and bug reports take longer to write than to run. TestSnapper writes them while you run them.</p>
         </div>
+        <ul class="features" role="list">
+          <li class="feature">
+            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-record"/></svg></span>
+            <div>
+              <h3>Records every interaction</h3>
+              <p>Clicks, typing, dropdowns, checkboxes, form submits, key presses and page loads, in every frame. Pause and resume whenever you like.</p>
+            </div>
+          </li>
+          <li class="feature">
+            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg></span>
+            <div>
+              <h3>Names fields the way people do</h3>
+              <p>"Email" rather than <code>input#f-29a</code>. Names come from labels, ARIA, placeholders and nearby text. If none is found, you're asked.</p>
+            </div>
+          </li>
+          <li class="feature">
+            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-target"/></svg></span>
+            <div>
+              <h3>Stable selectors for automation</h3>
+              <p>Each step stores CSS and XPath selectors. IDs, test IDs, names and ARIA attributes are preferred, and auto-generated IDs are avoided.</p>
+            </div>
+          </li>
+          <li class="feature">
+            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg></span>
+            <div>
+              <h3>Screenshots as evidence</h3>
+              <p>Capture on demand with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, on every page change, or on a timer. Choose PNG or high-quality JPEG.</p>
+            </div>
+          </li>
+          <li class="feature">
+            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg></span>
+            <div>
+              <h3>Review before you share</h3>
+              <p>Rename, reorder, delete or add steps in card or table view, with undo. A privacy audit lists everything that was masked.</p>
+            </div>
+          </li>
+          <li class="feature">
+            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg></span>
+            <div>
+              <h3>Optional API call log</h3>
+              <p>Record the XHR and fetch requests a page makes, or only the failed ones. Method, URL and status only, never bodies.</p>
+            </div>
+          </li>
+        </ul>
+      </div>
     </section>
 
-    <!-- Features Section -->
-    <section id="features">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Features</span>
-                <h2>Built for Professional QA Teams</h2>
-                <p>Enterprise-grade Test recording with the simplicity of a Chrome extension</p>
-            </div>
-
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">🔴</div>
-                    <h3>Smart Auto-Recording</h3>
-                    <p>Automatically captures user interactions in real-time with intelligent event detection</p>
-                    <ul>
-                        <li>Clicks, typing, navigation</li>
-                        <li>Form submissions & dropdowns</li>
-                        <li>Checkbox & radio selections</li>
-                        <li>Pause/Resume/Stop controls</li>
-                    </ul>
-                </div>
-
-                <div class="feature-card">
-                    <div class="feature-icon">🎯</div>
-                    <h3>Smart Field Detection</h3>
-                    <p>Automatically extracts meaningful, human-readable field names from the DOM</p>
-                    <ul>
-                        <li>Label associations</li>
-                        <li>ARIA attributes</li>
-                        <li>Placeholder text</li>
-                        <li>Semantic HTML analysis</li>
-                    </ul>
-                </div>
-
-                <div class="feature-card">
-                    <div class="feature-icon">📸</div>
-                    <h3>High-Quality Screenshots</h3>
-                    <p>Crystal-clear documentation visuals with automated overlay cleanup</p>
-                    <ul>
-                        <li>95% JPEG quality capture</li>
-                        <li>1200px high-resolution export</li>
-                        <li>Auto-capture on every step</li>
-                        <li>Manual snap (Ctrl+Shift+S)</li>
-                    </ul>
-                </div>
-
-                <div class="feature-card">
-                    <div class="feature-icon">✏️</div>
-                    <h3>Professional Review UI</h3>
-                    <p>Modern card-based editor with drag-and-drop step management</p>
-                    <ul>
-                        <li>Drag & drop reordering</li>
-                        <li>Bulk delete operations</li>
-                        <li>Light/Dark theme toggle</li>
-                        <li>Insert steps anywhere</li>
-                    </ul>
-                </div>
-
-                <div class="feature-card">
-                    <div class="feature-icon">📤</div>
-                    <h3>Multi-Format Export</h3>
-                    <p>Export to your preferred format with professional formatting</p>
-                    <ul>
-                        <li>DOCX with full-width images</li>
-                        <li>JSON for automation tools</li>
-                        <li>CSV for spreadsheets</li>
-                        <li>TXT for simple notes</li>
-                    </ul>
-                </div>
-
-                <div class="feature-card">
-                    <div class="feature-icon">🔒</div>
-                    <h3>Privacy First</h3>
-                    <p>100% client-side processing with zero cloud dependencies</p>
-                    <ul>
-                        <li>Local IndexedDB storage</li>
-                        <li>No data leaves your browser</li>
-                        <li>Auto-redacts passwords</li>
-                        <li>Sensitive field masking</li>
-                    </ul>
-                </div>
-            </div>
+    <section class="section" id="how-it-works" aria-labelledby="how-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="how-title">How it works</h2>
         </div>
+        <ol class="steps" role="list">
+          <li>
+            <h3>Start recording</h3>
+            <p>Open the page you're testing, click the TestSnapper icon and press Start.</p>
+          </li>
+          <li>
+            <h3>Run your test</h3>
+            <p>Use the site as normal. Each action appears in the popup as you go.</p>
+          </li>
+          <li>
+            <h3>Review the steps</h3>
+            <p>Click View Steps to tidy names, add notes or insert manual checks.</p>
+          </li>
+          <li>
+            <h3>Export</h3>
+            <p>Pick a format and screenshot size. The file is named after the session.</p>
+          </li>
+        </ol>
+        <p class="shortcuts">
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> screenshot</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> pause or resume</span>
+          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> stop</span>
+          <span>Use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd> on a Mac.</span>
+        </p>
+      </div>
     </section>
 
-    <!-- How It Works -->
-    <section id="how-it-works" class="workflow">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Workflow</span>
-                <h2>How It Works</h2>
-                <p>Get started in 4 simple steps</p>
-            </div>
-
-            <div class="workflow-steps">
-                <div class="workflow-step">
-                    <div class="step-number">1</div>
-                    <h3>Start Recording</h3>
-                    <p>Click the extension icon and hit "Start Recording"</p>
-                </div>
-
-                <div class="workflow-step">
-                    <div class="step-number">2</div>
-                    <h3>Perform Actions</h3>
-                    <p>Navigate and interact with your web application</p>
-                </div>
-
-                <div class="workflow-step">
-                    <div class="step-number">3</div>
-                    <h3>Review & Edit</h3>
-                    <p>Open the Review UI to refine your documentation</p>
-                </div>
-
-                <div class="workflow-step">
-                    <div class="step-number">4</div>
-                    <h3>Export</h3>
-                    <p>Download in DOCX, JSON, CSV, or TXT format</p>
-                </div>
-            </div>
+    <section class="section" id="export" aria-labelledby="export-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="export-title">Five export formats</h2>
+          <p>One recording, whichever format your team or tool needs.</p>
         </div>
+        <dl class="formats">
+          <div class="format">
+            <svg class="icon" aria-hidden="true"><use href="#i-doc"/></svg>
+            <dt>Word <small>.docx</small></dt>
+            <dd>Session details and numbered steps with screenshots, ready to attach to a test plan.</dd>
+          </div>
+          <div class="format">
+            <svg class="icon" aria-hidden="true"><use href="#i-pdf"/></svg>
+            <dt>PDF <small>.pdf</small></dt>
+            <dd>The same layout on A4, for sign-off and audit evidence.</dd>
+          </div>
+          <div class="format">
+            <svg class="icon" aria-hidden="true"><use href="#i-table"/></svg>
+            <dt>CSV <small>.csv</small></dt>
+            <dd>Step, action, field name, value and URL, for spreadsheets and test-management imports.</dd>
+          </div>
+          <div class="format">
+            <svg class="icon" aria-hidden="true"><use href="#i-braces"/></svg>
+            <dt>JSON <small>.json</small></dt>
+            <dd>Full session and step data, including selectors, to build automated tests from.</dd>
+          </div>
+          <div class="format">
+            <svg class="icon" aria-hidden="true"><use href="#i-markdown"/></svg>
+            <dt>Markdown <small>.md</small></dt>
+            <dd>A plain step list for tickets, pull requests and wikis.</dd>
+          </div>
+        </dl>
+      </div>
     </section>
 
-    <!-- Export Formats -->
-    <section id="export">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Export</span>
-                <h2>Export to Any Format</h2>
-                <p>Professional documentation in the format you need</p>
-            </div>
-
-            <div class="export-grid">
-                <div class="export-card">
-                    <div class="export-icon">📄</div>
-                    <h4>DOCX</h4>
-                    <p>Word documents with full-width 1200px screenshots</p>
-                </div>
-
-                <div class="export-card">
-                    <div class="export-icon">📊</div>
-                    <h4>JSON</h4>
-                    <p>Structured data for automation frameworks</p>
-                </div>
-
-                <div class="export-card">
-                    <div class="export-icon">📈</div>
-                    <h4>CSV</h4>
-                    <p>Spreadsheet-compatible for Excel & Sheets</p>
-                </div>
-
-                <div class="export-card">
-                    <div class="export-icon">📝</div>
-                    <h4>TXT</h4>
-                    <p>Simple text summaries for quick notes</p>
-                </div>
-            </div>
+    <section class="section" id="privacy" aria-labelledby="privacy-title">
+      <div class="wrap privacy">
+        <div>
+          <div class="section-head">
+            <h2 id="privacy-title">Your recordings stay on your machine</h2>
+            <p>Test environments are full of real accounts and real data. TestSnapper is built so none of it leaves your browser.</p>
+          </div>
+          <ul class="checks" role="list">
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Sessions and screenshots are stored locally in Chrome. Nothing is uploaded and there is no analytics.</span></li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Passwords, PINs, card numbers, CVCs, SSNs, dates of birth and tokens are masked as they're recorded.</span></li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Screenshots are skipped while a password or payment field has focus.</span></li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>No remote code: the Word and PDF libraries ship inside the extension.</span></li>
+          </ul>
+          <p style="margin-top:1.25rem"><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/PRIVACY_POLICY.md">Read the privacy policy</a></p>
         </div>
+        <div class="redact-sample" role="group" aria-label="Examples of masked values">
+          <p>What a recording stores</p>
+          <div class="redact-row"><span>Password field</span><span>••••••••</span></div>
+          <div class="redact-row"><span>Email field</span><span>***@***.com</span></div>
+          <div class="redact-row"><span>Card number</span><span>**** **** **** ****</span></div>
+          <div class="redact-row"><span>SSN</span><span>***-**-****</span></div>
+          <div class="redact-row"><span>Email in other text</span><span>qa***@example.com</span></div>
+        </div>
+      </div>
     </section>
 
-    <!-- Tech Stack -->
-    <section id="tech-stack" class="tech-section">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label" style="background: rgba(255,255,255,0.1); color: white;">Technology</span>
-                <h2>Built With Modern Tech</h2>
-                <p>Leveraging cutting-edge web technologies for performance and reliability</p>
-            </div>
-
-            <div class="tech-grid">
-                <div class="tech-item">
-                    <div class="tech-item-icon">🧩</div>
-                    <h4>Manifest V3</h4>
-                    <p>Latest Chrome Extension API</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">⚡</div>
-                    <h4>Service Workers</h4>
-                    <p>Background Processing</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">💾</div>
-                    <h4>IndexedDB</h4>
-                    <p>Client-side Storage</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">🎨</div>
-                    <h4>OffscreenCanvas</h4>
-                    <p>Image Processing</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">📦</div>
-                    <h4>Blob API</h4>
-                    <p>Binary Data Handling</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">🔄</div>
-                    <h4>Async/Await</h4>
-                    <p>Modern JavaScript ES6+</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">📑</div>
-                    <h4>DOCX Generation</h4>
-                    <p>Document Export</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">🎭</div>
-                    <h4>CSS3 Animations</h4>
-                    <p>Modern UI/UX</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">🔐</div>
-                    <h4>Content Scripts</h4>
-                    <p>DOM Interaction</p>
-                </div>
-                <div class="tech-item">
-                    <div class="tech-item-icon">📡</div>
-                    <h4>Message Passing</h4>
-                    <p>Extension Communication</p>
-                </div>
-            </div>
+    <section class="section" id="install" aria-labelledby="install-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="install-title">Install</h2>
         </div>
+        <div class="install">
+          <div class="install-path">
+            <h3>From the Chrome Web Store</h3>
+            <p>The quickest way. Updates install automatically.</p>
+            <ol>
+              <li>Open TestSnapper in the Chrome Web Store.</li>
+              <li>Click <strong>Add to Chrome</strong>, then <strong>Add extension</strong>.</li>
+              <li>Pin the icon to your toolbar.</li>
+            </ol>
+            <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala">
+              <svg class="icon" aria-hidden="true"><use href="#i-chrome"/></svg>
+              Add to Chrome
+            </a>
+          </div>
+          <div class="install-path">
+            <h3>From source</h3>
+            <p>Needs Node.js 18 or later.</p>
+<pre><code>git clone https://github.com/Nataraaj-Shanmugam/TestSnapper.git
+cd TestSnapper
+npm install
+npm run build</code></pre>
+            <ol>
+              <li>Open <code>chrome://extensions</code> and turn on Developer mode.</li>
+              <li>Click <strong>Load unpacked</strong> and choose the <code>dist</code> folder.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <!-- Installation -->
-    <section id="installation">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Get Started</span>
-                <h2>Installation</h2>
-                <p>Get TestSnapper running in under a minute</p>
+    <section class="section" id="about" aria-labelledby="about-title">
+      <div class="wrap">
+        <div class="about">
+          <span class="about-mark" aria-hidden="true">NS</span>
+          <div>
+            <h2 id="about-title">Made by Nataraaj Shanmugam</h2>
+            <p>I build QA tooling. TestSnapper started as a way to stop retyping test steps after exploratory sessions. Bug reports and pull requests are welcome.</p>
+            <div class="links">
+              <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/issues">Report an issue</a>
+              <a href="https://github.com/Nataraaj-Shanmugam">GitHub profile</a>
             </div>
-
-            <div class="install-card">
-                <div class="install-main">
-                    <h3>🛒 Chrome Web Store (Recommended)</h3>
-                    <ol>
-                        <li>Visit the <a
-                                href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
-                                style="color: var(--primary);" target="_blank">TestSnapper Chrome Web Store page</a>
-                        </li>
-                        <li>Click <strong>Add to Chrome</strong></li>
-                        <li>Confirm by clicking <strong>Add extension</strong></li>
-                        <li>The TestSnapper icon appears in your toolbar</li>
-                        <li>Click the icon to start recording! 🎉</li>
-                    </ol>
-                </div>
-                <div class="install-divider"></div>
-
-                <div class="install-main">
-                    <h3>🔧 Developer Installation (From Source)</h3>
-                    <ol>
-                        <li>Clone from <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper"
-                                style="color: var(--primary);" target="_blank">GitHub Repository</a></li>
-                        <li>Navigate to <code>chrome://extensions</code> in Chrome</li>
-                        <li>Enable <strong>Developer Mode</strong> (top right)</li>
-                        <li>Click <strong>Load Unpacked</strong> button</li>
-                        <li>Select the <code>TestSnapper</code> root folder</li>
-                    </ol>
-                </div>
-            </div>
+          </div>
         </div>
+      </div>
     </section>
+  </main>
 
-    <!-- About Creator -->
-    <section id="about" class="about-section">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-label">Creator</span>
-                <h2>About the Developer</h2>
-            </div>
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>&copy; 2025–2026 Nataraaj Shanmugam. MIT License.</p>
+      <ul role="list" aria-label="Footer">
+        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper#readme">README</a></li>
+        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/QUICK_START.md">Quick start</a></li>
+        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/DEVELOPER_GUIDE.md">Developer guide</a></li>
+        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/PRIVACY_POLICY.md">Privacy policy</a></li>
+        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/LICENSE">License</a></li>
+      </ul>
+    </div>
+  </footer>
 
-            <div class="about-card">
-                <div class="about-avatar">NS</div>
-                <div class="about-content">
-                    <h3>Nataraaj Shanmugam</h3>
-                    <div class="about-title">Software Engineer & QA Automation Specialist</div>
-                    <p>Passionate about building tools that improve developer productivity and Testing workflows.
-                        TestSnapper was born from the frustration of manually documenting Test cases during exploratory
-                        Testing sessions. This project demonstrates expertise in Chrome Extension development,
-                        client-side storage, image processing, and modern JavaScript architecture.</p>
-                    <div class="about-links">
-                        <a href="https://github.com/Nataraaj-Shanmugam" target="_blank" class="about-link primary">
-                            👤 GitHub Profile
-                        </a>
-                        <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper" target="_blank"
-                            class="about-link secondary">
-                            📂 View Source Code
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
+  <script>
+    // Mobile menu
+    (function () {
+      var toggle = document.querySelector('.nav-toggle');
+      var nav = document.getElementById('site-nav');
+      var use = toggle.querySelector('use');
+      function setOpen(open) {
+        nav.classList.toggle('is-open', open);
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+        use.setAttribute('href', open ? '#i-close' : '#i-menu');
+      }
+      toggle.addEventListener('click', function () {
+        setOpen(toggle.getAttribute('aria-expanded') !== 'true');
+      });
+      nav.addEventListener('click', function (e) {
+        if (e.target.closest('a')) setOpen(false);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && nav.classList.contains('is-open')) {
+          setOpen(false);
+          toggle.focus();
+        }
+      });
+    })();
 
-    <!-- CTA Section -->
-    <section class="cta-section">
-        <div class="container">
-            <h2>Ready to Streamline Your Testing?</h2>
-            <p>Join the community of QA professionals using TestSnapper to document their Tests faster</p>
-            <div class="cta-buttons" style="justify-content: center;">
-                <a href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
-                    class="btn btn-primary" target="_blank">
-                    🛒 Install Free from Chrome Web Store
-                </a>
-            </div>
-        </div>
-    </section>
+    // Hero demo: plays once, then offers a replay. The static markup is the
+    // finished state, so without JS (or with reduced motion) nothing is hidden.
+    (function () {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      var demo = document.getElementById('demo');
+      var steps = demo.querySelectorAll('.step');
+      var email = document.getElementById('f-email');
+      var pass = document.getElementById('f-pass');
+      var btn = document.getElementById('f-btn');
+      var status = document.getElementById('demo-status');
+      var count = document.getElementById('demo-count');
+      var replay = document.getElementById('demo-replay');
+      var timers = [];
+      document.documentElement.classList.add('js');
 
-    <!-- Footer -->
-    <footer>
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-brand">
-                    <a href="#" class="logo" style="color: white;">
-                        <span class="logo-icon">📸</span>
-                        TestSnapper
-                    </a>
-                    <p>Automated Test recording and documentation for modern web applications. Open source, privacy
-                        focused, and built with modern web technologies.</p>
-                </div>
+      function at(ms, fn) { timers.push(setTimeout(fn, ms)); }
+      function typeInto(el, text, start, speed) {
+        for (var i = 1; i <= text.length; i++) {
+          (function (n) { at(start + n * speed, function () { el.textContent = text.slice(0, n); }); })(i);
+        }
+        return start + text.length * speed;
+      }
+      function show(i) {
+        steps[i].classList.add('is-in');
+        count.textContent = (i + 1) + (i === 0 ? ' step' : ' steps');
+      }
 
-                <div class="footer-section">
-                    <h4>Documentation</h4>
-                    <ul>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/README.md"
-                                target="_blank">README</a></li>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/QUICK_START.md"
-                                target="_blank">Quick Start</a></li>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/DEVELOPER_GUIDE.md"
-                                target="_blank">Developer Guide</a></li>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/TESTING_GUIDE.md"
-                                target="_blank">Testing Guide</a></li>
-                    </ul>
-                </div>
+      function play() {
+        timers.forEach(clearTimeout);
+        timers = [];
+        demo.dataset.state = 'recording';
+        status.textContent = 'Recording';
+        count.textContent = '0 steps';
+        email.textContent = '';
+        pass.textContent = '';
+        steps.forEach(function (s) { s.classList.remove('is-in'); });
 
-                <div class="footer-section">
-                    <h4>Resources</h4>
-                    <ul>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper" target="_blank">GitHub
-                                Repository</a></li>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/issues" target="_blank">Report
-                                Issues</a></li>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/releases"
-                                target="_blank">Releases</a></li>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/PRIVACY_POLICY.md"
-                                target="_blank">Privacy Policy</a></li>
-                    </ul>
-                </div>
+        var t = 500;
+        at(t, function () { email.classList.add('is-active'); });
+        t = typeInto(email, 'qa_lead', t, 80);
+        at(t + 150, function () { email.classList.remove('is-active'); pass.classList.add('is-active'); show(0); });
+        t = typeInto(pass, '••••••••••', t + 400, 60);
+        at(t + 150, function () { pass.classList.remove('is-active'); show(1); });
+        at(t + 700, function () { btn.classList.add('is-pressed'); });
+        at(t + 850, function () { btn.classList.remove('is-pressed'); show(2); });
+        at(t + 1500, function () { show(3); demo.dataset.state = 'done'; status.textContent = 'Recorded'; });
+      }
 
-                <div class="footer-section">
-                    <h4>Connect</h4>
-                    <ul>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam" target="_blank">GitHub Profile</a></li>
-                        <li><a href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala"
-                                target="_blank">Chrome Web Store</a></li>
-                        <li><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/discussions"
-                                target="_blank">Discussions</a></li>
-                    </ul>
-                </div>
-            </div>
-
-            <div class="footer-bottom">
-                <p>&copy; 2026 TestSnapper by Nataraaj Shanmugam. Open Source under MIT License.</p>
-            </div>
-        </div>
-    </footer>
-
-    <script>
-        // Header scroll effect
-        window.addEventListener('scroll', () => {
-            const header = document.getElementById('header');
-            if (window.scrollY > 50) {
-                header.classList.add('scrolled');
-            } else {
-                header.classList.remove('scrolled');
-            }
-        });
-
-        // Smooth scrolling
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
-                }
-            });
-        });
-
-        // Animate on scroll
-        const observerOptions = {
-            threshold: 0.1,
-            rootMargin: '0px 0px -100px 0px'
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.style.opacity = '1';
-                    entry.target.style.transform = 'translateY(0)';
-                }
-            });
-        }, observerOptions);
-
-        document.querySelectorAll('.feature-card, .workflow-step, .export-card, .tech-item, .stat-item').forEach(el => {
-            el.style.opacity = '0';
-            el.style.transform = 'translateY(30px)';
-            el.style.transition = 'opacity 0.6s ease-out, transform 0.6s ease-out';
-            observer.observe(el);
-        });
-    </script>
+      replay.addEventListener('click', play);
+      play();
+    })();
+  </script>
 </body>
-
 </html>
