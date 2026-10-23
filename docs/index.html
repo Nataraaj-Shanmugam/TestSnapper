@@ -235,9 +235,8 @@
       color: var(--ink-soft);
     }
 
-    /* Demo: a page being tested on the left, the recorded test case on the right */
-    .demo {
-      position: relative;
+    /* ---------- Walkthrough: a looping, GIF-style tour built from data ---------- */
+    .walk {
       margin: 0;
       background: var(--surface);
       border: 1px solid var(--rule);
@@ -245,19 +244,21 @@
       box-shadow: var(--shadow);
       overflow: hidden;
     }
-    .demo-bar {
+    .walk-bar {
       display: flex;
       align-items: center;
       gap: .75rem;
-      padding: .6rem .9rem;
+      padding: .55rem .9rem;
       border-bottom: 1px solid var(--rule);
-      font-size: .8rem;
+      font-size: .75rem;
       color: var(--ink-soft);
     }
-    .demo-url {
+    .walk-dots { display: flex; gap: .3rem; }
+    .walk-dots i { width: .55rem; height: .55rem; border-radius: 50%; background: var(--rule); }
+    .walk-url {
       flex: 1;
       min-width: 0;
-      padding: .25rem .7rem;
+      padding: .2rem .7rem;
       border-radius: 999px;
       background: var(--paper);
       font-family: var(--mono);
@@ -265,147 +266,250 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    /* Mirrors the REC badge on the extension icon */
+    .walk-stage {
+      position: relative;
+      aspect-ratio: 16 / 10;
+      background: var(--paper);
+      overflow: hidden;
+      font-size: .8rem;
+      line-height: 1.4;
+    }
+    .scene {
+      position: absolute;
+      inset: 0;
+      padding: 1rem;
+      opacity: 0;
+      transition: opacity .35s ease;
+    }
+    .scene.is-on { opacity: 1; }
+
+    /* Shared bits */
+    .w-card {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+    }
+    .w-btn {
+      display: inline-grid;
+      place-items: center;
+      height: 2rem;
+      padding: 0 .9rem;
+      border-radius: 7px;
+      background: var(--steel);
+      color: #fff;
+      font-weight: 600;
+      transition: transform .12s, background-color .2s;
+    }
+    @media (prefers-color-scheme: dark) { .w-btn { color: #0D1530; } }
+    .w-btn.is-pressed { transform: scale(.95); }
+    .w-btn.is-stop { background: var(--record); }
+    .w-skel { height: .5rem; border-radius: 4px; background: var(--rule); margin-bottom: .5rem; }
+    .w-cursor {
+      position: absolute;
+      width: 1.1rem;
+      height: 1.1rem;
+      color: var(--ink);
+      transition: left .6s cubic-bezier(.4, 0, .2, 1), top .6s cubic-bezier(.4, 0, .2, 1);
+      pointer-events: none;
+      filter: drop-shadow(0 1px 1px rgb(0 0 0 / .25));
+    }
+    .w-step {
+      display: grid;
+      grid-template-columns: 1.4rem 1fr auto;
+      gap: .1rem .55rem;
+      align-items: center;
+      padding: .45rem .6rem;
+      border-top: 1px solid var(--rule);
+      transition: background-color .3s, opacity .3s;
+    }
+    .w-step:first-child { border-top: 0; }
+    .w-step.is-new { background: var(--steel-wash); }
+    .w-step.is-hidden { opacity: 0; }
+    .w-n {
+      grid-row: span 2;
+      width: 1.4rem;
+      height: 1.4rem;
+      display: grid;
+      place-items: center;
+      border-radius: 5px;
+      background: var(--steel-wash);
+      color: var(--steel-strong);
+      font-weight: 600;
+      font-size: .7rem;
+    }
+    .w-sel { font-family: var(--mono); font-size: .68rem; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .w-thumb {
+      grid-row: span 2;
+      width: 2.6rem;
+      height: 1.8rem;
+      border-radius: 4px;
+      border: 1px solid var(--rule);
+      background: linear-gradient(var(--steel-wash) 0 35%, var(--surface) 35%);
+    }
+
+    /* Scene 1: the popup */
+    .s-site { position: absolute; inset: 1rem; padding: 1rem; opacity: .55; }
+    .s-popup {
+      position: absolute;
+      top: .6rem;
+      right: .9rem;
+      width: min(15rem, 62%);
+      padding: .8rem;
+      box-shadow: var(--shadow);
+    }
+    .s-popup-head { display: flex; align-items: center; gap: .45rem; font-weight: 700; color: var(--steel); }
+    .s-popup-head img { width: 1.1rem; height: 1.1rem; border-radius: 3px; }
+    .s-tabs { display: flex; gap: .9rem; margin: .6rem 0; border-bottom: 1px solid var(--rule); color: var(--ink-soft); }
+    .s-tabs span { padding-bottom: .35rem; }
+    .s-tabs .on { color: var(--steel); box-shadow: inset 0 -2px var(--steel); font-weight: 600; }
+    .s-popup .w-btn { width: 100%; margin: .6rem 0; }
+    .s-live { display: flex; justify-content: space-between; color: var(--ink-soft); }
+
+    /* REC chip (mirrors the icon's badge) */
     .rec {
       display: inline-flex;
       align-items: center;
-      gap: .4rem;
-      padding: .15rem .6rem .15rem .5rem;
+      gap: .35rem;
+      padding: .1rem .55rem .1rem .45rem;
       border: 1px solid var(--rule);
       border-radius: 999px;
       background: var(--surface);
       font-weight: 700;
-      font-size: .75rem;
+      font-size: .7rem;
       color: var(--ink);
       white-space: nowrap;
     }
-    .rec::before {
-      content: "";
-      width: .55rem;
-      height: .55rem;
-      border-radius: 50%;
-      background: var(--record);
-    }
-    .demo[data-state="done"] .rec::before { background: var(--ok); }
-    .demo-body {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
-    }
-    .demo-page {
-      padding: 1.25rem;
-      border-right: 1px solid var(--rule);
-      background: var(--paper);
-    }
-    .demo-page h2 {
-      font-size: .95rem;
-      font-weight: 600;
-      margin-bottom: .9rem;
-    }
-    .fake-field { margin-bottom: .75rem; }
-    .fake-field span {
-      display: block;
-      font-size: .75rem;
-      color: var(--ink-soft);
-      margin-bottom: .25rem;
-    }
-    .fake-input {
-      height: 2rem;
-      padding: 0 .6rem;
+    .rec::before { content: ""; width: .5rem; height: .5rem; border-radius: 50%; background: var(--ink-soft); }
+    .rec.is-live::before { background: var(--record); }
+
+    /* Scene 2: the page under test */
+    .s-form { width: min(15rem, 70%); margin: .4rem auto 0; padding: 1rem; }
+    .s-form h4 { margin: 0 0 .7rem; font-size: .9rem; }
+    .s-field { margin-bottom: .6rem; }
+    .s-field span { display: block; font-size: .7rem; color: var(--ink-soft); margin-bottom: .2rem; }
+    .s-input {
+      height: 1.8rem;
+      padding: 0 .5rem;
       display: flex;
       align-items: center;
       border: 1px solid var(--rule);
       border-radius: 6px;
       background: var(--surface);
-      font-size: .8rem;
       font-family: var(--mono);
-      overflow: hidden;
-      white-space: nowrap;
-      transition: border-color .2s;
-    }
-    .fake-input.is-active { border-color: var(--steel); }
-    .fake-button {
-      margin-top: .4rem;
-      height: 2rem;
-      border-radius: 6px;
-      background: var(--steel);
-      color: #fff;
-      font-size: .8rem;
-      font-weight: 600;
-      display: grid;
-      place-items: center;
-      transition: transform .12s;
-    }
-    @media (prefers-color-scheme: dark) { .fake-button { background: var(--steel); color: #0D1530; } }
-    .fake-button.is-pressed { transform: scale(.97); }
-
-    .demo-steps { padding: 1rem 1.1rem 1.1rem; }
-    .demo-steps h3 {
-      display: flex;
-      justify-content: space-between;
-      font-size: .8rem;
-      font-weight: 600;
-      color: var(--ink-soft);
-      margin-bottom: .6rem;
-    }
-    .step {
-      display: grid;
-      grid-template-columns: 1.6rem 1fr;
-      gap: .25rem .6rem;
-      padding: .6rem 0;
-      border-top: 1px solid var(--rule);
-      font-size: .85rem;
-      line-height: 1.4;
-    }
-    .step:first-of-type { border-top: 0; }
-    .step-n {
-      grid-row: span 2;
-      width: 1.6rem;
-      height: 1.6rem;
-      display: grid;
-      place-items: center;
-      border-radius: 6px;
-      background: var(--steel-wash);
-      color: var(--steel-strong);
-      font-weight: 600;
       font-size: .75rem;
-    }
-    .step-what strong { font-weight: 600; }
-    .step-sel {
-      font-family: var(--mono);
-      font-size: .72rem;
-      color: var(--ink-soft);
       overflow: hidden;
-      text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .s-input.is-active { border-color: var(--steel); box-shadow: 0 0 0 2px var(--steel-wash); }
+    .s-form .w-btn { width: 100%; }
+    .s-float {
+      position: absolute;
+      right: .9rem;
+      bottom: .9rem;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .35rem .5rem;
+      box-shadow: var(--shadow);
+      font-weight: 600;
+    }
+
+    /* Scene 3: review page */
+    .s-review-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .6rem; }
+    .s-review-head h4 { margin: 0; font-size: .9rem; }
+    .s-review-head .w-btn { height: 1.7rem; font-size: .72rem; padding: 0 .7rem; }
+    .s-list { overflow: hidden; }
+    .s-edit { outline: 2px solid var(--steel); outline-offset: 1px; border-radius: 3px; }
     .tag {
       display: inline-block;
-      margin-left: .35rem;
-      padding: 0 .4rem;
+      margin-left: .3rem;
+      padding: 0 .35rem;
       border-radius: 4px;
-      font-size: .7rem;
+      font-size: .65rem;
       font-weight: 600;
-      vertical-align: .1em;
     }
     .tag-mask { background: var(--mask-wash); color: var(--mask); }
-    .tag-shot { background: var(--ok-wash); color: var(--ok); }
-    .js .step { opacity: 0; transform: translateY(4px); transition: opacity .3s, transform .3s; }
-    .js .step.is-in { opacity: 1; transform: none; }
-    .replay {
-      margin-top: .6rem;
-      font: 500 .8rem var(--sans);
-      color: var(--steel);
-      background: none;
-      border: 0;
-      padding: .4rem 0;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: .35rem;
-      visibility: hidden;
+    .tag-manual { background: var(--ok-wash); color: var(--ok); }
+
+    /* Scene 4: export */
+    .s-export { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: .9rem; height: 100%; }
+    .s-panel { padding: .8rem; align-self: start; }
+    .s-panel h4 { margin: 0 0 .5rem; font-size: .85rem; }
+    .s-formats { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .7rem; }
+    .s-formats span {
+      padding: .15rem .5rem;
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      font-size: .7rem;
+      color: var(--ink-soft);
+      transition: all .2s;
     }
-    .demo[data-state="done"] .replay { visibility: visible; }
-    .replay .icon { width: 1rem; height: 1rem; }
+    .s-formats .on { background: var(--steel); border-color: var(--steel); color: #fff; font-weight: 600; }
+    @media (prefers-color-scheme: dark) { .s-formats .on { color: #0D1530; } }
+    .s-panel .w-btn { width: 100%; }
+    .s-progress { height: .35rem; margin-top: .6rem; border-radius: 99px; background: var(--rule); overflow: hidden; }
+    .s-progress i { display: block; height: 100%; width: 0; background: var(--steel); transition: width 1.2s ease-out; }
+    .s-doc {
+      padding: .9rem 1rem;
+      background: #fff;
+      color: #1d2433;
+      border-radius: 6px;
+      box-shadow: var(--shadow);
+      transform: translateY(1.5rem);
+      opacity: 0;
+      transition: opacity .45s, transform .45s;
+      overflow: hidden;
+    }
+    .s-doc.is-in { transform: none; opacity: 1; }
+    .s-doc h5 { margin: 0; font-size: .85rem; }
+    .s-doc .meta { margin: .2rem 0 .6rem; font-size: .65rem; color: #5b6478; }
+    .s-doc ol { margin: 0; padding-left: 1rem; font-size: .7rem; }
+    .s-doc li { margin-bottom: .35rem; }
+    .s-doc .shot { display: block; height: 2.2rem; margin-top: .25rem; border: 1px solid #dfe5ef; border-radius: 3px; background: linear-gradient(#eaf0fc 0 35%, #fff 35%); }
+
+    /* Chapter controls under the frame */
+    .walk-nav {
+      display: flex;
+      align-items: stretch;
+      gap: .5rem;
+      padding: .6rem .7rem .7rem;
+      border-top: 1px solid var(--rule);
+    }
+    .walk-chapters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; flex: 1; list-style: none; margin: 0; padding: 0; }
+    .walk-chapter {
+      width: 100%;
+      min-height: 2.75rem;
+      padding: .35rem .1rem 0;
+      border: 0;
+      background: none;
+      text-align: left;
+      font: 500 .75rem/1.3 var(--sans);
+      color: var(--ink-soft);
+      cursor: pointer;
+    }
+    .walk-chapter .bar { display: block; height: 3px; border-radius: 2px; background: var(--rule); margin-bottom: .4rem; overflow: hidden; }
+    .walk-chapter .bar i { display: block; height: 100%; width: 0; background: var(--steel); }
+    .walk-chapter[aria-current="step"] { color: var(--ink); font-weight: 600; }
+    .walk-toggle {
+      flex: none;
+      width: 2.75rem;
+      height: 2.75rem;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .walk-toggle .icon { width: 1rem; height: 1rem; }
+
+    @media (max-width: 560px) {
+      .walk-stage { aspect-ratio: 4 / 3.6; font-size: .75rem; }
+      .s-export { grid-template-columns: 1fr; }
+      .s-doc { position: absolute; left: 1rem; right: 1rem; top: 3.2rem; }
+      .walk-chapter { font-size: .7rem; }
+    }
 
     /* ---------- Sections ---------- */
     .section { padding-block: clamp(3.5rem, 8vw, 6rem); }
@@ -663,8 +767,6 @@
       .format, .format:nth-child(n + 4) { grid-column: auto; }
     }
     @media (max-width: 560px) {
-      .demo-body { grid-template-columns: 1fr; }
-      .demo-page { border-right: 0; border-bottom: 1px solid var(--rule); }
       .steps { grid-template-columns: 1fr; }
       .redact-row { grid-template-columns: 1fr; gap: .1rem; }
       .hero .actions .btn { flex: 1 1 100%; }
@@ -697,6 +799,8 @@
       <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
       <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
       <symbol id="i-replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></symbol>
     </defs>
   </svg>
 
@@ -741,53 +845,23 @@
           <p class="fine">Open source under MIT. Runs entirely in your browser. Chrome 105 or later.</p>
         </div>
 
-        <figure class="demo" id="demo" data-state="done" aria-label="Example: signing in to a test site produces four recorded steps">
-          <div class="demo-bar" aria-hidden="true">
-            <span class="rec" id="demo-status">Done</span>
-            <span class="demo-url">staging.example.com/sign-in</span>
+        <figure class="walk" id="walk" aria-label="Walkthrough: start a recording, use the site, review the steps, export to Word">
+          <div class="walk-bar" aria-hidden="true">
+            <span class="walk-dots"><i></i><i></i><i></i></span>
+            <span class="walk-url" id="walk-url">staging.example.com/sign-in</span>
           </div>
-          <div class="demo-body">
-            <div class="demo-page" aria-hidden="true">
-              <h2>Sign in</h2>
-              <div class="fake-field">
-                <span>Username</span>
-                <div class="fake-input" id="f-email">qa_lead</div>
+          <div class="walk-stage" id="walk-stage" aria-hidden="true">
+            <noscript>
+              <div class="scene is-on">
+                <p>Start a recording, use the site as normal, review the steps, then export them to Word, PDF, CSV, JSON or Markdown.</p>
               </div>
-              <div class="fake-field">
-                <span>Password</span>
-                <div class="fake-input" id="f-pass">••••••••••</div>
-              </div>
-              <div class="fake-button" id="f-btn">Sign in</div>
-            </div>
-            <div class="demo-steps">
-              <h3><span>Recorded steps</span><span id="demo-count">4 steps</span></h3>
-              <ol role="list">
-                <li class="step">
-                  <span class="step-n" aria-hidden="true">1</span>
-                  <span class="step-what">Type <strong>qa_lead</strong> into <strong>Username</strong></span>
-                  <span class="step-sel">#username</span>
-                </li>
-                <li class="step">
-                  <span class="step-n" aria-hidden="true">2</span>
-                  <span class="step-what">Type into <strong>Password</strong><span class="tag tag-mask">masked</span></span>
-                  <span class="step-sel">input[name="password"]</span>
-                </li>
-                <li class="step">
-                  <span class="step-n" aria-hidden="true">3</span>
-                  <span class="step-what">Click <strong>Sign in</strong></span>
-                  <span class="step-sel">[data-testid="sign-in-submit"]</span>
-                </li>
-                <li class="step">
-                  <span class="step-n" aria-hidden="true">4</span>
-                  <span class="step-what">Navigate to <strong>/dashboard</strong><span class="tag tag-shot">screenshot</span></span>
-                  <span class="step-sel">staging.example.com/dashboard</span>
-                </li>
-              </ol>
-              <button class="replay" type="button" id="demo-replay">
-                <svg class="icon" aria-hidden="true"><use href="#i-replay"/></svg>
-                Replay example
-              </button>
-            </div>
+            </noscript>
+          </div>
+          <div class="walk-nav">
+            <ol class="walk-chapters" id="walk-chapters" aria-label="Walkthrough chapters"></ol>
+            <button class="walk-toggle" type="button" id="walk-toggle" aria-label="Pause walkthrough">
+              <svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg>
+            </button>
           </div>
         </figure>
       </div>
@@ -1031,56 +1105,244 @@ npm run build</code></pre>
       });
     })();
 
-    // Hero demo: plays once, then offers a replay. The static markup is the
-    // finished state, so without JS (or with reduced motion) nothing is hidden.
+    // Walkthrough: plays like a GIF, but every word and step comes from WALK
+    // below. When the product flow changes, edit WALK, not the scenes.
     (function () {
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      var demo = document.getElementById('demo');
-      var steps = demo.querySelectorAll('.step');
-      var email = document.getElementById('f-email');
-      var pass = document.getElementById('f-pass');
-      var btn = document.getElementById('f-btn');
-      var status = document.getElementById('demo-status');
-      var count = document.getElementById('demo-count');
-      var replay = document.getElementById('demo-replay');
-      var timers = [];
-      document.documentElement.classList.add('js');
+      var WALK = {
+        host: 'staging.example.com',
+        username: 'qa_lead',
+        passwordLength: 10,
+        session: 'Sign-in smoke test',
+        author: 'QA team',
+        steps: [
+          { action: 'Type', value: 'qa_lead', field: 'Username', selector: '#username' },
+          { action: 'Type', field: 'Password', selector: 'input[name="password"]', masked: true },
+          { action: 'Click', field: 'Sign in', selector: '[data-testid="sign-in-submit"]' },
+          { action: 'Navigate to', field: '/dashboard', selector: 'staging.example.com/dashboard', screenshot: true }
+        ],
+        manualStep: 'Dashboard shows the welcome banner',
+        formats: ['Word', 'PDF', 'CSV', 'JSON', 'Markdown'],
+        exportFormat: 'Word'
+      };
 
-      function at(ms, fn) { timers.push(setTimeout(fn, ms)); }
-      function typeInto(el, text, start, speed) {
-        for (var i = 1; i <= text.length; i++) {
-          (function (n) { at(start + n * speed, function () { el.textContent = text.slice(0, n); }); })(i);
+      var stage = document.getElementById('walk-stage');
+      var urlEl = document.getElementById('walk-url');
+      var chaptersEl = document.getElementById('walk-chapters');
+      var toggle = document.getElementById('walk-toggle');
+      var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      function esc(s) {
+        return String(s).replace(/[&<>"]/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+      }
+      function stepLabel(s) {
+        if (s.action === 'Type' && s.value) return 'Type <b>' + esc(s.value) + '</b> into <b>' + esc(s.field) + '</b>';
+        if (s.masked) return 'Type into <b>' + esc(s.field) + '</b><span class="tag tag-mask">masked</span>';
+        return esc(s.action) + ' <b>' + esc(s.field) + '</b>';
+      }
+      function stepRow(s, n, extra) {
+        return '<div class="w-step' + (extra || '') + '"><span class="w-n">' + n + '</span>' +
+          '<span class="w-what">' + stepLabel(s) + '</span>' +
+          (s.screenshot ? '<span class="w-thumb"></span>' : '<span></span>') +
+          '<span class="w-sel">' + esc(s.selector || '') + '</span></div>';
+      }
+      var CURSOR = '<svg class="w-cursor" viewBox="0 0 24 24" fill="currentColor" stroke="#fff" stroke-width="1.5" style="left:12%;top:85%"><path d="M5 3l14 7.5-6.2 1.6L10 18z"/></svg>';
+      var dots = '•'.repeat(WALK.passwordLength);
+
+      function q(root, sel) { return root.querySelector(sel); }
+      function moveTo(root, sel) {
+        var target = q(root, sel), cur = q(root, '.w-cursor');
+        if (!target || !cur) return;
+        var s = stage.getBoundingClientRect(), r = target.getBoundingClientRect();
+        cur.style.left = (r.left - s.left + r.width * 0.6) + 'px';
+        cur.style.top = (r.top - s.top + r.height * 0.55) + 'px';
+      }
+      function typeInto(sel, text) {
+        return function (root, k) { q(root, sel).textContent = text.slice(0, Math.round(text.length * k)); };
+      }
+      function cls(sel, name, on) {
+        return function (root) { q(root, sel).classList.toggle(name, on !== false); };
+      }
+      function text(sel, value) {
+        return function (root) { q(root, sel).textContent = value; };
+      }
+      function seq() {
+        var fns = arguments;
+        return function (root, k) { for (var i = 0; i < fns.length; i++) fns[i](root, k); };
+      }
+
+      var SCENES = [
+        {
+          title: 'Start recording',
+          url: WALK.host + '/sign-in',
+          duration: 3400,
+          html: function () {
+            return '<div class="s-site"><div class="w-skel" style="width:40%"></div><div class="w-skel" style="width:70%"></div><div class="w-skel" style="width:55%"></div></div>' +
+              '<div class="s-popup w-card">' +
+              '<div class="s-popup-head"><img src="icon.png" alt="">TestSnapper</div>' +
+              '<div class="s-tabs"><span class="on">Recording</span><span>Export</span><span>Settings</span></div>' +
+              '<span class="rec" data-rec>Ready</span>' +
+              '<div class="w-btn" data-start>Start</div>' +
+              '<div class="s-live"><span>Live steps</span><span>0</span></div></div>' + CURSOR;
+          },
+          beats: [
+            { at: 300, run: function (r) { moveTo(r, '[data-start]'); } },
+            { at: 1200, run: cls('[data-start]', 'is-pressed') },
+            { at: 1400, run: seq(cls('[data-start]', 'is-pressed', false), cls('[data-start]', 'is-stop'), text('[data-start]', 'Stop'), cls('[data-rec]', 'is-live'), text('[data-rec]', 'REC')) }
+          ]
+        },
+        {
+          title: 'Use the site',
+          url: WALK.host + '/sign-in',
+          duration: 6600,
+          html: function () {
+            return '<div class="s-form w-card"><h4>Sign in</h4>' +
+              '<div class="s-field"><span>Username</span><div class="s-input" data-user></div></div>' +
+              '<div class="s-field"><span>Password</span><div class="s-input" data-pass></div></div>' +
+              '<div class="w-btn" data-submit>Sign in</div></div>' +
+              '<div class="s-float w-card"><span class="rec is-live">REC</span><span data-count>0 steps</span></div>' + CURSOR;
+          },
+          beats: [
+            { at: 200, run: function (r) { moveTo(r, '[data-user]'); } },
+            { at: 800, run: cls('[data-user]', 'is-active') },
+            { at: 900, dur: WALK.username.length * 110, run: typeInto('[data-user]', WALK.username) },
+            { at: 2000, run: seq(cls('[data-user]', 'is-active', false), text('[data-count]', '1 step'), function (r) { moveTo(r, '[data-pass]'); }) },
+            { at: 2600, run: cls('[data-pass]', 'is-active') },
+            { at: 2700, dur: 900, run: typeInto('[data-pass]', dots) },
+            { at: 3800, run: seq(cls('[data-pass]', 'is-active', false), text('[data-count]', '2 steps'), function (r) { moveTo(r, '[data-submit]'); }) },
+            { at: 4600, run: cls('[data-submit]', 'is-pressed') },
+            { at: 4800, run: seq(cls('[data-submit]', 'is-pressed', false), text('[data-count]', '3 steps')) },
+            { at: 5400, run: function (r) { urlEl.textContent = WALK.host + '/dashboard'; q(r, '[data-count]').textContent = '4 steps'; } }
+          ]
+        },
+        {
+          title: 'Review the steps',
+          url: 'TestSnapper: review page',
+          duration: 5200,
+          html: function () {
+            return '<div class="s-review-head"><h4>Review &amp; Refine</h4><div class="w-btn" data-add>+ Add step</div></div>' +
+              '<div class="s-list w-card" data-list>' +
+              WALK.steps.map(function (s, i) { return stepRow(s, i + 1); }).join('') +
+              stepRow({ action: 'Check', field: WALK.manualStep, selector: 'Manual step' }, WALK.steps.length + 1, ' is-hidden') +
+              '</div>' + CURSOR;
+          },
+          beats: [
+            { at: 400, run: function (r) { moveTo(r, '.w-step b'); } },
+            { at: 1100, run: cls('.w-step b', 's-edit') },
+            { at: 2100, run: seq(cls('.w-step b', 's-edit', false), function (r) { moveTo(r, '[data-add]'); }) },
+            { at: 2900, run: cls('[data-add]', 'is-pressed') },
+            { at: 3100, run: seq(cls('[data-add]', 'is-pressed', false), cls('.w-step:last-child', 'is-hidden', false), cls('.w-step:last-child', 'is-new')) }
+          ]
+        },
+        {
+          title: 'Export',
+          url: 'TestSnapper: review page',
+          duration: 5600,
+          html: function () {
+            var all = WALK.steps.concat([{ action: 'Check', field: WALK.manualStep }]);
+            return '<div class="s-export"><div class="s-panel w-card"><h4>Export</h4>' +
+              '<div class="s-formats">' + WALK.formats.map(function (f) { return '<span' + (f === WALK.exportFormat ? ' data-fmt' : '') + '>' + esc(f) + '</span>'; }).join('') + '</div>' +
+              '<div class="w-btn" data-export>Export</div><div class="s-progress"><i data-bar></i></div></div>' +
+              '<div class="s-doc" data-doc><h5>' + esc(WALK.session) + '</h5><p class="meta">' + esc(WALK.author) + ', ' + all.length + ' steps</p><ol>' +
+              all.map(function (s) { return '<li>' + stepLabel(s) + (s.screenshot ? '<span class="shot"></span>' : '') + '</li>'; }).join('') +
+              '</ol></div></div>' + CURSOR;
+          },
+          beats: [
+            { at: 300, run: function (r) { moveTo(r, '[data-fmt]'); } },
+            { at: 1000, run: cls('[data-fmt]', 'on') },
+            { at: 1400, run: function (r) { moveTo(r, '[data-export]'); } },
+            { at: 2100, run: cls('[data-export]', 'is-pressed') },
+            { at: 2300, run: seq(cls('[data-export]', 'is-pressed', false), function (r) { q(r, '[data-bar]').style.width = '100%'; }) },
+            { at: 3600, run: cls('[data-doc]', 'is-in') }
+          ]
         }
-        return start + text.length * speed;
-      }
+      ];
+
+      // Chapter buttons
+      SCENES.forEach(function (s, i) {
+        var li = document.createElement('li');
+        li.innerHTML = '<button type="button" class="walk-chapter"><span class="bar"><i></i></span>' + (i + 1) + '. ' + esc(s.title) + '</button>';
+        li.firstChild.addEventListener('click', function () { show(i); });
+        chaptersEl.appendChild(li);
+      });
+      var chapterBtns = chaptersEl.querySelectorAll('.walk-chapter');
+      var bars = chaptersEl.querySelectorAll('.bar i');
+
+      var current = -1, root = null, t = 0, last = 0, paused = reduced, visible = true;
+
       function show(i) {
-        steps[i].classList.add('is-in');
-        count.textContent = (i + 1) + (i === 0 ? ' step' : ' steps');
+        current = i;
+        t = 0;
+        var scene = SCENES[i];
+        var next = document.createElement('div');
+        next.className = 'scene';
+        next.innerHTML = scene.html();
+        stage.appendChild(next);
+        var prev = root;
+        root = next;
+        urlEl.textContent = scene.url;
+        scene.beats.forEach(function (b) { b.done = false; });
+        requestAnimationFrame(function () { next.classList.add('is-on'); });
+        if (prev) setTimeout(function () { prev.remove(); }, 400);
+        chapterBtns.forEach(function (b, j) {
+          if (j === i) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+        });
+        // Paused (or reduced motion): show the end state of the chapter.
+        if (paused) { requestAnimationFrame(function () { advance(Infinity); }); }
+        paint();
       }
 
-      function play() {
-        timers.forEach(clearTimeout);
-        timers = [];
-        demo.dataset.state = 'recording';
-        status.textContent = 'REC';
-        count.textContent = '0 steps';
-        email.textContent = '';
-        pass.textContent = '';
-        steps.forEach(function (s) { s.classList.remove('is-in'); });
-
-        var t = 500;
-        at(t, function () { email.classList.add('is-active'); });
-        t = typeInto(email, 'qa_lead', t, 80);
-        at(t + 150, function () { email.classList.remove('is-active'); pass.classList.add('is-active'); show(0); });
-        t = typeInto(pass, '••••••••••', t + 400, 60);
-        at(t + 150, function () { pass.classList.remove('is-active'); show(1); });
-        at(t + 700, function () { btn.classList.add('is-pressed'); });
-        at(t + 850, function () { btn.classList.remove('is-pressed'); show(2); });
-        at(t + 1500, function () { show(3); demo.dataset.state = 'done'; status.textContent = 'Done'; });
+      function advance(time) {
+        t = Math.min(time, SCENES[current].duration);
+        SCENES[current].beats.forEach(function (b) {
+          if (b.done || time < b.at) return;
+          var k = b.dur ? Math.min(1, (time - b.at) / b.dur) : 1;
+          b.run(root, k);
+          if (k === 1) b.done = true;
+        });
+        if (time === Infinity) t = SCENES[current].duration;
+        paint();
       }
 
-      replay.addEventListener('click', play);
-      play();
+      function paint() {
+        bars.forEach(function (bar, j) {
+          var w = j < current ? 1 : j > current ? 0 : t / SCENES[current].duration;
+          bar.style.width = (w * 100) + '%';
+        });
+      }
+
+      function frame(now) {
+        var dt = last ? now - last : 0;
+        last = now;
+        if (!paused && visible) {
+          advance(t + dt);
+          if (t >= SCENES[current].duration) show((current + 1) % SCENES.length);
+        }
+        requestAnimationFrame(frame);
+      }
+
+      function setPaused(p) {
+        paused = p;
+        toggle.setAttribute('aria-label', p ? 'Play walkthrough' : 'Pause walkthrough');
+        toggle.querySelector('use').setAttribute('href', p ? '#i-play' : '#i-pause');
+        if (p) advance(Infinity);
+      }
+      toggle.addEventListener('click', function () {
+        var wasPaused = paused;
+        setPaused(!paused);
+        if (wasPaused) show(current);
+      });
+
+      // Don't burn cycles while the walkthrough is off screen.
+      if ('IntersectionObserver' in window) {
+        new IntersectionObserver(function (entries) { visible = entries[0].isIntersecting; })
+          .observe(document.getElementById('walk'));
+      }
+
+      setPaused(paused);
+      show(0);
+      requestAnimationFrame(frame);
     })();
   </script>
 </body>
