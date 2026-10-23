@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "site:screens": "node scripts/capture-site-screens.js"
   },
   "engines": {
     "node": ">=18.0.0"

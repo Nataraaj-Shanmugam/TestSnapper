@@ -1,0 +1,84 @@
+{
+  "session": {
+    "id": "5189edfe-8818-499b-98e1-b22c2182a68d",
+    "name": "Sign-in smoke test",
+    "createdAt": "2026-10-23T20:03:24.922Z",
+    "author": "QA team",
+    "startTime": "2026-10-23T20:03:24.922Z",
+    "endTime": "2026-10-23T20:03:31.764Z",
+    "environment": {
+      "title": "Sign-in smoke test",
+      "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+      "url": "https://staging.example.com/sign-in",
+      "viewport": {
+        "height": 750,
+        "width": 1200
+      }
+    },
+    "stepCount": 5
+  },
+  "steps": [
+    {
+      "id": "0b37fdf6-85c4-45de-8680-8d2eea1f1e40",
+      "sessionId": "5189edfe-8818-499b-98e1-b22c2182a68d",
+      "sequence": 1,
+      "action": "type",
+      "fieldName": "Username",
+      "targetLabel": "",
+      "url": "https://staging.example.com/sign-in",
+      "value": "qa_lead",
+      "isSensitive": false,
+      "timestamp": "2026-10-23T20:03:26.515Z"
+    },
+    {
+      "id": "d87890ae-4dfb-422f-90b7-115d4624f838",
+      "sessionId": "5189edfe-8818-499b-98e1-b22c2182a68d",
+      "sequence": 2,
+      "action": "type",
+      "fieldName": "Password",
+      "targetLabel": "",
+      "url": "https://staging.example.com/sign-in",
+      "value": "••••••••",
+      "isSensitive": true,
+      "timestamp": "2026-10-23T20:03:28.019Z"
+    },
+    {
+      "id": "36a906bf-58b3-4a24-8316-1938a58fc7ee",
+      "sessionId": "5189edfe-8818-499b-98e1-b22c2182a68d",
+      "sequence": 3,
+      "action": "click",
+      "fieldName": "Password",
+      "targetLabel": "Sign in",
+      "url": "https://staging.example.com/sign-in",
+      "value": null,
+      "isSensitive": false,
+      "timestamp": "2026-10-23T20:03:28.019Z"
+    },
+    {
+      "id": "e2c729d3-63fe-49d6-85bc-7f5eb949a28b",
+      "sessionId": "5189edfe-8818-499b-98e1-b22c2182a68d",
+      "sequence": 4,
+      "action": "submit",
+      "fieldName": "Username Password Sign In",
+      "targetLabel": "Submit Form",
+      "url": "https://staging.example.com/sign-in",
+      "value": null,
+      "isSensitive": false,
+      "timestamp": "2026-10-23T20:03:28.022Z"
+    },
+    {
+      "id": "224f3891-1899-40c8-9735-292e46b64503",
+      "sessionId": "5189edfe-8818-499b-98e1-b22c2182a68d",
+      "sequence": 5,
+      "action": "navigate",
+      "fieldName": "Page Navigation",
+      "targetLabel": "Acme: Dashboard",
+      "url": "https://staging.example.com/dashboard",
+      "value": "https://staging.example.com/dashboard",
+      "isSensitive": false,
+      "hasScreenshot": false,
+      "isManual": false,
+      "timestamp": "2026-10-23T20:03:28.326Z"
+    }
+  ]
+}

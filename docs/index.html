@@ -4,26 +4,37 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TestSnapper: turn clicks into test steps</title>
-  <meta name="description" content="TestSnapper is a free Chrome extension that records your clicks and typing as test steps with field names, selectors and screenshots, then exports them to Word, PDF, CSV, JSON or Markdown. Everything stays in your browser.">
+  <meta name="description" content="TestSnapper is a free Chrome extension that records your clicks and typing as test steps with field names and screenshots, then exports them to Word, PDF, CSV, JSON or Markdown. Everything stays in your browser.">
   <meta name="author" content="Nataraaj Shanmugam">
   <meta name="theme-color" content="#2F5FC4">
   <meta property="og:title" content="TestSnapper: turn clicks into test steps">
-  <meta property="og:description" content="Record a test once in Chrome. Get numbered steps, field names, selectors and screenshots, ready to export.">
+  <meta property="og:description" content="Record a test once in Chrome. Get numbered steps, field names and screenshots, ready to export to Word, PDF, CSV, JSON or Markdown.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://nataraaj-shanmugam.github.io/TestSnapper/">
-  <meta property="og:image" content="https://nataraaj-shanmugam.github.io/TestSnapper/icon.png">
+  <meta property="og:image" content="https://nataraaj-shanmugam.github.io/TestSnapper/img/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    // Apply a saved theme before first paint so there is no flash.
+    try {
+      var saved = localStorage.getItem('ts-theme');
+      if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+    } catch (e) { /* storage unavailable: follow the system */ }
+  </script>
 
   <style>
+    /* ---------- Tokens: colours from the extension icon ---------- */
     :root {
       --ink: #142247;
       --ink-soft: #4A5677;
-      --steel: #2F5FC4;
-      --steel-strong: #23489A;
-      --steel-wash: #EAF0FC;
+      --brand: #2F5FC4;
+      --brand-strong: #23489A;
+      --brand-wash: #EAF0FC;
       --paper: #F6F8FC;
       --surface: #FFFFFF;
       --rule: #DCE3F0;
@@ -32,747 +43,311 @@
       --ok-wash: #E2F4E9;
       --mask: #8A5A00;
       --mask-wash: #FCF1DC;
-      --focus: #2F5FC4;
-      --shadow: 0 1px 2px rgb(20 38 59 / .06), 0 12px 32px -12px rgb(20 38 59 / .18);
+      --on-brand: #FFFFFF;
+      --shadow: 0 1px 2px rgb(20 34 71 / .06), 0 14px 36px -14px rgb(20 34 71 / .22);
 
-      --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-      --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
-
-      --step--1: .875rem;
-      --step-0: 1rem;
-      --step-1: 1.25rem;
-      --step-2: 1.625rem;
-      --step-3: clamp(2rem, 1.4rem + 2.4vw, 3.25rem);
-
+      --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+      --step-3: clamp(2.1rem, 1.4rem + 2.6vw, 3.4rem);
       --gutter: clamp(1rem, 4vw, 2.5rem);
-      --max: 72rem;
+      --max: 74rem;
       color-scheme: light;
     }
-
     @media (prefers-color-scheme: dark) {
-      :root {
-        --ink: #E6ECFA;
-        --ink-soft: #A6B2CF;
-        --steel: #8EAEF0;
-        --steel-strong: #B9CDF7;
-        --steel-wash: #1B2A52;
-        --paper: #0D1530;
-        --surface: #142046;
-        --rule: #263568;
-        --record: #FF7A70;
-        --ok: #62D18F;
-        --ok-wash: #12342A;
-        --mask: #F2C46B;
-        --mask-wash: #3A2D12;
-        --focus: #8EAEF0;
+      :root:not([data-theme="light"]) {
+        --ink: #E6ECFA; --ink-soft: #A6B2CF; --brand: #8EAEF0; --brand-strong: #B9CDF7; --brand-wash: #1B2A52;
+        --paper: #0D1530; --surface: #142046; --rule: #263568; --record: #FF7A70; --ok: #62D18F; --ok-wash: #12342A;
+        --mask: #F2C46B; --mask-wash: #3A2D12; --on-brand: #0D1530;
         --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 16px 40px -16px rgb(0 0 0 / .6);
         color-scheme: dark;
       }
     }
+    :root[data-theme="dark"] {
+      --ink: #E6ECFA; --ink-soft: #A6B2CF; --brand: #8EAEF0; --brand-strong: #B9CDF7; --brand-wash: #1B2A52;
+      --paper: #0D1530; --surface: #142046; --rule: #263568; --record: #FF7A70; --ok: #62D18F; --ok-wash: #12342A;
+      --mask: #F2C46B; --mask-wash: #3A2D12; --on-brand: #0D1530;
+      --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 16px 40px -16px rgb(0 0 0 / .6);
+      color-scheme: dark;
+    }
 
     *, *::before, *::after { box-sizing: border-box; }
     html { scroll-behavior: smooth; scroll-padding-top: 5rem; }
-    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
-
     body {
       margin: 0;
-      font: 400 var(--step-0)/1.6 var(--sans);
+      font: 400 1rem/1.6 var(--sans);
       color: var(--ink);
       background: var(--paper);
       -webkit-font-smoothing: antialiased;
     }
-
-    h1, h2, h3, p, ol, ul, dl, dd { margin: 0; }
+    h1, h2, h3, h4, p, ol, ul, dl, dd, figure { margin: 0; }
     ul[role="list"], ol[role="list"] { list-style: none; padding: 0; }
-    img, svg { display: block; }
-    a { color: var(--steel); text-underline-offset: .18em; }
-    a:hover { color: var(--steel-strong); }
-    code, kbd { font-family: var(--mono); font-size: .9em; }
-    kbd {
-      padding: .05em .4em;
-      border: 1px solid var(--rule);
-      border-bottom-width: 2px;
-      border-radius: 4px;
-      background: var(--surface);
-      white-space: nowrap;
-    }
-
-    :focus-visible {
-      outline: 2px solid var(--focus);
-      outline-offset: 3px;
-      border-radius: 4px;
-    }
-
-    .skip {
-      position: absolute;
-      left: 1rem;
-      top: -4rem;
-      padding: .6rem 1rem;
-      background: var(--ink);
-      color: var(--paper);
-      border-radius: 6px;
-      z-index: 100;
-    }
+    img, svg { display: block; max-width: 100%; }
+    img { height: auto; }
+    a { color: var(--brand); text-underline-offset: .18em; }
+    a:hover { color: var(--brand-strong); }
+    code, kbd, pre { font-family: var(--mono); }
+    code, kbd { font-size: .88em; }
+    kbd { padding: .05em .4em; border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px; background: var(--surface); white-space: nowrap; }
+    :focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; border-radius: 4px; }
+    .skip { position: absolute; left: 1rem; top: -4rem; padding: .6rem 1rem; background: var(--ink); color: var(--paper); border-radius: 6px; z-index: 100; }
     .skip:focus { top: 1rem; }
-
-    .wrap {
-      width: min(100% - 2 * var(--gutter), var(--max));
-      margin-inline: auto;
-    }
-
+    .wrap { width: min(100% - 2 * var(--gutter), var(--max)); margin-inline: auto; }
     .icon { width: 1.25rem; height: 1.25rem; flex: none; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-    /* ---------- Header ---------- */
+    /* ---------- Announcement + header ---------- */
+    .announce { background: var(--brand); color: var(--on-brand); font-size: .875rem; text-align: center; padding: .5rem var(--gutter); }
+    .announce a { color: inherit; font-weight: 600; }
     .site-header {
-      position: sticky;
-      top: 0;
-      z-index: 50;
+      position: sticky; top: 0; z-index: 50;
       background: color-mix(in srgb, var(--paper) 88%, transparent);
       backdrop-filter: saturate(1.4) blur(10px);
       border-bottom: 1px solid var(--rule);
     }
-    .site-header .wrap {
-      display: flex;
-      align-items: center;
-      gap: 1.5rem;
-      min-height: 4rem;
-    }
-    .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: .6rem;
-      font-weight: 700;
-      font-size: 1.125rem;
-      color: var(--ink);
-      text-decoration: none;
-      letter-spacing: -.01em;
-    }
-    .brand img { width: 2rem; height: 2rem; }
-    .nav {
-      display: flex;
-      align-items: center;
-      gap: 1.75rem;
-      margin-left: auto;
-    }
-    .nav a {
-      color: var(--ink-soft);
-      text-decoration: none;
-      font-weight: 500;
-      font-size: .95rem;
-    }
+    .site-header .wrap { display: flex; align-items: center; gap: 1rem; min-height: 4rem; }
+    .brand { display: inline-flex; align-items: center; gap: .6rem; font-weight: 700; font-size: 1.125rem; color: var(--ink); text-decoration: none; letter-spacing: -.01em; }
+    .brand img { width: 2rem; height: 2rem; border-radius: 7px; }
+    .nav { display: flex; align-items: center; gap: 1.6rem; margin-left: auto; }
+    .nav a { color: var(--ink-soft); text-decoration: none; font-weight: 500; font-size: .95rem; }
     .nav a:hover { color: var(--ink); }
-    .nav-toggle {
-      display: none;
-      margin-left: auto;
-      align-items: center;
-      justify-content: center;
-      width: 2.75rem;
-      height: 2.75rem;
-      border: 1px solid var(--rule);
-      border-radius: 8px;
-      background: var(--surface);
-      color: var(--ink);
-      cursor: pointer;
+    .icon-btn {
+      display: inline-grid; place-items: center; width: 2.75rem; height: 2.75rem;
+      border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer;
     }
+    .icon-btn .icon { width: 1.1rem; height: 1.1rem; }
+    .nav-toggle { display: none; }
 
     /* ---------- Buttons ---------- */
     .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: .55rem;
-      min-height: 2.75rem;
-      padding: .7rem 1.2rem;
-      border-radius: 8px;
-      font: 600 .975rem/1.2 var(--sans);
-      text-decoration: none;
-      border: 1px solid transparent;
-      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; gap: .55rem;
+      min-height: 2.75rem; padding: .7rem 1.2rem; border-radius: 9px;
+      font: 600 .975rem/1.2 var(--sans); text-decoration: none; border: 1px solid transparent; cursor: pointer;
       transition: background-color .15s, border-color .15s, color .15s;
     }
-    .btn-primary { background: var(--steel); color: #fff; }
-    .btn-primary:hover { background: var(--steel-strong); color: #fff; }
-    @media (prefers-color-scheme: dark) {
-      .btn-primary { background: var(--steel); color: #0D1530; }
-      .btn-primary:hover { background: var(--steel-strong); color: #0D1530; }
-    }
+    .btn-primary { background: var(--brand); color: var(--on-brand); }
+    .btn-primary:hover { background: var(--brand-strong); color: var(--on-brand); }
     .btn-quiet { background: var(--surface); color: var(--ink); border-color: var(--rule); }
     .btn-quiet:hover { border-color: var(--ink-soft); color: var(--ink); }
-    .nav .btn { color: #fff; padding: .5rem 1rem; min-height: 2.5rem; }
-    @media (prefers-color-scheme: dark) { .nav .btn { color: #0D1530; } }
+    .nav .btn { padding: .5rem 1rem; min-height: 2.5rem; color: var(--on-brand); }
 
     /* ---------- Hero ---------- */
-    .hero { padding-block: clamp(3rem, 7vw, 6rem) clamp(3rem, 6vw, 5rem); }
-    .hero .wrap {
-      display: grid;
-      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      gap: clamp(2rem, 5vw, 4.5rem);
-      align-items: center;
-    }
-    .hero h1 {
-      font-size: var(--step-3);
-      line-height: 1.08;
-      font-weight: 700;
-      letter-spacing: -.025em;
-      max-width: 14ch;
-    }
-    .hero .lede {
-      margin-top: 1.25rem;
-      font-size: var(--step-1);
-      line-height: 1.5;
-      color: var(--ink-soft);
-      max-width: 34ch;
-    }
-    .hero .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: .75rem;
-      margin-top: 2rem;
-    }
-    .hero .fine {
-      margin-top: 1rem;
-      font-size: var(--step--1);
-      color: var(--ink-soft);
-    }
+    .hero { padding-block: clamp(2.5rem, 6vw, 5rem) clamp(2.5rem, 5vw, 4rem); }
+    .hero .wrap { display: grid; grid-template-columns: minmax(0, 4.5fr) minmax(0, 7.5fr); gap: clamp(2rem, 5vw, 4rem); align-items: center; }
+    .hero h1 { font-size: var(--step-3); line-height: 1.06; font-weight: 800; letter-spacing: -.03em; max-width: 13ch; }
+    .hero .lede { margin-top: 1.25rem; font-size: 1.2rem; line-height: 1.55; color: var(--ink-soft); max-width: 34ch; }
+    .hero .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2rem; }
+    .hero .fine { margin-top: 1rem; font-size: .875rem; color: var(--ink-soft); }
 
-    /* ---------- Walkthrough: a looping, GIF-style tour built from data ---------- */
-    .walk {
-      margin: 0;
-      background: var(--surface);
-      border: 1px solid var(--rule);
-      border-radius: 14px;
-      box-shadow: var(--shadow);
-      overflow: hidden;
-    }
-    .walk-bar {
-      display: flex;
-      align-items: center;
-      gap: .75rem;
-      padding: .55rem .9rem;
-      border-bottom: 1px solid var(--rule);
-      font-size: .75rem;
-      color: var(--ink-soft);
-    }
+    /* ---------- Walkthrough (real screenshots from scripts/capture-site-screens.js) ---------- */
+    .walk { background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+    .walk-bar { display: flex; align-items: center; gap: .75rem; padding: .55rem .9rem; border-bottom: 1px solid var(--rule); font-size: .75rem; color: var(--ink-soft); }
     .walk-dots { display: flex; gap: .3rem; }
     .walk-dots i { width: .55rem; height: .55rem; border-radius: 50%; background: var(--rule); }
-    .walk-url {
-      flex: 1;
-      min-width: 0;
-      padding: .2rem .7rem;
-      border-radius: 999px;
-      background: var(--paper);
-      font-family: var(--mono);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    .walk-url { flex: 1; min-width: 0; padding: .2rem .7rem; border-radius: 999px; background: var(--paper); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .walk-stage { position: relative; aspect-ratio: 16 / 10; background: #F4F6FB; overflow: hidden; }
+    .walk-layer { position: absolute; inset: 0; opacity: 0; transition: opacity .45s ease; }
+    .walk-layer.is-on { opacity: 1; }
+    .walk-layer > img.page { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+    .walk-layer.has-popup > img.page { filter: saturate(.8) brightness(.92); }
+    .walk-layer > img.popup {
+      position: absolute; top: 3%; right: 3%; height: 94%; width: auto;
+      border-radius: 10px; box-shadow: 0 18px 50px -10px rgb(10 20 50 / .45); border: 1px solid #DCE3F0;
     }
-    .walk-stage {
-      position: relative;
-      aspect-ratio: 16 / 10;
-      background: var(--paper);
-      overflow: hidden;
-      font-size: .8rem;
-      line-height: 1.4;
+    .walk-cursor {
+      position: absolute; left: 40%; top: 80%; width: 1.4rem; height: 1.4rem; color: #142247; z-index: 3;
+      transition: left .7s cubic-bezier(.4, 0, .2, 1), top .7s cubic-bezier(.4, 0, .2, 1), opacity .3s;
+      filter: drop-shadow(0 1px 2px rgb(0 0 0 / .35)); pointer-events: none;
     }
-    .scene {
-      position: absolute;
-      inset: 0;
-      padding: 1rem;
-      opacity: 0;
-      transition: opacity .35s ease;
+    .walk-cursor.is-hidden { opacity: 0; }
+    .walk-cursor::after {
+      content: ""; position: absolute; left: -.55rem; top: -.55rem; width: 1.1rem; height: 1.1rem; border-radius: 50%;
+      border: 2px solid var(--brand); opacity: 0; transform: scale(.4);
     }
-    .scene.is-on { opacity: 1; }
-
-    /* Shared bits */
-    .w-card {
-      background: var(--surface);
-      border: 1px solid var(--rule);
-      border-radius: 10px;
+    .walk-cursor.is-click::after { animation: ripple .5s ease-out; }
+    @keyframes ripple { 0% { opacity: .9; transform: scale(.4); } 100% { opacity: 0; transform: scale(2.2); } }
+    .walk-caption {
+      position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%); z-index: 4;
+      max-width: 90%; padding: .4rem .85rem; border-radius: 999px;
+      background: rgb(20 34 71 / .88); color: #fff; font-size: .82rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .w-btn {
-      display: inline-grid;
-      place-items: center;
-      height: 2rem;
-      padding: 0 .9rem;
-      border-radius: 7px;
-      background: var(--steel);
-      color: #fff;
-      font-weight: 600;
-      transition: transform .12s, background-color .2s;
-    }
-    @media (prefers-color-scheme: dark) { .w-btn { color: #0D1530; } }
-    .w-btn.is-pressed { transform: scale(.95); }
-    .w-btn.is-stop { background: var(--record); }
-    .w-skel { height: .5rem; border-radius: 4px; background: var(--rule); margin-bottom: .5rem; }
-    .w-cursor {
-      position: absolute;
-      width: 1.1rem;
-      height: 1.1rem;
-      color: var(--ink);
-      transition: left .6s cubic-bezier(.4, 0, .2, 1), top .6s cubic-bezier(.4, 0, .2, 1);
-      pointer-events: none;
-      filter: drop-shadow(0 1px 1px rgb(0 0 0 / .25));
-    }
-    .w-step {
-      display: grid;
-      grid-template-columns: 1.4rem 1fr auto;
-      gap: .1rem .55rem;
-      align-items: center;
-      padding: .45rem .6rem;
-      border-top: 1px solid var(--rule);
-      transition: background-color .3s, opacity .3s;
-    }
-    .w-step:first-child { border-top: 0; }
-    .w-step.is-new { background: var(--steel-wash); }
-    .w-step.is-hidden { opacity: 0; }
-    .w-n {
-      grid-row: span 2;
-      width: 1.4rem;
-      height: 1.4rem;
-      display: grid;
-      place-items: center;
-      border-radius: 5px;
-      background: var(--steel-wash);
-      color: var(--steel-strong);
-      font-weight: 600;
-      font-size: .7rem;
-    }
-    .w-sel { font-family: var(--mono); font-size: .68rem; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .w-thumb {
-      grid-row: span 2;
-      width: 2.6rem;
-      height: 1.8rem;
-      border-radius: 4px;
-      border: 1px solid var(--rule);
-      background: linear-gradient(var(--steel-wash) 0 35%, var(--surface) 35%);
-    }
-
-    /* Scene 1: the popup */
-    .s-site { position: absolute; inset: 1rem; padding: 1rem; opacity: .55; }
-    .s-popup {
-      position: absolute;
-      top: .6rem;
-      right: .9rem;
-      width: min(15rem, 62%);
-      padding: .8rem;
-      box-shadow: var(--shadow);
-    }
-    .s-popup-head { display: flex; align-items: center; gap: .45rem; font-weight: 700; color: var(--steel); }
-    .s-popup-head img { width: 1.1rem; height: 1.1rem; border-radius: 3px; }
-    .s-tabs { display: flex; gap: .9rem; margin: .6rem 0; border-bottom: 1px solid var(--rule); color: var(--ink-soft); }
-    .s-tabs span { padding-bottom: .35rem; }
-    .s-tabs .on { color: var(--steel); box-shadow: inset 0 -2px var(--steel); font-weight: 600; }
-    .s-popup .w-btn { width: 100%; margin: .6rem 0; }
-    .s-live { display: flex; justify-content: space-between; color: var(--ink-soft); }
-
-    /* REC chip (mirrors the icon's badge) */
-    .rec {
-      display: inline-flex;
-      align-items: center;
-      gap: .35rem;
-      padding: .1rem .55rem .1rem .45rem;
-      border: 1px solid var(--rule);
-      border-radius: 999px;
-      background: var(--surface);
-      font-weight: 700;
-      font-size: .7rem;
-      color: var(--ink);
-      white-space: nowrap;
-    }
-    .rec::before { content: ""; width: .5rem; height: .5rem; border-radius: 50%; background: var(--ink-soft); }
-    .rec.is-live::before { background: var(--record); }
-
-    /* Scene 2: the page under test */
-    .s-form { width: min(15rem, 70%); margin: .4rem auto 0; padding: 1rem; }
-    .s-form h4 { margin: 0 0 .7rem; font-size: .9rem; }
-    .s-field { margin-bottom: .6rem; }
-    .s-field span { display: block; font-size: .7rem; color: var(--ink-soft); margin-bottom: .2rem; }
-    .s-input {
-      height: 1.8rem;
-      padding: 0 .5rem;
-      display: flex;
-      align-items: center;
-      border: 1px solid var(--rule);
-      border-radius: 6px;
-      background: var(--surface);
-      font-family: var(--mono);
-      font-size: .75rem;
-      overflow: hidden;
-      white-space: nowrap;
-    }
-    .s-input.is-active { border-color: var(--steel); box-shadow: 0 0 0 2px var(--steel-wash); }
-    .s-form .w-btn { width: 100%; }
-    .s-float {
-      position: absolute;
-      right: .9rem;
-      bottom: .9rem;
-      display: flex;
-      align-items: center;
-      gap: .5rem;
-      padding: .35rem .5rem;
-      box-shadow: var(--shadow);
-      font-weight: 600;
-    }
-
-    /* Scene 3: review page */
-    .s-review-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .6rem; }
-    .s-review-head h4 { margin: 0; font-size: .9rem; }
-    .s-review-head .w-btn { height: 1.7rem; font-size: .72rem; padding: 0 .7rem; }
-    .s-list { overflow: hidden; }
-    .s-edit { outline: 2px solid var(--steel); outline-offset: 1px; border-radius: 3px; }
-    .tag {
-      display: inline-block;
-      margin-left: .3rem;
-      padding: 0 .35rem;
-      border-radius: 4px;
-      font-size: .65rem;
-      font-weight: 600;
-    }
-    .tag-mask { background: var(--mask-wash); color: var(--mask); }
-    .tag-manual { background: var(--ok-wash); color: var(--ok); }
-
-    /* Scene 4: export */
-    .s-export { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: .9rem; height: 100%; }
-    .s-panel { padding: .8rem; align-self: start; }
-    .s-panel h4 { margin: 0 0 .5rem; font-size: .85rem; }
-    .s-formats { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .7rem; }
-    .s-formats span {
-      padding: .15rem .5rem;
-      border: 1px solid var(--rule);
-      border-radius: 999px;
-      font-size: .7rem;
-      color: var(--ink-soft);
-      transition: all .2s;
-    }
-    .s-formats .on { background: var(--steel); border-color: var(--steel); color: #fff; font-weight: 600; }
-    @media (prefers-color-scheme: dark) { .s-formats .on { color: #0D1530; } }
-    .s-panel .w-btn { width: 100%; }
-    .s-progress { height: .35rem; margin-top: .6rem; border-radius: 99px; background: var(--rule); overflow: hidden; }
-    .s-progress i { display: block; height: 100%; width: 0; background: var(--steel); transition: width 1.2s ease-out; }
-    .s-doc {
-      padding: .9rem 1rem;
-      background: #fff;
-      color: #1d2433;
-      border-radius: 6px;
-      box-shadow: var(--shadow);
-      transform: translateY(1.5rem);
-      opacity: 0;
-      transition: opacity .45s, transform .45s;
-      overflow: hidden;
-    }
-    .s-doc.is-in { transform: none; opacity: 1; }
-    .s-doc h5 { margin: 0; font-size: .85rem; }
-    .s-doc .meta { margin: .2rem 0 .6rem; font-size: .65rem; color: #5b6478; }
-    .s-doc ol { margin: 0; padding-left: 1rem; font-size: .7rem; }
-    .s-doc li { margin-bottom: .35rem; }
-    .s-doc .shot { display: block; height: 2.2rem; margin-top: .25rem; border: 1px solid #dfe5ef; border-radius: 3px; background: linear-gradient(#eaf0fc 0 35%, #fff 35%); }
-
-    /* Chapter controls under the frame */
-    .walk-nav {
-      display: flex;
-      align-items: stretch;
-      gap: .5rem;
-      padding: .6rem .7rem .7rem;
-      border-top: 1px solid var(--rule);
-    }
-    .walk-chapters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; flex: 1; list-style: none; margin: 0; padding: 0; }
-    .walk-chapter {
-      width: 100%;
-      min-height: 2.75rem;
-      padding: .35rem .1rem 0;
-      border: 0;
-      background: none;
-      text-align: left;
-      font: 500 .75rem/1.3 var(--sans);
-      color: var(--ink-soft);
-      cursor: pointer;
-    }
+    .walk-nav { display: flex; align-items: stretch; gap: .5rem; padding: .6rem .7rem .7rem; border-top: 1px solid var(--rule); }
+    .walk-chapters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; flex: 1; }
+    .walk-chapter { width: 100%; min-height: 2.75rem; padding: .35rem .1rem 0; border: 0; background: none; text-align: left; font: 500 .78rem/1.3 var(--sans); color: var(--ink-soft); cursor: pointer; }
     .walk-chapter .bar { display: block; height: 3px; border-radius: 2px; background: var(--rule); margin-bottom: .4rem; overflow: hidden; }
-    .walk-chapter .bar i { display: block; height: 100%; width: 0; background: var(--steel); }
+    .walk-chapter .bar i { display: block; height: 100%; width: 0; background: var(--brand); }
     .walk-chapter[aria-current="step"] { color: var(--ink); font-weight: 600; }
-    .walk-toggle {
-      flex: none;
-      width: 2.75rem;
-      height: 2.75rem;
-      display: grid;
-      place-items: center;
-      border: 1px solid var(--rule);
-      border-radius: 8px;
-      background: var(--surface);
-      color: var(--ink);
-      cursor: pointer;
-    }
-    .walk-toggle .icon { width: 1rem; height: 1rem; }
+    .walk-toggle { flex: none; }
 
-    @media (max-width: 560px) {
-      .walk-stage { aspect-ratio: 4 / 3.6; font-size: .75rem; }
-      .s-export { grid-template-columns: 1fr; }
-      .s-doc { position: absolute; left: 1rem; right: 1rem; top: 3.2rem; }
-      .walk-chapter { font-size: .7rem; }
-    }
+    /* ---------- Trust strip ---------- */
+    .trust { border-block: 1px solid var(--rule); background: var(--surface); }
+    .trust ul { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .trust li { padding: 1.1rem 1rem; text-align: center; border-left: 1px solid var(--rule); }
+    .trust li:first-child { border-left: 0; }
+    .trust strong { display: block; font-size: 1.15rem; font-weight: 700; letter-spacing: -.01em; }
+    .trust span { font-size: .82rem; color: var(--ink-soft); }
+    .stars { color: #E8A317; letter-spacing: .05em; }
 
     /* ---------- Sections ---------- */
     .section { padding-block: clamp(3.5rem, 8vw, 6rem); }
     .section + .section { border-top: 1px solid var(--rule); }
-    .section-head { max-width: 40rem; margin-bottom: clamp(2rem, 4vw, 3rem); }
-    .section-head h2 {
-      font-size: var(--step-2);
-      line-height: 1.2;
-      font-weight: 700;
-      letter-spacing: -.015em;
-    }
-    .section-head p {
-      margin-top: .75rem;
-      color: var(--ink-soft);
-      font-size: 1.075rem;
-    }
+    .section-head { max-width: 42rem; margin-bottom: clamp(2rem, 4vw, 3rem); }
+    .section-head h2 { font-size: clamp(1.6rem, 1.2rem + 1.4vw, 2.25rem); line-height: 1.15; font-weight: 800; letter-spacing: -.025em; }
+    .section-head p { margin-top: .75rem; color: var(--ink-soft); font-size: 1.075rem; }
 
-    /* Features: plain two-column list, icon + text, separated by rules */
-    .features {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      column-gap: clamp(2rem, 5vw, 4rem);
-    }
-    .feature {
-      display: grid;
-      grid-template-columns: 2.5rem 1fr;
-      gap: 1rem;
-      padding-block: 1.5rem;
-      border-top: 1px solid var(--rule);
-    }
-    .feature-icon {
-      width: 2.5rem;
-      height: 2.5rem;
-      display: grid;
-      place-items: center;
-      border-radius: 8px;
-      background: var(--steel-wash);
-      color: var(--steel-strong);
-    }
-    .feature h3 { font-size: 1.075rem; font-weight: 600; line-height: 1.35; }
-    .feature p { margin-top: .35rem; color: var(--ink-soft); max-width: 46ch; }
+    /* Features: tiles of different sizes, each with a small real-looking visual */
+    .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    .tile { display: flex; flex-direction: column; gap: 1rem; padding: 1.5rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; }
+    .tile.wide { grid-column: span 2; }
+    .tile h3 { font-size: 1.1rem; font-weight: 700; letter-spacing: -.01em; }
+    .tile p { color: var(--ink-soft); font-size: .95rem; margin-top: .3rem; }
+    .tile-visual { margin-top: auto; padding: .9rem; border-radius: 10px; background: var(--paper); border: 1px solid var(--rule); font-size: .82rem; }
+    .v-step { display: grid; grid-template-columns: 1.5rem 1fr auto; gap: .6rem; align-items: center; padding: .45rem 0; border-top: 1px solid var(--rule); }
+    .v-step:first-child { border-top: 0; padding-top: 0; }
+    .v-n { width: 1.5rem; height: 1.5rem; display: grid; place-items: center; border-radius: 50%; background: var(--brand); color: var(--on-brand); font-size: .72rem; font-weight: 700; }
+    .pill { display: inline-block; padding: .05rem .45rem; border-radius: 5px; font-size: .68rem; font-weight: 700; letter-spacing: .02em; }
+    .pill-type { background: var(--ok-wash); color: var(--ok); }
+    .pill-click { background: var(--brand-wash); color: var(--brand-strong); }
+    .pill-mask { background: var(--mask-wash); color: var(--mask); }
+    .v-compare { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: .6rem; text-align: center; }
+    .v-compare code { padding: .3rem .4rem; border-radius: 6px; background: var(--surface); border: 1px dashed var(--rule); color: var(--ink-soft); font-size: .78rem; overflow-wrap: anywhere; }
+    .v-compare strong { padding: .3rem .4rem; border-radius: 6px; background: var(--brand-wash); color: var(--brand-strong); }
+    .v-shot { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+    .v-shot img { border-radius: 6px; border: 1px solid var(--rule); aspect-ratio: 16 / 10; object-fit: cover; object-position: top; width: 100%; }
+    .v-redact { display: grid; grid-template-columns: auto 1fr 1fr; gap: .35rem .9rem; align-items: center; }
+    .v-redact .h { font-size: .7rem; font-weight: 700; color: var(--ink-soft); }
+    .v-redact code { font-size: .78rem; }
+    .v-redact s { color: var(--ink-soft); }
+    .v-log { font-family: var(--mono); font-size: .74rem; display: grid; gap: .3rem; }
+    .v-log span b { display: inline-block; min-width: 2.6rem; font-weight: 500; }
+    .v-log .bad { color: var(--record); }
+    .v-keys { display: grid; gap: .45rem; }
+    .v-keys div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem .5rem; }
 
-    /* How it works: a real sequence, so it is numbered */
-    .steps {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 1.5rem;
-      counter-reset: step;
-    }
-    .steps li {
-      counter-increment: step;
-      padding-top: 1rem;
-      border-top: 2px solid var(--steel);
-    }
+    /* How it works */
+    .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; counter-reset: step; }
+    .steps li { counter-increment: step; padding: 1.25rem; border-radius: 12px; background: var(--surface); border: 1px solid var(--rule); position: relative; }
     .steps li::before {
-      content: counter(step);
-      display: block;
-      font-weight: 700;
-      font-size: 1.5rem;
-      color: var(--steel);
-      line-height: 1;
-      margin-bottom: .75rem;
+      content: counter(step); display: grid; place-items: center; width: 2rem; height: 2rem; margin-bottom: .9rem;
+      border-radius: 50%; background: var(--brand); color: var(--on-brand); font-weight: 700;
     }
-    .steps h3 { font-size: 1.075rem; font-weight: 600; }
-    .steps p { margin-top: .35rem; color: var(--ink-soft); font-size: .975rem; }
+    .steps h3 { font-size: 1.05rem; font-weight: 700; }
+    .steps p { margin-top: .35rem; color: var(--ink-soft); font-size: .95rem; }
+
+    /* What you get: audience switch + real sample viewer */
+    .audience { display: inline-flex; flex-wrap: wrap; gap: .25rem; padding: .25rem; border-radius: 10px; background: var(--surface); border: 1px solid var(--rule); margin-bottom: 1.25rem; }
+    .audience button { min-height: 2.5rem; padding: .4rem 1rem; border: 0; border-radius: 8px; background: none; font: 600 .9rem var(--sans); color: var(--ink-soft); cursor: pointer; }
+    .audience button[aria-selected="true"] { background: var(--brand); color: var(--on-brand); }
+    .output { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: 1.5rem; align-items: start; }
+    .output-copy h3 { font-size: 1.25rem; font-weight: 700; }
+    .output-copy p { margin-top: .5rem; color: var(--ink-soft); }
+    .output-copy ul { margin-top: 1rem; padding-left: 1.1rem; color: var(--ink-soft); }
+    .output-copy li { margin-bottom: .35rem; }
+    .output-copy .btn { margin-top: 1.25rem; }
+    .viewer { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+    .viewer-tabs { display: flex; flex-wrap: wrap; gap: .25rem; padding: .5rem; border-bottom: 1px solid var(--rule); }
+    .viewer-tabs button { min-height: 2.25rem; padding: .3rem .8rem; border: 0; border-radius: 7px; background: none; font: 500 .85rem var(--sans); color: var(--ink-soft); cursor: pointer; }
+    .viewer-tabs button[aria-selected="true"] { background: var(--brand-wash); color: var(--brand-strong); font-weight: 600; }
+    .viewer-body { height: 24rem; overflow: auto; }
+    .viewer-body img { width: 100%; }
+    .viewer-body pre { margin: 0; padding: 1rem 1.1rem; font-size: .78rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 
     /* Export formats: 3 tiles on the first row, 2 wider ones on the second */
-    .formats {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 1rem;
-    }
-    .format {
-      grid-column: span 2;
-      display: grid;
-      grid-template-columns: auto 1fr;
-      grid-template-rows: auto 1fr;
-      column-gap: 1rem;
-      row-gap: .5rem;
-      padding: 1.5rem;
-      border: 1px solid var(--rule);
-      border-radius: 12px;
-      background: var(--surface);
-    }
+    .formats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1rem; margin-top: 2.5rem; }
+    .format { grid-column: span 2; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto 1fr; column-gap: 1rem; row-gap: .4rem; padding: 1.25rem 1.4rem; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); }
     .format:nth-child(n + 4) { grid-column: span 3; }
-    .format-icon {
-      grid-row: span 2;
-      width: 3rem;
-      height: 3rem;
-      display: grid;
-      place-items: center;
-      border-radius: 10px;
-      background: var(--steel-wash);
-      color: var(--steel);
-    }
-    .format-icon .icon { width: 1.5rem; height: 1.5rem; }
-    .format dt {
-      display: flex;
-      align-items: baseline;
-      flex-wrap: wrap;
-      gap: .5rem;
-      font-weight: 600;
-      font-size: 1.075rem;
-    }
-    .format dt small {
-      padding: .05rem .45rem;
-      border-radius: 4px;
-      background: var(--paper);
-      border: 1px solid var(--rule);
-      font: 500 .75rem var(--mono);
-      color: var(--ink-soft);
-    }
-    .format dd { color: var(--ink-soft); font-size: .975rem; }
+    .format-icon { grid-row: span 2; width: 2.75rem; height: 2.75rem; display: grid; place-items: center; border-radius: 10px; background: var(--brand-wash); color: var(--brand); }
+    .format-icon .icon { width: 1.4rem; height: 1.4rem; }
+    .format dt { display: flex; align-items: baseline; flex-wrap: wrap; gap: .5rem; font-weight: 700; }
+    .format dt small { padding: .05rem .45rem; border-radius: 4px; background: var(--paper); border: 1px solid var(--rule); font: 500 .72rem var(--mono); color: var(--ink-soft); }
+    .format dd { color: var(--ink-soft); font-size: .95rem; }
+    .format dd a { font-weight: 600; }
 
     /* Privacy */
-    .privacy {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: clamp(2rem, 5vw, 4rem);
-      align-items: start;
-    }
-    .checks li {
-      display: flex;
-      gap: .75rem;
-      padding-block: .7rem;
-      border-top: 1px solid var(--rule);
-    }
+    .privacy { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(2rem, 5vw, 4rem); align-items: center; }
+    .checks li { display: flex; gap: .75rem; padding-block: .7rem; border-top: 1px solid var(--rule); }
     .checks li:first-child { border-top: 0; padding-top: 0; }
     .checks .icon { color: var(--ok); margin-top: .2rem; }
-    .redact-sample {
-      background: var(--surface);
-      border: 1px solid var(--rule);
-      border-radius: 12px;
-      padding: 1.25rem;
-      font-family: var(--mono);
-      font-size: .85rem;
-    }
-    .redact-sample p { color: var(--ink-soft); font-family: var(--sans); font-size: .875rem; margin-bottom: .75rem; }
-    .redact-row {
-      display: grid;
-      grid-template-columns: 9rem 1fr;
-      gap: 1rem;
-      padding-block: .5rem;
-      border-top: 1px solid var(--rule);
-    }
-    .redact-row span:first-child { color: var(--ink-soft); font-family: var(--sans); }
+    .privacy-shot { border-radius: 12px; border: 1px solid var(--rule); box-shadow: var(--shadow); overflow: hidden; }
+    .privacy-shot img { width: 100%; }
+    .privacy-shot figcaption { padding: .6rem .9rem; font-size: .85rem; color: var(--ink-soft); background: var(--surface); border-top: 1px solid var(--rule); }
 
     /* Install */
-    .install {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 1.5rem;
-    }
-    .install-path {
-      padding: 1.5rem;
-      border: 1px solid var(--rule);
-      border-radius: 12px;
-      background: var(--surface);
-    }
-    .install-path h3 { font-size: 1.125rem; font-weight: 600; }
+    .install { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .install-path { padding: 1.5rem; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); }
+    .install-path h3 { font-size: 1.125rem; font-weight: 700; }
     .install-path > p { margin-top: .35rem; color: var(--ink-soft); }
     .install-path ol { margin-top: 1rem; padding-left: 1.25rem; }
     .install-path li { padding-block: .25rem; }
-    .install-path li::marker { color: var(--ink-soft); }
     .install-path .btn { margin-top: 1.25rem; }
-    pre {
-      margin: 1rem 0 0;
-      padding: 1rem;
-      border-radius: 8px;
-      background: var(--paper);
-      border: 1px solid var(--rule);
-      overflow-x: auto;
-      font: .85rem/1.6 var(--mono);
-    }
+    pre.cmd { margin: 1rem 0 0; padding: 1rem; border-radius: 8px; background: var(--paper); border: 1px solid var(--rule); overflow-x: auto; font-size: .85rem; line-height: 1.6; }
 
-    /* Shortcuts strip */
-    .shortcuts {
-      display: flex;
-      flex-wrap: wrap;
-      gap: .5rem 2rem;
-      margin-top: 2rem;
-      color: var(--ink-soft);
-      font-size: .95rem;
-    }
+    /* FAQ */
+    .faq { max-width: 50rem; }
+    .faq details { border-top: 1px solid var(--rule); }
+    .faq details:last-child { border-bottom: 1px solid var(--rule); }
+    .faq summary { display: flex; justify-content: space-between; gap: 1rem; padding: 1.1rem 0; font-weight: 600; font-size: 1.05rem; cursor: pointer; list-style: none; }
+    .faq summary::-webkit-details-marker { display: none; }
+    .faq summary::after { content: "+"; font-size: 1.4rem; line-height: 1; color: var(--brand); transition: transform .2s; }
+    .faq details[open] summary::after { transform: rotate(45deg); }
+    .faq details > div { padding: 0 0 1.2rem; color: var(--ink-soft); max-width: 44rem; }
+    .faq details > div p + p { margin-top: .6rem; }
 
-    /* About */
-    .about {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 1.5rem;
-      align-items: start;
-      max-width: 44rem;
-    }
-    .about-mark {
-      width: 3.5rem;
-      height: 3.5rem;
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      background: var(--steel-wash);
-      color: var(--steel-strong);
-      font-weight: 700;
-    }
-    .about h2 { font-size: 1.125rem; font-weight: 600; }
+    /* About + footer */
+    .about { display: grid; grid-template-columns: auto 1fr; gap: 1.5rem; align-items: start; max-width: 44rem; }
+    .about-mark { width: 3.5rem; height: 3.5rem; border-radius: 50%; display: grid; place-items: center; background: var(--brand-wash); color: var(--brand-strong); font-weight: 700; }
+    .about h2 { font-size: 1.125rem; font-weight: 700; }
     .about p { margin-top: .5rem; color: var(--ink-soft); }
     .about .links { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin-top: .75rem; }
-
-    /* Footer */
-    .site-footer {
-      border-top: 1px solid var(--rule);
-      padding-block: 2.5rem;
-      font-size: .925rem;
-      color: var(--ink-soft);
-    }
-    .site-footer .wrap {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      gap: 1.5rem;
-    }
+    .site-footer { border-top: 1px solid var(--rule); padding-block: 2.5rem; font-size: .925rem; color: var(--ink-soft); }
+    .site-footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1.5rem; }
     .site-footer ul { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; }
     .site-footer a { color: var(--ink-soft); }
     .site-footer a:hover { color: var(--ink); }
 
     /* ---------- Responsive ---------- */
-    @media (max-width: 960px) {
+    @media (max-width: 1000px) {
       .hero .wrap { grid-template-columns: 1fr; }
-      .hero h1 { max-width: 18ch; }
-      .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 2rem; }
+      .hero h1 { max-width: 16ch; }
+      .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .trust ul { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .trust li:nth-child(4) { border-left: 0; }
+      .trust li:nth-child(n + 4) { border-top: 1px solid var(--rule); }
+      .output { grid-template-columns: 1fr; }
       .formats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .format, .format:nth-child(n + 4) { grid-column: auto; }
       .format:last-child { grid-column: 1 / -1; }
     }
-    @media (max-width: 760px) {
-      .nav-toggle { display: inline-flex; }
+    @media (max-width: 820px) {
+      .nav-toggle { display: inline-grid; margin-left: auto; }
       .nav {
-        display: none;
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 0;
-        padding: .5rem var(--gutter) 1rem;
-        background: var(--paper);
-        border-bottom: 1px solid var(--rule);
+        display: none; position: absolute; top: 100%; left: 0; right: 0; flex-direction: column; align-items: stretch; gap: 0;
+        padding: .5rem var(--gutter) 1rem; background: var(--paper); border-bottom: 1px solid var(--rule);
       }
       .nav.is-open { display: flex; }
       .nav a { padding: .8rem 0; border-top: 1px solid var(--rule); }
       .nav a:first-child { border-top: 0; }
-      .nav .btn { margin-top: .5rem; border-top: 0; }
-      .features, .privacy, .install { grid-template-columns: 1fr; }
-      .formats { grid-template-columns: 1fr; }
-      .format, .format:nth-child(n + 4) { grid-column: auto; }
+      .nav .btn { margin-top: .5rem; }
+      .tiles { grid-template-columns: 1fr; }
+      .tile.wide { grid-column: auto; }
+      .privacy, .install { grid-template-columns: minmax(0, 1fr); }
     }
     @media (max-width: 560px) {
-      .steps { grid-template-columns: 1fr; }
-      .redact-row { grid-template-columns: 1fr; gap: .1rem; }
+      .steps, .formats { grid-template-columns: 1fr; }
+      .format:last-child { grid-column: auto; }
+      .trust ul { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .trust li { border-left: 0; border-top: 1px solid var(--rule); }
+      .trust li:nth-child(even) { border-left: 1px solid var(--rule); }
+      .trust li:nth-child(-n + 2) { border-top: 0; }
       .hero .actions .btn { flex: 1 1 100%; }
+      .walk-chapter { font-size: .7rem; }
+      .walk-caption { font-size: .72rem; }
+      .v-redact { grid-template-columns: 1fr 1fr; }
+      .v-redact .f { grid-column: 1 / -1; font-weight: 600; }
+      .v-redact .h:first-child { display: none; }
     }
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { transition-duration: 0s !important; }
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: 0s !important; animation: none !important; }
     }
   </style>
 </head>
@@ -801,10 +376,14 @@
       <symbol id="i-replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/></symbol>
       <symbol id="i-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></symbol>
       <symbol id="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
     </defs>
   </svg>
-
   <a class="skip" href="#main">Skip to content</a>
+
+  <p class="announce">New in 1.1.8: a redesigned popup and review page, settings profiles and recording fixes. <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper#version-history">See what changed</a></p>
 
   <header class="site-header">
     <div class="wrap">
@@ -812,17 +391,20 @@
         <img src="icon.png" alt="" width="32" height="32">
         TestSnapper
       </a>
-      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu">
+      <button class="icon-btn nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu">
         <svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg>
       </button>
       <nav class="nav" id="site-nav" aria-label="Main">
         <a href="#features">Features</a>
-        <a href="#how-it-works">How it works</a>
-        <a href="#export">Export</a>
+        <a href="#output">What you get</a>
         <a href="#privacy">Privacy</a>
+        <a href="#faq">FAQ</a>
         <a href="https://github.com/Nataraaj-Shanmugam/TestSnapper">GitHub</a>
         <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala">Add to Chrome</a>
       </nav>
+      <button class="icon-btn" type="button" id="theme-toggle" aria-label="Theme: system">
+        <svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg>
+      </button>
     </div>
   </header>
 
@@ -831,7 +413,7 @@
       <div class="wrap">
         <div>
           <h1 id="hero-title">Click through your test once. Get the test case.</h1>
-          <p class="lede">TestSnapper records what you do in Chrome as numbered test steps, with field names, selectors and screenshots. Review them, then export to Word, PDF, CSV, JSON or Markdown.</p>
+          <p class="lede">TestSnapper records what you do in Chrome as numbered test steps with field names and screenshots. Review them, then export to Word, PDF, CSV, JSON or Markdown.</p>
           <div class="actions">
             <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala">
               <svg class="icon" aria-hidden="true"><use href="#i-chrome"/></svg>
@@ -845,26 +427,34 @@
           <p class="fine">Open source under MIT. Runs entirely in your browser. Chrome 105 or later.</p>
         </div>
 
-        <figure class="walk" id="walk" aria-label="Walkthrough: start a recording, use the site, review the steps, export to Word">
+        <figure class="walk" id="walk" aria-label="Walkthrough of the real extension: start a recording, use a site, review the steps, export to Word">
           <div class="walk-bar" aria-hidden="true">
             <span class="walk-dots"><i></i><i></i><i></i></span>
-            <span class="walk-url" id="walk-url">staging.example.com/sign-in</span>
+            <span class="walk-url" id="walk-url">TestSnapper popup</span>
           </div>
-          <div class="walk-stage" id="walk-stage" aria-hidden="true">
-            <noscript>
-              <div class="scene is-on">
-                <p>Start a recording, use the site as normal, review the steps, then export them to Word, PDF, CSV, JSON or Markdown.</p>
-              </div>
-            </noscript>
+          <div class="walk-stage" id="walk-stage">
+            <div class="walk-layer is-on">
+              <img class="page" src="img/walk-07-review.png" alt="The TestSnapper review page listing recorded steps" width="1200" height="750">
+            </div>
           </div>
           <div class="walk-nav">
-            <ol class="walk-chapters" id="walk-chapters" aria-label="Walkthrough chapters"></ol>
-            <button class="walk-toggle" type="button" id="walk-toggle" aria-label="Pause walkthrough">
+            <ol class="walk-chapters" id="walk-chapters" role="list" aria-label="Walkthrough chapters"></ol>
+            <button class="icon-btn walk-toggle" type="button" id="walk-toggle" aria-label="Pause walkthrough" hidden>
               <svg class="icon" aria-hidden="true"><use href="#i-pause"/></svg>
             </button>
           </div>
         </figure>
       </div>
+    </section>
+
+    <section class="trust" aria-label="At a glance">
+      <ul class="wrap" role="list">
+        <li><strong><span class="stars" aria-hidden="true">★</span> 4.7 / 5</strong><span>Chrome Web Store rating</span></li>
+        <li><strong>1.1.8</strong><span>Updated October 2026</span></li>
+        <li><strong>443</strong><span>Automated tests</span></li>
+        <li><strong>0</strong><span>Servers your data touches</span></li>
+        <li><strong>MIT</strong><span>Open source</span></li>
+      </ul>
     </section>
 
     <section class="section" id="features" aria-labelledby="features-title">
@@ -873,47 +463,79 @@
           <h2 id="features-title">Steps someone else can follow</h2>
           <p>Manual test cases and bug reports take longer to write than to run. TestSnapper writes them while you run them.</p>
         </div>
-        <ul class="features" role="list">
-          <li class="feature">
-            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-record"/></svg></span>
+        <ul class="tiles" role="list">
+          <li class="tile wide">
             <div>
               <h3>Records every interaction</h3>
               <p>Clicks, typing, dropdowns, checkboxes, form submits, key presses and page loads, in every frame. Pause and resume whenever you like.</p>
             </div>
+            <div class="tile-visual" aria-hidden="true">
+              <div class="v-step"><span class="v-n">1</span><span>Type "qa_lead" in Username</span><span class="pill pill-type">TYPE</span></div>
+              <div class="v-step"><span class="v-n">2</span><span>Type "••••••••" in Password</span><span class="pill pill-mask">REDACTED</span></div>
+              <div class="v-step"><span class="v-n">3</span><span>Click "Sign in"</span><span class="pill pill-click">CLICK</span></div>
+            </div>
           </li>
-          <li class="feature">
-            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg></span>
+          <li class="tile">
             <div>
               <h3>Names fields the way people do</h3>
-              <p>"Email" rather than <code>input#f-29a</code>. Names come from labels, ARIA, placeholders and nearby text. If none is found, you're asked.</p>
+              <p>From labels, ARIA, placeholders and nearby text. If none is found, you're asked.</p>
+            </div>
+            <div class="tile-visual v-compare" aria-hidden="true">
+              <code>input#f-29a</code><span>→</span><strong>Email</strong>
             </div>
           </li>
-          <li class="feature">
-            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-target"/></svg></span>
-            <div>
-              <h3>Stable selectors for automation</h3>
-              <p>Each step stores CSS and XPath selectors. IDs, test IDs, names and ARIA attributes are preferred, and auto-generated IDs are avoided.</p>
-            </div>
-          </li>
-          <li class="feature">
-            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-camera"/></svg></span>
+          <li class="tile">
             <div>
               <h3>Screenshots as evidence</h3>
-              <p>Capture on demand with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, on every page change, or on a timer. Choose PNG or high-quality JPEG.</p>
+              <p>On demand with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, on every page change, or on a timer.</p>
+            </div>
+            <div class="tile-visual v-shot" aria-hidden="true">
+              <img src="img/walk-02-page.png" alt="" loading="lazy" width="1200" height="750">
+              <img src="img/walk-04-password.png" alt="" loading="lazy" width="1200" height="750">
+              <img src="img/walk-05-dashboard.png" alt="" loading="lazy" width="1200" height="750">
             </div>
           </li>
-          <li class="feature">
-            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-edit"/></svg></span>
+          <li class="tile wide">
+            <div>
+              <h3>Sensitive values never get stored</h3>
+              <p>Passwords, PINs, card numbers, CVCs, SSNs, dates of birth and tokens are masked the moment they're recorded. Screenshots are skipped while a password or payment field has focus.</p>
+            </div>
+            <div class="tile-visual v-redact" aria-hidden="true">
+              <span class="h">Field</span><span class="h">You typed</span><span class="h">TestSnapper stores</span>
+              <span class="f">Password</span><code><s>correct-horse</s></code><code>••••••••</code>
+              <span class="f">Card number</span><code><s>4242 4242 4242 4242</s></code><code>**** **** **** ****</code>
+              <span class="f">Email field</span><code><s>qa@example.com</s></code><code>***@***.com</code>
+            </div>
+          </li>
+          <li class="tile">
             <div>
               <h3>Review before you share</h3>
-              <p>Rename, reorder, delete or add steps in card or table view, with undo. A privacy audit lists everything that was masked.</p>
+              <p>Rename, reorder, delete or add steps in card or table view, with undo.</p>
+            </div>
+            <div class="tile-visual" aria-hidden="true">
+              <div class="v-step"><span class="v-n">4</span><span>Check: welcome banner shows</span><span class="pill pill-type">MANUAL</span></div>
             </div>
           </li>
-          <li class="feature">
-            <span class="feature-icon"><svg class="icon" aria-hidden="true"><use href="#i-network"/></svg></span>
+          <li class="tile">
             <div>
               <h3>Optional API call log</h3>
-              <p>Record the XHR and fetch requests a page makes, or only the failed ones. Method, URL and status only, never bodies.</p>
+              <p>Record the XHR and fetch calls a page makes, or only failures. Never bodies.</p>
+            </div>
+            <div class="tile-visual v-log" aria-hidden="true">
+              <span><b>POST</b> /api/session 200</span>
+              <span><b>GET</b> /api/profile 200</span>
+              <span class="bad"><b>GET</b> /api/alerts 503</span>
+            </div>
+          </li>
+          <li class="tile">
+            <div>
+              <h3>Keyboard first</h3>
+              <p>Use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd> on a Mac.</p>
+            </div>
+            <div class="tile-visual v-keys">
+              <div><span>Screenshot</span><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></span></div>
+              <div><span>Pause or resume</span><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd></span></div>
+              <div><span>Stop</span><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></div>
             </div>
           </li>
         </ul>
@@ -926,63 +548,68 @@
           <h2 id="how-title">How it works</h2>
         </div>
         <ol class="steps" role="list">
-          <li>
-            <h3>Start recording</h3>
-            <p>Open the page you're testing, click the TestSnapper icon and press Start.</p>
-          </li>
-          <li>
-            <h3>Run your test</h3>
-            <p>Use the site as normal. Each action appears in the popup as you go.</p>
-          </li>
-          <li>
-            <h3>Review the steps</h3>
-            <p>Click View Steps to tidy names, add notes or insert manual checks.</p>
-          </li>
-          <li>
-            <h3>Export</h3>
-            <p>Pick a format and screenshot size. The file is named after the session.</p>
-          </li>
+          <li><h3>Start recording</h3><p>Open the page you're testing, click the TestSnapper icon and press Start.</p></li>
+          <li><h3>Run your test</h3><p>Use the site as normal. A small toolbar on the page shows the timer, pause, screenshot and stop.</p></li>
+          <li><h3>Review the steps</h3><p>Stop opens the review page. Tidy names, add manual checks, check the privacy audit.</p></li>
+          <li><h3>Export</h3><p>Pick a format and screenshot size. The file is named after the session.</p></li>
         </ol>
-        <p class="shortcuts">
-          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> screenshot</span>
-          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd> pause or resume</span>
-          <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> stop</span>
-          <span>Use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd> on a Mac.</span>
-        </p>
       </div>
     </section>
 
-    <section class="section" id="export" aria-labelledby="export-title">
+    <section class="section" id="output" aria-labelledby="output-title">
       <div class="wrap">
         <div class="section-head">
-          <h2 id="export-title">Five export formats</h2>
-          <p>One recording, whichever format your team or tool needs.</p>
+          <h2 id="output-title">What you get</h2>
+          <p>These are the real files from the walkthrough's recording. Pick who it's for, or open any format.</p>
         </div>
-        <dl class="formats">
+
+        <div class="audience" role="tablist" aria-label="Who is it for">
+          <button type="button" role="tab" aria-selected="true" data-audience="qa">QA teams</button>
+          <button type="button" role="tab" aria-selected="false" data-audience="dev">Developers</button>
+          <button type="button" role="tab" aria-selected="false" data-audience="compliance">Compliance</button>
+        </div>
+
+        <div class="output">
+          <div class="output-copy" id="audience-copy" aria-live="polite"></div>
+          <div class="viewer">
+            <div class="viewer-tabs" role="tablist" aria-label="Sample export">
+              <button type="button" role="tab" aria-selected="true" aria-controls="viewer-body" data-sample="preview">Word / PDF</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="viewer-body" data-sample="csv">CSV</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="viewer-body" data-sample="json">JSON</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="viewer-body" data-sample="md">Markdown</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="viewer-body" data-sample="audit">Privacy audit</button>
+            </div>
+            <div class="viewer-body" id="viewer-body" role="tabpanel" tabindex="0">
+              <img src="img/walk-10-preview.png" alt="Export preview of the five recorded steps" width="1200" height="750" loading="lazy">
+            </div>
+          </div>
+        </div>
+
+        <dl class="formats" id="export">
           <div class="format">
             <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-doc"/></svg></span>
             <dt>Word <small>.docx</small></dt>
-            <dd>Session details and numbered steps with screenshots, ready to attach to a test plan.</dd>
+            <dd>Session details and numbered steps with screenshots. <a href="samples/sign-in-smoke-test.docx" download>Sample file</a></dd>
           </div>
           <div class="format">
             <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-pdf"/></svg></span>
             <dt>PDF <small>.pdf</small></dt>
-            <dd>The same layout on A4, for sign-off and audit evidence.</dd>
+            <dd>The same layout on A4, for sign-off. <a href="samples/sign-in-smoke-test.pdf">Sample file</a></dd>
           </div>
           <div class="format">
             <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-table"/></svg></span>
             <dt>CSV <small>.csv</small></dt>
-            <dd>Step, action, field name, value and URL, for spreadsheets and test-management imports.</dd>
+            <dd>Step, action, field name, value and URL. <a href="samples/sign-in-smoke-test.csv">Sample file</a></dd>
           </div>
           <div class="format">
             <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-braces"/></svg></span>
             <dt>JSON <small>.json</small></dt>
-            <dd>Full session and step data, including selectors, to build automated tests from.</dd>
+            <dd>The full session and every step as structured data, for scripts and test-management imports. <a href="samples/sign-in-smoke-test.json">Sample file</a></dd>
           </div>
           <div class="format">
             <span class="format-icon"><svg class="icon" aria-hidden="true"><use href="#i-markdown"/></svg></span>
             <dt>Markdown <small>.md</small></dt>
-            <dd>A plain step list for tickets, pull requests and wikis.</dd>
+            <dd>A plain step list for tickets, pull requests and wikis. <a href="samples/sign-in-smoke-test.md">Sample file</a></dd>
           </div>
         </dl>
       </div>
@@ -997,20 +624,16 @@
           </div>
           <ul class="checks" role="list">
             <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Sessions and screenshots are stored locally in Chrome. Nothing is uploaded and there is no analytics.</span></li>
-            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Passwords, PINs, card numbers, CVCs, SSNs, dates of birth and tokens are masked as they're recorded.</span></li>
-            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Screenshots are skipped while a password or payment field has focus.</span></li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Sensitive values are masked as they're recorded, not at export time.</span></li>
+            <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>Every session has a privacy audit listing what was masked.</span></li>
             <li><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span>No remote code: the Word and PDF libraries ship inside the extension.</span></li>
           </ul>
           <p style="margin-top:1.25rem"><a href="https://github.com/Nataraaj-Shanmugam/TestSnapper/blob/master/PRIVACY_POLICY.md">Read the privacy policy</a></p>
         </div>
-        <div class="redact-sample" role="group" aria-label="Examples of masked values">
-          <p>What a recording stores</p>
-          <div class="redact-row"><span>Password field</span><span>••••••••</span></div>
-          <div class="redact-row"><span>Email field</span><span>***@***.com</span></div>
-          <div class="redact-row"><span>Card number</span><span>**** **** **** ****</span></div>
-          <div class="redact-row"><span>SSN</span><span>***-**-****</span></div>
-          <div class="redact-row"><span>Email in other text</span><span>qa***@example.com</span></div>
-        </div>
+        <figure class="privacy-shot">
+          <img src="img/walk-08-privacy.png" alt="Privacy Audit Report: one value masked before saving, the Password field, stored as dots" width="1200" height="750" loading="lazy">
+          <figcaption>The privacy audit from the walkthrough's recording.</figcaption>
+        </figure>
       </div>
     </section>
 
@@ -1022,7 +645,7 @@
         <div class="install">
           <div class="install-path">
             <h3>From the Chrome Web Store</h3>
-            <p>The quickest way. Updates install automatically.</p>
+            <p>The quickest way. Updates install automatically. Works in Edge and other Chromium browsers too.</p>
             <ol>
               <li>Open TestSnapper in the Chrome Web Store.</li>
               <li>Click <strong>Add to Chrome</strong>, then <strong>Add extension</strong>.</li>
@@ -1036,7 +659,7 @@
           <div class="install-path">
             <h3>From source</h3>
             <p>Needs Node.js 18 or later.</p>
-<pre><code>git clone https://github.com/Nataraaj-Shanmugam/TestSnapper.git
+<pre class="cmd"><code>git clone https://github.com/Nataraaj-Shanmugam/TestSnapper.git
 cd TestSnapper
 npm install
 npm run build</code></pre>
@@ -1045,6 +668,40 @@ npm run build</code></pre>
               <li>Click <strong>Load unpacked</strong> and choose the <code>dist</code> folder.</li>
             </ol>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="faq" aria-labelledby="faq-title">
+      <div class="wrap">
+        <div class="section-head">
+          <h2 id="faq-title">Questions</h2>
+        </div>
+        <div class="faq">
+          <details>
+            <summary>Why does it ask to read and change data on all websites?</summary>
+            <div><p>To record, TestSnapper has to run on the page you're testing, and that can be any site. It only captures while you're recording, and what it captures stays in your browser.</p></div>
+          </details>
+          <details>
+            <summary>What is the network permission (webRequest) for?</summary>
+            <div><p>The optional API call log. When you turn it on in Settings, TestSnapper notes the method, URL and status of requests the recorded tab makes. It never reads request or response bodies. It's off by default.</p></div>
+          </details>
+          <details>
+            <summary>Where is my data, and how do I delete it?</summary>
+            <div><p>In Chrome's local extension storage on your computer, and in a folder you choose if you turn on File Sync. Delete single sessions or everything from the popup's Export tab. Removing the extension deletes its storage.</p></div>
+          </details>
+          <details>
+            <summary>Does it work on local files, iframes and single-page apps?</summary>
+            <div><p>Yes. It records in every frame of the page, and picks up in-app navigation as well as full page loads. For <code>file://</code> pages, open the extension's details in <code>chrome://extensions</code> and turn on <strong>Allow access to file URLs</strong>.</p></div>
+          </details>
+          <details>
+            <summary>Does it work in Edge or Brave?</summary>
+            <div><p>Yes. Install it from the Chrome Web Store in any Chromium browser that supports Chrome extensions. Firefox and Safari aren't supported.</p></div>
+          </details>
+          <details>
+            <summary>Is it free?</summary>
+            <div><p>Yes, and open source under the MIT License. There's no account, no paid tier and no tracking.</p></div>
+          </details>
         </div>
       </div>
     </section>
@@ -1080,6 +737,11 @@ npm run build</code></pre>
   </footer>
 
   <script>
+    var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+    }
+
     // Mobile menu
     (function () {
       var toggle = document.querySelector('.nav-toggle');
@@ -1091,258 +753,220 @@ npm run build</code></pre>
         toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
         use.setAttribute('href', open ? '#i-close' : '#i-menu');
       }
-      toggle.addEventListener('click', function () {
-        setOpen(toggle.getAttribute('aria-expanded') !== 'true');
-      });
-      nav.addEventListener('click', function (e) {
-        if (e.target.closest('a')) setOpen(false);
-      });
+      toggle.addEventListener('click', function () { setOpen(toggle.getAttribute('aria-expanded') !== 'true'); });
+      nav.addEventListener('click', function (e) { if (e.target.closest('a')) setOpen(false); });
       document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && nav.classList.contains('is-open')) {
-          setOpen(false);
-          toggle.focus();
-        }
+        if (e.key === 'Escape' && nav.classList.contains('is-open')) { setOpen(false); toggle.focus(); }
       });
     })();
 
-    // Walkthrough: plays like a GIF, but every word and step comes from WALK
-    // below. When the product flow changes, edit WALK, not the scenes.
+    // Theme: system -> light -> dark -> system
     (function () {
-      var WALK = {
-        host: 'staging.example.com',
-        username: 'qa_lead',
-        passwordLength: 10,
-        session: 'Sign-in smoke test',
-        author: 'QA team',
-        steps: [
-          { action: 'Type', value: 'qa_lead', field: 'Username', selector: '#username' },
-          { action: 'Type', field: 'Password', selector: 'input[name="password"]', masked: true },
-          { action: 'Click', field: 'Sign in', selector: '[data-testid="sign-in-submit"]' },
-          { action: 'Navigate to', field: '/dashboard', selector: 'staging.example.com/dashboard', screenshot: true }
-        ],
-        manualStep: 'Dashboard shows the welcome banner',
-        formats: ['Word', 'PDF', 'CSV', 'JSON', 'Markdown'],
-        exportFormat: 'Word'
-      };
+      var btn = document.getElementById('theme-toggle');
+      var use = btn.querySelector('use');
+      var order = ['system', 'light', 'dark'];
+      var icons = { system: '#i-monitor', light: '#i-sun', dark: '#i-moon' };
+      function current() { return document.documentElement.dataset.theme || 'system'; }
+      function render() {
+        var t = current();
+        use.setAttribute('href', icons[t]);
+        btn.setAttribute('aria-label', 'Theme: ' + t + '. Change theme');
+      }
+      btn.addEventListener('click', function () {
+        var next = order[(order.indexOf(current()) + 1) % order.length];
+        if (next === 'system') delete document.documentElement.dataset.theme;
+        else document.documentElement.dataset.theme = next;
+        try { if (next === 'system') localStorage.removeItem('ts-theme'); else localStorage.setItem('ts-theme', next); } catch (e) { /* ignore */ }
+        render();
+      });
+      render();
+    })();
 
+    // Walkthrough: plays the real screenshots listed in walkthrough.json, which
+    // scripts/capture-site-screens.js regenerates from the built extension.
+    (function () {
       var stage = document.getElementById('walk-stage');
       var urlEl = document.getElementById('walk-url');
       var chaptersEl = document.getElementById('walk-chapters');
       var toggle = document.getElementById('walk-toggle');
-      var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var FRAME_MS = 2600, MOVE_AT = 300, CLICK_AT = 1300;
 
-      function esc(s) {
-        return String(s).replace(/[&<>"]/g, function (c) {
-          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-        });
-      }
-      function stepLabel(s) {
-        if (s.action === 'Type' && s.value) return 'Type <b>' + esc(s.value) + '</b> into <b>' + esc(s.field) + '</b>';
-        if (s.masked) return 'Type into <b>' + esc(s.field) + '</b><span class="tag tag-mask">masked</span>';
-        return esc(s.action) + ' <b>' + esc(s.field) + '</b>';
-      }
-      function stepRow(s, n, extra) {
-        return '<div class="w-step' + (extra || '') + '"><span class="w-n">' + n + '</span>' +
-          '<span class="w-what">' + stepLabel(s) + '</span>' +
-          (s.screenshot ? '<span class="w-thumb"></span>' : '<span></span>') +
-          '<span class="w-sel">' + esc(s.selector || '') + '</span></div>';
-      }
-      var CURSOR = '<svg class="w-cursor" viewBox="0 0 24 24" fill="currentColor" stroke="#fff" stroke-width="1.5" style="left:12%;top:85%"><path d="M5 3l14 7.5-6.2 1.6L10 18z"/></svg>';
-      var dots = '•'.repeat(WALK.passwordLength);
-
-      function q(root, sel) { return root.querySelector(sel); }
-      function moveTo(root, sel) {
-        var target = q(root, sel), cur = q(root, '.w-cursor');
-        if (!target || !cur) return;
-        var s = stage.getBoundingClientRect(), r = target.getBoundingClientRect();
-        cur.style.left = (r.left - s.left + r.width * 0.6) + 'px';
-        cur.style.top = (r.top - s.top + r.height * 0.55) + 'px';
-      }
-      function typeInto(sel, text) {
-        return function (root, k) { q(root, sel).textContent = text.slice(0, Math.round(text.length * k)); };
-      }
-      function cls(sel, name, on) {
-        return function (root) { q(root, sel).classList.toggle(name, on !== false); };
-      }
-      function text(sel, value) {
-        return function (root) { q(root, sel).textContent = value; };
-      }
-      function seq() {
-        var fns = arguments;
-        return function (root, k) { for (var i = 0; i < fns.length; i++) fns[i](root, k); };
-      }
-
-      var SCENES = [
-        {
-          title: 'Start recording',
-          url: WALK.host + '/sign-in',
-          duration: 3400,
-          html: function () {
-            return '<div class="s-site"><div class="w-skel" style="width:40%"></div><div class="w-skel" style="width:70%"></div><div class="w-skel" style="width:55%"></div></div>' +
-              '<div class="s-popup w-card">' +
-              '<div class="s-popup-head"><img src="icon.png" alt="">TestSnapper</div>' +
-              '<div class="s-tabs"><span class="on">Recording</span><span>Export</span><span>Settings</span></div>' +
-              '<span class="rec" data-rec>Ready</span>' +
-              '<div class="w-btn" data-start>Start</div>' +
-              '<div class="s-live"><span>Live steps</span><span>0</span></div></div>' + CURSOR;
-          },
-          beats: [
-            { at: 300, run: function (r) { moveTo(r, '[data-start]'); } },
-            { at: 1200, run: cls('[data-start]', 'is-pressed') },
-            { at: 1400, run: seq(cls('[data-start]', 'is-pressed', false), cls('[data-start]', 'is-stop'), text('[data-start]', 'Stop'), cls('[data-rec]', 'is-live'), text('[data-rec]', 'REC')) }
-          ]
-        },
-        {
-          title: 'Use the site',
-          url: WALK.host + '/sign-in',
-          duration: 6600,
-          html: function () {
-            return '<div class="s-form w-card"><h4>Sign in</h4>' +
-              '<div class="s-field"><span>Username</span><div class="s-input" data-user></div></div>' +
-              '<div class="s-field"><span>Password</span><div class="s-input" data-pass></div></div>' +
-              '<div class="w-btn" data-submit>Sign in</div></div>' +
-              '<div class="s-float w-card"><span class="rec is-live">REC</span><span data-count>0 steps</span></div>' + CURSOR;
-          },
-          beats: [
-            { at: 200, run: function (r) { moveTo(r, '[data-user]'); } },
-            { at: 800, run: cls('[data-user]', 'is-active') },
-            { at: 900, dur: WALK.username.length * 110, run: typeInto('[data-user]', WALK.username) },
-            { at: 2000, run: seq(cls('[data-user]', 'is-active', false), text('[data-count]', '1 step'), function (r) { moveTo(r, '[data-pass]'); }) },
-            { at: 2600, run: cls('[data-pass]', 'is-active') },
-            { at: 2700, dur: 900, run: typeInto('[data-pass]', dots) },
-            { at: 3800, run: seq(cls('[data-pass]', 'is-active', false), text('[data-count]', '2 steps'), function (r) { moveTo(r, '[data-submit]'); }) },
-            { at: 4600, run: cls('[data-submit]', 'is-pressed') },
-            { at: 4800, run: seq(cls('[data-submit]', 'is-pressed', false), text('[data-count]', '3 steps')) },
-            { at: 5400, run: function (r) { urlEl.textContent = WALK.host + '/dashboard'; q(r, '[data-count]').textContent = '4 steps'; } }
-          ]
-        },
-        {
-          title: 'Review the steps',
-          url: 'TestSnapper: review page',
-          duration: 5200,
-          html: function () {
-            return '<div class="s-review-head"><h4>Review &amp; Refine</h4><div class="w-btn" data-add>+ Add step</div></div>' +
-              '<div class="s-list w-card" data-list>' +
-              WALK.steps.map(function (s, i) { return stepRow(s, i + 1); }).join('') +
-              stepRow({ action: 'Check', field: WALK.manualStep, selector: 'Manual step' }, WALK.steps.length + 1, ' is-hidden') +
-              '</div>' + CURSOR;
-          },
-          beats: [
-            { at: 400, run: function (r) { moveTo(r, '.w-step b'); } },
-            { at: 1100, run: cls('.w-step b', 's-edit') },
-            { at: 2100, run: seq(cls('.w-step b', 's-edit', false), function (r) { moveTo(r, '[data-add]'); }) },
-            { at: 2900, run: cls('[data-add]', 'is-pressed') },
-            { at: 3100, run: seq(cls('[data-add]', 'is-pressed', false), cls('.w-step:last-child', 'is-hidden', false), cls('.w-step:last-child', 'is-new')) }
-          ]
-        },
-        {
-          title: 'Export',
-          url: 'TestSnapper: review page',
-          duration: 5600,
-          html: function () {
-            var all = WALK.steps.concat([{ action: 'Check', field: WALK.manualStep }]);
-            return '<div class="s-export"><div class="s-panel w-card"><h4>Export</h4>' +
-              '<div class="s-formats">' + WALK.formats.map(function (f) { return '<span' + (f === WALK.exportFormat ? ' data-fmt' : '') + '>' + esc(f) + '</span>'; }).join('') + '</div>' +
-              '<div class="w-btn" data-export>Export</div><div class="s-progress"><i data-bar></i></div></div>' +
-              '<div class="s-doc" data-doc><h5>' + esc(WALK.session) + '</h5><p class="meta">' + esc(WALK.author) + ', ' + all.length + ' steps</p><ol>' +
-              all.map(function (s) { return '<li>' + stepLabel(s) + (s.screenshot ? '<span class="shot"></span>' : '') + '</li>'; }).join('') +
-              '</ol></div></div>' + CURSOR;
-          },
-          beats: [
-            { at: 300, run: function (r) { moveTo(r, '[data-fmt]'); } },
-            { at: 1000, run: cls('[data-fmt]', 'on') },
-            { at: 1400, run: function (r) { moveTo(r, '[data-export]'); } },
-            { at: 2100, run: cls('[data-export]', 'is-pressed') },
-            { at: 2300, run: seq(cls('[data-export]', 'is-pressed', false), function (r) { q(r, '[data-bar]').style.width = '100%'; }) },
-            { at: 3600, run: cls('[data-doc]', 'is-in') }
-          ]
-        }
-      ];
-
-      // Chapter buttons
-      SCENES.forEach(function (s, i) {
-        var li = document.createElement('li');
-        li.innerHTML = '<button type="button" class="walk-chapter"><span class="bar"><i></i></span>' + (i + 1) + '. ' + esc(s.title) + '</button>';
-        li.firstChild.addEventListener('click', function () { show(i); });
-        chaptersEl.appendChild(li);
+      fetch('walkthrough.json').then(function (r) { return r.json(); }).then(start).catch(function () {
+        /* Static first image stays in place (e.g. when opened as a local file). */
       });
-      var chapterBtns = chaptersEl.querySelectorAll('.walk-chapter');
-      var bars = chaptersEl.querySelectorAll('.bar i');
 
-      var current = -1, root = null, t = 0, last = 0, paused = reduced, visible = true;
-
-      function show(i) {
-        current = i;
-        t = 0;
-        var scene = SCENES[i];
-        var next = document.createElement('div');
-        next.className = 'scene';
-        next.innerHTML = scene.html();
-        stage.appendChild(next);
-        var prev = root;
-        root = next;
-        urlEl.textContent = scene.url;
-        scene.beats.forEach(function (b) { b.done = false; });
-        requestAnimationFrame(function () { next.classList.add('is-on'); });
-        if (prev) setTimeout(function () { prev.remove(); }, 400);
-        chapterBtns.forEach(function (b, j) {
-          if (j === i) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+      function start(data) {
+        var frames = data.frames;
+        var lastPage = frames.filter(function (f) { return f.width > 600; })[0];
+        frames.forEach(function (f) {
+          if (f.width > 600) lastPage = f;
+          f.backdrop = lastPage;
         });
-        // Paused (or reduced motion): show the end state of the chapter.
-        if (paused) { requestAnimationFrame(function () { advance(Infinity); }); }
-        paint();
-      }
+        frames.forEach(function (f) { var i = new Image(); i.src = f.img; });
 
-      function advance(time) {
-        t = Math.min(time, SCENES[current].duration);
-        SCENES[current].beats.forEach(function (b) {
-          if (b.done || time < b.at) return;
-          var k = b.dur ? Math.min(1, (time - b.at) / b.dur) : 1;
-          b.run(root, k);
-          if (k === 1) b.done = true;
+        data.chapters.forEach(function (title, i) {
+          var li = document.createElement('li');
+          li.innerHTML = '<button type="button" class="walk-chapter"><span class="bar"><i></i></span>' + (i + 1) + '. ' + esc(title) + '</button>';
+          li.firstChild.addEventListener('click', function () {
+            for (var k = 0; k < frames.length; k++) if (frames[k].chapter === i) { show(k); return; }
+          });
+          chaptersEl.appendChild(li);
         });
-        if (time === Infinity) t = SCENES[current].duration;
-        paint();
-      }
-
-      function paint() {
-        bars.forEach(function (bar, j) {
-          var w = j < current ? 1 : j > current ? 0 : t / SCENES[current].duration;
-          bar.style.width = (w * 100) + '%';
+        var chapterBtns = chaptersEl.querySelectorAll('.walk-chapter');
+        var bars = chaptersEl.querySelectorAll('.bar i');
+        var chapterFrames = data.chapters.map(function (_, i) {
+          return frames.filter(function (f) { return f.chapter === i; });
         });
-      }
 
-      function frame(now) {
-        var dt = last ? now - last : 0;
-        last = now;
-        if (!paused && visible) {
-          advance(t + dt);
-          if (t >= SCENES[current].duration) show((current + 1) % SCENES.length);
+        stage.innerHTML = '';
+        stage.setAttribute('aria-live', 'polite');
+        var cursor = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        cursor.setAttribute('class', 'walk-cursor is-hidden');
+        cursor.setAttribute('viewBox', '0 0 24 24');
+        cursor.setAttribute('aria-hidden', 'true');
+        cursor.innerHTML = '<path d="M5 3l14 7.5-6.2 1.6L10 18z" fill="currentColor" stroke="#fff" stroke-width="1.5"/>';
+        var caption = document.createElement('p');
+        caption.className = 'walk-caption';
+        stage.appendChild(cursor);
+        stage.appendChild(caption);
+
+        var index = 0, t = 0, last = 0, layer = null, paused = reducedMotion, visible = true, clicked = false, moved = false;
+
+        function show(i) {
+          index = i; t = 0; clicked = false; moved = false;
+          var f = frames[i];
+          var next = document.createElement('div');
+          var isPopup = f.width <= 600;
+          next.className = 'walk-layer' + (isPopup ? ' has-popup' : '');
+          next.innerHTML = isPopup
+            ? '<img class="page" src="' + f.backdrop.img + '" alt=""><img class="popup" src="' + f.img + '" alt="' + esc(f.caption) + '">'
+            : '<img class="page" src="' + f.img + '" alt="' + esc(f.caption) + '">';
+          stage.insertBefore(next, cursor);
+          var prev = layer;
+          layer = next;
+          requestAnimationFrame(function () { next.classList.add('is-on'); });
+          if (prev) setTimeout(function () { prev.remove(); }, 500);
+          urlEl.textContent = f.url || '';
+          caption.textContent = f.caption;
+          cursor.classList.toggle('is-hidden', !f.click || paused);
+          chapterBtns.forEach(function (b, j) {
+            if (j === f.chapter) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+          });
+          paint();
         }
+
+        function placeCursor(f) {
+          var img = layer.querySelector(f.width <= 600 ? 'img.popup' : 'img.page');
+          var s = stage.getBoundingClientRect(), r = img.getBoundingClientRect();
+          cursor.style.left = (r.left - s.left + r.width * f.click.x / 100) + 'px';
+          cursor.style.top = (r.top - s.top + r.height * f.click.y / 100) + 'px';
+        }
+
+        function paint() {
+          var f = frames[index];
+          bars.forEach(function (bar, j) {
+            var list = chapterFrames[j], pos = list.indexOf(f);
+            var w = j < f.chapter ? 1 : j > f.chapter ? 0 : (pos + Math.min(t / FRAME_MS, 1)) / list.length;
+            bar.style.width = (w * 100) + '%';
+          });
+        }
+
+        function frame(now) {
+          var dt = last ? now - last : 0;
+          last = now;
+          if (!paused && visible) {
+            t += dt;
+            var f = frames[index];
+            if (f.click && !moved && t >= MOVE_AT) { moved = true; placeCursor(f); }
+            if (f.click && !clicked && t >= CLICK_AT) {
+              clicked = true;
+              cursor.classList.remove('is-click'); void cursor.getBBox(); cursor.classList.add('is-click');
+            }
+            if (t >= FRAME_MS) show((index + 1) % frames.length);
+            paint();
+          }
+          requestAnimationFrame(frame);
+        }
+
+        function setPaused(p) {
+          paused = p;
+          toggle.setAttribute('aria-label', p ? 'Play walkthrough' : 'Pause walkthrough');
+          toggle.querySelector('use').setAttribute('href', p ? '#i-play' : '#i-pause');
+          cursor.classList.toggle('is-hidden', p || !frames[index].click);
+        }
+        toggle.hidden = false;
+        toggle.addEventListener('click', function () { setPaused(!paused); });
+        if ('IntersectionObserver' in window) {
+          new IntersectionObserver(function (e) { visible = e[0].isIntersecting; }).observe(document.getElementById('walk'));
+        }
+        setPaused(paused);
+        show(0);
         requestAnimationFrame(frame);
       }
+    })();
 
-      function setPaused(p) {
-        paused = p;
-        toggle.setAttribute('aria-label', p ? 'Play walkthrough' : 'Pause walkthrough');
-        toggle.querySelector('use').setAttribute('href', p ? '#i-play' : '#i-pause');
-        if (p) advance(Infinity);
+    // What you get: audience switch + real sample viewer
+    (function () {
+      var AUDIENCES = {
+        qa: {
+          title: 'Test cases and bug reports, written for you',
+          text: 'Hand a Word or PDF document to a developer, a reviewer or a client. Every step is numbered, named in plain language and backed by a screenshot.',
+          points: ['Numbered steps with field names', 'Screenshots per step, in three sizes', 'Author and start/end time on the cover'],
+          sample: 'preview'
+        },
+        dev: {
+          title: 'Structured data you can script against',
+          text: 'Export the same session as JSON or CSV and feed it into your own tooling or a test-management import.',
+          points: ['Every step with action, field, value and URL', 'Session metadata: browser, viewport, timings', 'Optional log of the API calls the page made'],
+          sample: 'json'
+        },
+        compliance: {
+          title: 'Evidence without the leaks',
+          text: 'Recordings are masked at capture time and never leave the machine. The privacy audit shows reviewers exactly what was hidden.',
+          points: ['Passwords, card numbers, SSNs and tokens masked', 'No screenshots while sensitive fields have focus', 'Stored locally, no servers, no analytics'],
+          sample: 'audit'
+        }
+      };
+      var SAMPLES = {
+        preview: { img: 'img/walk-10-preview.png', alt: 'Export preview of the five recorded steps' },
+        audit: { img: 'img/walk-08-privacy.png', alt: 'Privacy audit listing the masked password' },
+        csv: { file: 'samples/sign-in-smoke-test.csv' },
+        json: { file: 'samples/sign-in-smoke-test.json' },
+        md: { file: 'samples/sign-in-smoke-test.md' }
+      };
+      var copy = document.getElementById('audience-copy');
+      var body = document.getElementById('viewer-body');
+      var audienceBtns = document.querySelectorAll('[data-audience]');
+      var sampleBtns = document.querySelectorAll('[data-sample]');
+      var cache = {};
+
+      function selectSample(key) {
+        sampleBtns.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.sample === key)); });
+        var s = SAMPLES[key];
+        if (s.img) {
+          body.innerHTML = '<img src="' + s.img + '" alt="' + esc(s.alt) + '" width="1200" height="750">';
+          return;
+        }
+        var render = function (text) { body.innerHTML = '<pre><code>' + esc(text) + '</code></pre>'; body.scrollTop = 0; };
+        if (cache[key]) return render(cache[key]);
+        body.innerHTML = '<pre>Loading…</pre>';
+        fetch(s.file).then(function (r) { return r.text(); }).then(function (text) {
+          cache[key] = text; render(text);
+        }).catch(function () {
+          body.innerHTML = '<pre>Open <a href="' + s.file + '">' + s.file + '</a> to see this sample.</pre>';
+        });
       }
-      toggle.addEventListener('click', function () {
-        var wasPaused = paused;
-        setPaused(!paused);
-        if (wasPaused) show(current);
-      });
-
-      // Don't burn cycles while the walkthrough is off screen.
-      if ('IntersectionObserver' in window) {
-        new IntersectionObserver(function (entries) { visible = entries[0].isIntersecting; })
-          .observe(document.getElementById('walk'));
+      function selectAudience(key) {
+        audienceBtns.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.audience === key)); });
+        var a = AUDIENCES[key];
+        copy.innerHTML = '<h3>' + esc(a.title) + '</h3><p>' + esc(a.text) + '</p><ul>' +
+          a.points.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul>' +
+          '<a class="btn btn-primary" href="https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala">Add to Chrome</a>';
+        selectSample(a.sample);
       }
-
-      setPaused(paused);
-      show(0);
-      requestAnimationFrame(frame);
+      audienceBtns.forEach(function (b) { b.addEventListener('click', function () { selectAudience(b.dataset.audience); }); });
+      sampleBtns.forEach(function (b) { b.addEventListener('click', function () { selectSample(b.dataset.sample); }); });
+      selectAudience('qa');
     })();
   </script>
 </body>

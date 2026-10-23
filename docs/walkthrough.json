@@ -1,0 +1,123 @@
+{
+  "generated": "2026-10-23",
+  "version": "1.1.8",
+  "chapters": [
+    "Start recording",
+    "Use the site",
+    "Review",
+    "Export"
+  ],
+  "frames": [
+    {
+      "img": "img/walk-01-popup.png",
+      "width": 380,
+      "height": 600,
+      "chapter": 0,
+      "caption": "Open TestSnapper and press Start",
+      "url": "TestSnapper popup",
+      "click": {
+        "x": 25.79,
+        "y": 62
+      }
+    },
+    {
+      "img": "img/walk-02-page.png",
+      "width": 1200,
+      "height": 750,
+      "chapter": 1,
+      "caption": "Use the site as normal",
+      "url": "https://staging.example.com/sign-in",
+      "click": {
+        "x": 50,
+        "y": 32.67
+      }
+    },
+    {
+      "img": "img/walk-03-typed.png",
+      "width": 1200,
+      "height": 750,
+      "chapter": 1,
+      "caption": "Each action is recorded as a step",
+      "url": "https://staging.example.com/sign-in",
+      "click": {
+        "x": 50,
+        "y": 43
+      }
+    },
+    {
+      "img": "img/walk-04-password.png",
+      "width": 1200,
+      "height": 750,
+      "chapter": 1,
+      "caption": "Passwords are masked as they are recorded",
+      "url": "https://staging.example.com/sign-in",
+      "click": {
+        "x": 50,
+        "y": 50.87
+      }
+    },
+    {
+      "img": "img/walk-05-dashboard.png",
+      "width": 1200,
+      "height": 750,
+      "chapter": 1,
+      "caption": "Page changes are captured too",
+      "url": "https://staging.example.com/dashboard",
+      "click": null
+    },
+    {
+      "img": "img/walk-06-popup-live.png",
+      "width": 380,
+      "height": 600,
+      "chapter": 2,
+      "caption": "Press Stop when you are done",
+      "url": "TestSnapper popup",
+      "click": {
+        "x": 74.21,
+        "y": 69.67
+      }
+    },
+    {
+      "img": "img/walk-07-review.png",
+      "width": 1200,
+      "height": 750,
+      "chapter": 2,
+      "caption": "Review, rename and reorder the steps",
+      "url": "TestSnapper review",
+      "click": {
+        "x": 17.75,
+        "y": 68.96
+      }
+    },
+    {
+      "img": "img/walk-08-privacy.png",
+      "width": 1200,
+      "height": 750,
+      "chapter": 2,
+      "caption": "The privacy audit lists what was masked",
+      "url": "TestSnapper review",
+      "click": null
+    },
+    {
+      "img": "img/walk-09-export.png",
+      "width": 1200,
+      "height": 750,
+      "chapter": 3,
+      "caption": "Pick a format and export",
+      "url": "TestSnapper review",
+      "click": {
+        "x": 70.93,
+        "y": 43.63
+      }
+    },
+    {
+      "img": "img/walk-10-preview.png",
+      "width": 1200,
+      "height": 750,
+      "chapter": 3,
+      "caption": "Preview the document before you save it",
+      "url": "TestSnapper review",
+      "click": null
+    }
+  ]
+}

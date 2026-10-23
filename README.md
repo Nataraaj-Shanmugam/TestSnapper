@@ -7,9 +7,9 @@
 
 A Chrome extension that records what you do on a web page — clicks, typing, navigation and screenshots — and turns it into step-by-step test documentation you can export to Word, PDF, CSV, JSON or Markdown.
 
-Each recorded step gets a human-readable field name, CSS and XPath selectors, and (optionally) a screenshot. Sensitive values such as passwords, card numbers and SSNs are masked before they are stored. Everything stays on your machine.
+Each recorded step gets a human-readable field name and (optionally) a screenshot. Sensitive values such as passwords, card numbers and SSNs are masked before they are stored. Everything stays on your machine.
 
-**Who it's for:** QA engineers writing manual test cases or bug reports, and developers who want stable selectors for automation.
+**Who it's for:** QA engineers writing manual test cases or bug reports, and developers who want a structured record of a test run.
 
 ---
 
@@ -77,10 +77,10 @@ For a guided walkthrough, see [QUICK_START.md](QUICK_START.md).
 - Smart duplicate detection collapses accidental double events while keeping deliberate repeated clicks (for example "Next page").
 - Optional **API call capture** records XHR/fetch requests on the recorded tab as steps — method, URL and status only, never request or response bodies. Choose all requests or failures only (HTTP ≥ 400 / network errors).
 
-### Field names and selectors
+### Field names
 
 - Field names come from labels, ARIA attributes, placeholders, `name`/`id`, and surrounding context (legends, table headers); you are prompted only when none is found.
-- Selectors are generated with several strategies — ID, `data-testid`, `name`, ARIA, placeholder, framework hints (React, Vue, Angular, Svelte, Solid), classes and XPath — and scored so the most stable one is preferred. Auto-generated IDs are detected and avoided.
+- Internally, each element is also identified by a scored CSS/XPath selector (ID, `data-testid`, `name`, ARIA, framework hints, classes), which drives duplicate detection. Since 1.1.6 selectors are not shown on the review page or included in exports.
 
 ### Screenshots
 
@@ -102,7 +102,7 @@ For a guided walkthrough, see [QUICK_START.md](QUICK_START.md).
 | **Word (.docx)** | Session details (name, author, start/end time) and numbered steps with embedded screenshots. Falls back to an HTML-based `.doc` if the bundled library can't load. |
 | **PDF** | Same layout as Word, A4 portrait. |
 | **CSV** | Columns: Step, Action, Field Name, Value, URL. Screenshot-only steps are omitted. |
-| **JSON** | Full session and step data, including selectors, for use in automation. |
+| **JSON** | Full session and step data (action, field, value, URL, timings, environment) for scripts and imports. |
 | **Markdown** | Plain-text step list. |
 
 Screenshots in Word/PDF exports can be full size, 800 px or 400 px wide, at Auto, High or Standard image quality.
@@ -168,8 +168,9 @@ After a rebuild, click **Reload** on the extension in `chrome://extensions`.
 | `npm run test:watch` / `test:coverage` | Unit tests in watch mode / with coverage |
 | `npm run test:e2e` | End-to-end tests (Playwright, loads the built extension) |
 | `npm run test:e2e:report` | Open the last Playwright report |
+| `npm run site:screens` | Re-capture the GitHub Pages walkthrough screenshots and sample exports from `dist/` |
 
-Build `dist/` before running the end-to-end tests. For release packaging, see [release/RELEASE_GUIDE.md](release/RELEASE_GUIDE.md).
+Build `dist/` before running the end-to-end tests or `site:screens`. The website in `docs/` plays the screenshots listed in `docs/walkthrough.json`; re-run `npm run build && npm run site:screens` after UI changes so the site matches the extension. For release packaging, see [release/RELEASE_GUIDE.md](release/RELEASE_GUIDE.md).
 
 ### How it fits together
 
@@ -217,9 +218,10 @@ Storage uses split keys — `testsnapper_sessions`, `testsnapper_steps_{sessionI
 │   └── assets/icons/
 ├── libs/                            # Bundled docx.js 7.8.2 and jsPDF 2.5.1
 ├── scripts/download-libs.js         # Library verify/download (npm run setup-libs)
+├── scripts/capture-site-screens.js  # Site screenshots + samples (npm run site:screens)
 ├── tests/                           # Vitest unit tests; tests/e2e/ Playwright
 ├── release/                         # Packaging scripts and release guide
-├── docs/                            # Project web page
+├── docs/                            # GitHub Pages site: index.html, img/, samples/, walkthrough.json
 ├── webpack.config.js, vitest.config.js, playwright.config.js
 ```
 
