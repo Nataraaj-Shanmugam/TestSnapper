@@ -741,6 +741,7 @@ npm run build</code></pre>
     </div>
   </footer>
 
+  <script src="site-data.js"></script>
   <script>
     var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     function esc(s) {
@@ -787,7 +788,7 @@ npm run build</code></pre>
       render();
     })();
 
-    // Walkthrough: plays the real screenshots listed in walkthrough.json, which
+    // Walkthrough: plays the real screenshots listed in site-data.js, which
     // scripts/capture-site-screens.js regenerates from the built extension.
     (function () {
       var stage = document.getElementById('walk-stage');
@@ -796,9 +797,8 @@ npm run build</code></pre>
       var toggle = document.getElementById('walk-toggle');
       var FRAME_MS = 2600, MOVE_AT = 300, CLICK_AT = 1300;
 
-      fetch('walkthrough.json').then(function (r) { return r.json(); }).then(start).catch(function () {
-        /* Static first image stays in place (e.g. when opened as a local file). */
-      });
+      // Without site-data.js the static review screenshot stays in place.
+      if (window.SITE_DATA) start(window.SITE_DATA.walkthrough);
 
       function start(data) {
         var frames = data.frames;
@@ -943,7 +943,6 @@ npm run build</code></pre>
       var body = document.getElementById('viewer-body');
       var audienceBtns = document.querySelectorAll('[data-audience]');
       var sampleBtns = document.querySelectorAll('[data-sample]');
-      var cache = {};
 
       function selectSample(key) {
         sampleBtns.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.sample === key)); });
@@ -952,14 +951,11 @@ npm run build</code></pre>
           body.innerHTML = '<img src="' + s.img + '" alt="' + esc(s.alt) + '" width="1200" height="750">';
           return;
         }
-        var render = function (text) { body.innerHTML = '<pre><code>' + esc(text) + '</code></pre>'; body.scrollTop = 0; };
-        if (cache[key]) return render(cache[key]);
-        body.innerHTML = '<pre>Loading…</pre>';
-        fetch(s.file).then(function (r) { return r.text(); }).then(function (text) {
-          cache[key] = text; render(text);
-        }).catch(function () {
-          body.innerHTML = '<pre>Open <a href="' + s.file + '">' + s.file + '</a> to see this sample.</pre>';
-        });
+        var text = window.SITE_DATA && window.SITE_DATA.samples[key];
+        body.innerHTML = text
+          ? '<pre><code>' + esc(text) + '</code></pre>'
+          : '<pre>Open <a href="' + s.file + '">' + s.file + '</a> to see this sample.</pre>';
+        body.scrollTop = 0;
       }
       function selectAudience(key) {
         audienceBtns.forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.audience === key)); });

@@ -1,8 +1,8 @@
 # Sign-in smoke test
 
 **Author:** QA team  
-**Start Time:** 24/10/2026, 1:33 am  
-**End Time:** 24/10/2026, 1:33 am  
+**Start Time:** 24/10/2026, 1:44 am  
+**End Time:** 24/10/2026, 1:44 am  
 **Steps:** 5
 
 ---

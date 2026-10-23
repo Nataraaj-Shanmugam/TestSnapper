@@ -170,7 +170,7 @@ After a rebuild, click **Reload** on the extension in `chrome://extensions`.
 | `npm run test:e2e:report` | Open the last Playwright report |
 | `npm run site:screens` | Re-capture the GitHub Pages walkthrough screenshots and sample exports from `dist/` |
 
-Build `dist/` before running the end-to-end tests or `site:screens`. The website in `docs/` plays the screenshots listed in `docs/walkthrough.json`; re-run `npm run build && npm run site:screens` after UI changes so the site matches the extension. For release packaging, see [release/RELEASE_GUIDE.md](release/RELEASE_GUIDE.md).
+Build `dist/` before running the end-to-end tests or `site:screens`. The website in `docs/` plays the screenshots and samples listed in `docs/site-data.js`; re-run `npm run build && npm run site:screens` after UI changes so the site matches the extension. For release packaging, see [release/RELEASE_GUIDE.md](release/RELEASE_GUIDE.md).
 
 ### How it fits together
 
@@ -221,7 +221,7 @@ Storage uses split keys — `testsnapper_sessions`, `testsnapper_steps_{sessionI
 ├── scripts/capture-site-screens.js  # Site screenshots + samples (npm run site:screens)
 ├── tests/                           # Vitest unit tests; tests/e2e/ Playwright
 ├── release/                         # Packaging scripts and release guide
-├── docs/                            # GitHub Pages site: index.html, img/, samples/, walkthrough.json
+├── docs/                            # GitHub Pages site: index.html, img/, samples/, site-data.js
 ├── webpack.config.js, vitest.config.js, playwright.config.js
 ```
 
