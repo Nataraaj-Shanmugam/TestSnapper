@@ -6,7 +6,7 @@
   <title>TestSnapper: turn clicks into test steps</title>
   <meta name="description" content="TestSnapper is a free Chrome extension that records your clicks and typing as test steps with field names, selectors and screenshots, then exports them to Word, PDF, CSV, JSON or Markdown. Everything stays in your browser.">
   <meta name="author" content="Nataraaj Shanmugam">
-  <meta name="theme-color" content="#14263B">
+  <meta name="theme-color" content="#2F5FC4">
   <meta property="og:title" content="TestSnapper: turn clicks into test steps">
   <meta property="og:description" content="Record a test once in Chrome. Get numbered steps, field names, selectors and screenshots, ready to export.">
   <meta property="og:type" content="website">
@@ -19,20 +19,20 @@
 
   <style>
     :root {
-      --ink: #14263B;
-      --ink-soft: #46586C;
-      --steel: #3A6699;
-      --steel-strong: #2D4F78;
-      --steel-wash: #E8EFF7;
-      --paper: #F6F8FA;
+      --ink: #142247;
+      --ink-soft: #4A5677;
+      --steel: #2F5FC4;
+      --steel-strong: #23489A;
+      --steel-wash: #EAF0FC;
+      --paper: #F6F8FC;
       --surface: #FFFFFF;
-      --rule: #D9E1EA;
-      --record: #C8281C;
-      --ok: #157F3D;
-      --ok-wash: #E3F4E8;
+      --rule: #DCE3F0;
+      --record: #D63B3B;
+      --ok: #1E8A4C;
+      --ok-wash: #E2F4E9;
       --mask: #8A5A00;
       --mask-wash: #FCF1DC;
-      --focus: #3A6699;
+      --focus: #2F5FC4;
       --shadow: 0 1px 2px rgb(20 38 59 / .06), 0 12px 32px -12px rgb(20 38 59 / .18);
 
       --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -51,20 +51,20 @@
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --ink: #E5ECF4;
-        --ink-soft: #A3B3C5;
-        --steel: #8AB6DB;
-        --steel-strong: #B4D2EA;
-        --steel-wash: #1B2D44;
-        --paper: #0E1824;
-        --surface: #152233;
-        --rule: #26384E;
-        --record: #FF6B5E;
-        --ok: #5FD08A;
-        --ok-wash: #143424;
+        --ink: #E6ECFA;
+        --ink-soft: #A6B2CF;
+        --steel: #8EAEF0;
+        --steel-strong: #B9CDF7;
+        --steel-wash: #1B2A52;
+        --paper: #0D1530;
+        --surface: #142046;
+        --rule: #263568;
+        --record: #FF7A70;
+        --ok: #62D18F;
+        --ok-wash: #12342A;
         --mask: #F2C46B;
         --mask-wash: #3A2D12;
-        --focus: #8AB6DB;
+        --focus: #8EAEF0;
         --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 16px 40px -16px rgb(0 0 0 / .6);
         color-scheme: dark;
       }
@@ -190,16 +190,16 @@
       cursor: pointer;
       transition: background-color .15s, border-color .15s, color .15s;
     }
-    .btn-primary { background: var(--steel-strong); color: #fff; }
-    .btn-primary:hover { background: var(--ink); color: var(--paper); }
+    .btn-primary { background: var(--steel); color: #fff; }
+    .btn-primary:hover { background: var(--steel-strong); color: #fff; }
     @media (prefers-color-scheme: dark) {
-      .btn-primary { background: var(--steel); color: #0E1824; }
-      .btn-primary:hover { background: var(--steel-strong); color: #0E1824; }
+      .btn-primary { background: var(--steel); color: #0D1530; }
+      .btn-primary:hover { background: var(--steel-strong); color: #0D1530; }
     }
     .btn-quiet { background: var(--surface); color: var(--ink); border-color: var(--rule); }
     .btn-quiet:hover { border-color: var(--ink-soft); color: var(--ink); }
     .nav .btn { color: #fff; padding: .5rem 1rem; min-height: 2.5rem; }
-    @media (prefers-color-scheme: dark) { .nav .btn { color: #0E1824; } }
+    @media (prefers-color-scheme: dark) { .nav .btn { color: #0D1530; } }
 
     /* ---------- Hero ---------- */
     .hero { padding-block: clamp(3rem, 7vw, 6rem) clamp(3rem, 6vw, 5rem); }
@@ -265,21 +265,28 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    /* Mirrors the REC badge on the extension icon */
     .rec {
       display: inline-flex;
       align-items: center;
       gap: .4rem;
-      font-weight: 600;
-      color: var(--record);
+      padding: .15rem .6rem .15rem .5rem;
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      background: var(--surface);
+      font-weight: 700;
+      font-size: .75rem;
+      color: var(--ink);
+      white-space: nowrap;
     }
     .rec::before {
       content: "";
       width: .55rem;
       height: .55rem;
       border-radius: 50%;
-      background: currentColor;
+      background: var(--record);
     }
-    .demo[data-state="done"] .rec { color: var(--ok); }
+    .demo[data-state="done"] .rec::before { background: var(--ok); }
     .demo-body {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
@@ -320,7 +327,7 @@
       margin-top: .4rem;
       height: 2rem;
       border-radius: 6px;
-      background: var(--steel-strong);
+      background: var(--steel);
       color: #fff;
       font-size: .8rem;
       font-weight: 600;
@@ -328,7 +335,7 @@
       place-items: center;
       transition: transform .12s;
     }
-    @media (prefers-color-scheme: dark) { .fake-button { background: var(--steel); color: #0E1824; } }
+    @media (prefers-color-scheme: dark) { .fake-button { background: var(--steel); color: #0D1530; } }
     .fake-button.is-pressed { transform: scale(.97); }
 
     .demo-steps { padding: 1rem 1.1rem 1.1rem; }
@@ -706,7 +713,7 @@
 
         <figure class="demo" id="demo" data-state="done" aria-label="Example: signing in to a test site produces four recorded steps">
           <div class="demo-bar" aria-hidden="true">
-            <span class="rec" id="demo-status">Recorded</span>
+            <span class="rec" id="demo-status">Done</span>
             <span class="demo-url">staging.example.com/sign-in</span>
           </div>
           <div class="demo-body">
@@ -1025,7 +1032,7 @@ npm run build</code></pre>
         timers.forEach(clearTimeout);
         timers = [];
         demo.dataset.state = 'recording';
-        status.textContent = 'Recording';
+        status.textContent = 'REC';
         count.textContent = '0 steps';
         email.textContent = '';
         pass.textContent = '';
@@ -1039,7 +1046,7 @@ npm run build</code></pre>
         at(t + 150, function () { pass.classList.remove('is-active'); show(1); });
         at(t + 700, function () { btn.classList.add('is-pressed'); });
         at(t + 850, function () { btn.classList.remove('is-pressed'); show(2); });
-        at(t + 1500, function () { show(3); demo.dataset.state = 'done'; status.textContent = 'Recorded'; });
+        at(t + 1500, function () { show(3); demo.dataset.state = 'done'; status.textContent = 'Done'; });
       }
 
       replay.addEventListener('click', play);
