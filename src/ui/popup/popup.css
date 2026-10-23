@@ -259,26 +259,8 @@ header {
 }
 
 .header-icon {
-  color: var(--accent);
   flex-shrink: 0;
-}
-
-/* Stroke draw-on animation */
-.header-icon path,
-.header-icon rect {
-  stroke-dasharray: 80;
-  stroke-dashoffset: 80;
-  animation: logoDrawIn 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-
-.header-icon rect {
-  animation-delay: 0.25s;
-}
-
-@keyframes logoDrawIn {
-  to {
-    stroke-dashoffset: 0;
-  }
+  border-radius: var(--radius-sm);
 }
 
 header h1 {
