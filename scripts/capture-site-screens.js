@@ -188,6 +188,17 @@ async function main() {
     await frame(review, 'walk-07-review.png', {
       chapter: 2, caption: 'Review, rename and reorder the steps', target: '#stepsContainer input', url: 'TestSnapper review'
     });
+    // Scroll down to the later steps, including the screenshot step
+    await review.evaluate(() => {
+      const shots = document.querySelectorAll('#stepsContainer img');
+      const target = shots.length ? shots[shots.length - 1] : document.querySelector('#stepsContainer');
+      target.scrollIntoView({ block: 'center' });
+    });
+    await review.waitForTimeout(600);
+    await frame(review, 'walk-07b-steps.png', {
+      chapter: 2, caption: 'Every step and screenshot, ready to edit', target: '#stepsContainer img', url: 'TestSnapper review'
+    });
+    await review.evaluate(() => window.scrollTo(0, 0));
     await review.locator('#privacyAuditBtn').click();
     await review.waitForTimeout(600);
     await frame(review, 'walk-08-privacy.png', {
