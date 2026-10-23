@@ -1,11 +1,11 @@
 {
   "session": {
-    "id": "1f3bb242-fd0d-440d-ad1f-908265eea8fe",
+    "id": "dd48e3df-2cab-47a2-99af-99f99e30073d",
     "name": "Sign-in smoke test",
-    "createdAt": "2026-10-23T20:14:09.458Z",
+    "createdAt": "2026-10-23T20:20:01.689Z",
     "author": "QA team",
-    "startTime": "2026-10-23T20:14:09.460Z",
-    "endTime": "2026-10-23T20:14:16.426Z",
+    "startTime": "2026-10-23T20:20:01.690Z",
+    "endTime": "2026-10-23T20:20:10.714Z",
     "environment": {
       "title": "Sign-in smoke test",
       "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
@@ -15,12 +15,12 @@
         "width": 1200
       }
     },
-    "stepCount": 5
+    "stepCount": 6
   },
   "steps": [
     {
-      "id": "d775deab-039b-4b43-b398-ceb1146e3677",
-      "sessionId": "1f3bb242-fd0d-440d-ad1f-908265eea8fe",
+      "id": "0fe5b7ec-c180-4401-9dc2-729b1f4cebad",
+      "sessionId": "dd48e3df-2cab-47a2-99af-99f99e30073d",
       "sequence": 1,
       "action": "type",
       "fieldName": "Username",
@@ -28,11 +28,11 @@
       "url": "https://staging.example.com/sign-in",
       "value": "qa_lead",
       "isSensitive": false,
-      "timestamp": "2026-10-23T20:14:11.161Z"
+      "timestamp": "2026-10-23T20:20:03.457Z"
     },
     {
-      "id": "1f446de0-db00-427b-b99c-f78efb56346c",
-      "sessionId": "1f3bb242-fd0d-440d-ad1f-908265eea8fe",
+      "id": "9c4b8d15-565e-4370-a371-c1cb4adc4afe",
+      "sessionId": "dd48e3df-2cab-47a2-99af-99f99e30073d",
       "sequence": 2,
       "action": "type",
       "fieldName": "Password",
@@ -40,11 +40,11 @@
       "url": "https://staging.example.com/sign-in",
       "value": "••••••••",
       "isSensitive": true,
-      "timestamp": "2026-10-23T20:14:12.628Z"
+      "timestamp": "2026-10-23T20:20:04.956Z"
     },
     {
-      "id": "12cea810-1304-4532-9de3-47e408c83ce5",
-      "sessionId": "1f3bb242-fd0d-440d-ad1f-908265eea8fe",
+      "id": "d84cc56d-e497-4878-9842-a2dea92349e8",
+      "sessionId": "dd48e3df-2cab-47a2-99af-99f99e30073d",
       "sequence": 3,
       "action": "click",
       "fieldName": "Password",
@@ -52,11 +52,11 @@
       "url": "https://staging.example.com/sign-in",
       "value": null,
       "isSensitive": false,
-      "timestamp": "2026-10-23T20:14:12.629Z"
+      "timestamp": "2026-10-23T20:20:04.957Z"
     },
     {
-      "id": "5a92d34d-5e31-436a-8229-094dfb5e7505",
-      "sessionId": "1f3bb242-fd0d-440d-ad1f-908265eea8fe",
+      "id": "887071dc-a651-4d0c-9853-ddec1309c3a9",
+      "sessionId": "dd48e3df-2cab-47a2-99af-99f99e30073d",
       "sequence": 4,
       "action": "submit",
       "fieldName": "Username Password Sign In",
@@ -64,11 +64,11 @@
       "url": "https://staging.example.com/sign-in",
       "value": null,
       "isSensitive": false,
-      "timestamp": "2026-10-23T20:14:12.636Z"
+      "timestamp": "2026-10-23T20:20:04.963Z"
     },
     {
-      "id": "01c9b67e-fa37-4df9-8100-e300e43630b7",
-      "sessionId": "1f3bb242-fd0d-440d-ad1f-908265eea8fe",
+      "id": "91182d7f-b052-411e-a5d9-01b06a780234",
+      "sessionId": "dd48e3df-2cab-47a2-99af-99f99e30073d",
       "sequence": 5,
       "action": "navigate",
       "fieldName": "Page Navigation",
@@ -78,7 +78,22 @@
       "isSensitive": false,
       "hasScreenshot": false,
       "isManual": false,
-      "timestamp": "2026-10-23T20:14:12.946Z"
+      "timestamp": "2026-10-23T20:20:05.269Z"
+    },
+    {
+      "id": "ccad5fd5-180a-44d1-a0ce-b955eb7bbe30",
+      "sessionId": "dd48e3df-2cab-47a2-99af-99f99e30073d",
+      "sequence": 6,
+      "action": "screenshot",
+      "fieldName": "Screenshot",
+      "targetLabel": "Manual Screenshot",
+      "screenshotTrigger": "manual",
+      "url": "https://staging.example.com/dashboard",
+      "value": null,
+      "isSensitive": false,
+      "isManual": true,
+      "hasScreenshot": true,
+      "timestamp": "2026-10-23T20:20:07.506Z"
     }
   ]
 }

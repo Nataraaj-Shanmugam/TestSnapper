@@ -159,6 +159,11 @@ async function main() {
     await frame(site, 'walk-05-dashboard.png', {
       chapter: 1, caption: 'Page changes are captured too', url: `${ORIGIN}/dashboard`
     });
+    await frame(site, 'walk-05b-screenshot.png', {
+      chapter: 1, caption: 'Take a screenshot any time from the toolbar', target: '#btn-screenshot', url: `${ORIGIN}/dashboard`
+    });
+    await site.locator('#btn-screenshot').click();
+    await site.waitForTimeout(1500);
 
     // 3. Popup with live steps, then stop
     const popup2 = await context.newPage();

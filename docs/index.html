@@ -308,6 +308,7 @@
     .maker-initials { display: grid; place-items: center; background: var(--brand); color: var(--on-brand); font-size: 1.75rem; font-weight: 800; }
     .maker-kicker { font-size: .9rem; font-weight: 600; color: var(--brand); }
     .maker h2 { margin-top: .25rem; font-size: clamp(1.5rem, 1.1rem + 1.2vw, 2rem); font-weight: 800; letter-spacing: -.02em; line-height: 1.2; }
+    .maker-role { margin-top: .2rem; font-weight: 600; color: var(--ink); }
     .maker-text { margin-top: .6rem; color: var(--ink-soft); max-width: 46rem; font-size: 1.05rem; }
     .maker-links { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.25rem; }
     @media (max-width: 560px) { .maker-card { grid-template-columns: 1fr; } }
@@ -388,6 +389,7 @@
       <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></symbol>
       <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
       <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
+      <symbol id="i-linkedin" viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM3 9.75h4V21H3zM9.5 9.75h3.83v1.54h.05c.53-1.01 1.84-2.07 3.79-2.07 4.05 0 4.8 2.67 4.8 6.13V21h-4v-5.02c0-1.2-.02-2.74-1.67-2.74-1.67 0-1.93 1.3-1.93 2.65V21h-4z"/></symbol>
     </defs>
   </svg>
   <a class="skip" href="#main">Skip to content</a>
@@ -712,11 +714,16 @@ npm run build</code></pre>
         <div class="maker-card">
           <span class="maker-photo maker-initials" aria-hidden="true">NS</span>
           <div>
-            <p class="maker-kicker">The maker</p>
-            <h2 id="about-title">Made by Nataraaj Shanmugam</h2>
+            <p class="maker-kicker">Meet the developer</p>
+            <h2 id="about-title">Nataraaj Shanmugam</h2>
+            <p class="maker-role">SDET, building tools for QA teams</p>
             <p class="maker-text">I build QA tooling. TestSnapper started as a way to stop retyping test steps after exploratory sessions. Bug reports, ideas and pull requests are welcome.</p>
             <div class="maker-links">
-              <a class="btn btn-primary" href="https://github.com/Nataraaj-Shanmugam">
+              <a class="btn btn-primary" href="https://www.linkedin.com/in/nataraajshanmugam-sdet">
+                <svg class="icon" aria-hidden="true"><use href="#i-linkedin"/></svg>
+                Connect on LinkedIn
+              </a>
+              <a class="btn btn-quiet" href="https://github.com/Nataraaj-Shanmugam">
                 <svg class="icon" aria-hidden="true"><use href="#i-github"/></svg>
                 Follow on GitHub
               </a>
@@ -923,7 +930,7 @@ npm run build</code></pre>
           title: 'Structured data you can script against',
           text: 'Export the same session as JSON or CSV and feed it into your own tooling or a test-management import.',
           points: ['Every step with action, field, value and URL', 'Session metadata: browser, viewport, timings', 'Optional log of the API calls the page made'],
-          sample: 'json'
+          sample: 'preview'
         },
         compliance: {
           title: 'Evidence without the leaks',
