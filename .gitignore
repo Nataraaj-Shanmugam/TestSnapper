@@ -79,7 +79,7 @@ agenthub/agents/youtube/db
 # Mobile development
 android-sdk/ 
 node_modules/*
-package-lock.json
+# package-lock.json is committed so installs are reproducible (npm ci)
 yarn.lock
 .claude
 test-results/*
