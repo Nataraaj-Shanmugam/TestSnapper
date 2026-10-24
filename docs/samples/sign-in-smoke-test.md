@@ -1,9 +1,9 @@
 # Sign-in smoke test
 
 **Author:** QA team  
-**Start Time:** 24/10/2026, 1:55 am  
-**End Time:** 24/10/2026, 1:55 am  
-**Steps:** 6
+**Start Time:** 24/10/2026, 9:31 pm  
+**End Time:** 24/10/2026, 9:31 pm  
+**Steps:** 5
 
 ---
 
@@ -18,18 +18,14 @@
 - **URL:** `https://staging.example.com/sign-in`
 
 ### Step 3: click
-- **Field:** Password
+- **Field:** Sign In
 - **URL:** `https://staging.example.com/sign-in`
 
 ### Step 4: submit
-- **Field:** Username Password Sign In
+- **Field:** Sign In
 - **URL:** `https://staging.example.com/sign-in`
 
 ### Step 5: navigate
 - **Field:** Page Navigation
 - **Value:** `https://staging.example.com/dashboard`
-- **URL:** `https://staging.example.com/dashboard`
-
-### Step 6: screenshot
-- **Field:** Screenshot
 - **URL:** `https://staging.example.com/dashboard`

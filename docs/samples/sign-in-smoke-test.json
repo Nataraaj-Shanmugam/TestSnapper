@@ -1,11 +1,11 @@
 {
   "session": {
-    "id": "af73e892-137c-4a68-a266-06def0f4f099",
+    "id": "2a82d393-dca0-40fd-a158-cd6ee4ca600a",
     "name": "Sign-in smoke test",
-    "createdAt": "2026-10-23T20:25:22.594Z",
+    "createdAt": "2026-10-24T16:01:07.635Z",
     "author": "QA team",
-    "startTime": "2026-10-23T20:25:22.594Z",
-    "endTime": "2026-10-23T20:25:31.339Z",
+    "startTime": "2026-10-24T16:01:07.635Z",
+    "endTime": "2026-10-24T16:01:16.317Z",
     "environment": {
       "title": "Sign-in smoke test",
       "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
@@ -15,12 +15,12 @@
         "width": 1200
       }
     },
-    "stepCount": 6
+    "stepCount": 5
   },
   "steps": [
     {
-      "id": "24ec578e-cfd3-4bf9-8457-7c323e469c61",
-      "sessionId": "af73e892-137c-4a68-a266-06def0f4f099",
+      "id": "5cce36ab-0097-4865-a0c9-7395ca260ea8",
+      "sessionId": "2a82d393-dca0-40fd-a158-cd6ee4ca600a",
       "sequence": 1,
       "action": "type",
       "fieldName": "Username",
@@ -28,11 +28,11 @@
       "url": "https://staging.example.com/sign-in",
       "value": "qa_lead",
       "isSensitive": false,
-      "timestamp": "2026-10-23T20:25:24.218Z"
+      "timestamp": "2026-10-24T16:01:09.216Z"
     },
     {
-      "id": "278f77cd-c02e-466a-9977-bce89c6c7695",
-      "sessionId": "af73e892-137c-4a68-a266-06def0f4f099",
+      "id": "1cade23f-7e95-43d7-a365-6cf7813c49e3",
+      "sessionId": "2a82d393-dca0-40fd-a158-cd6ee4ca600a",
       "sequence": 2,
       "action": "type",
       "fieldName": "Password",
@@ -40,35 +40,35 @@
       "url": "https://staging.example.com/sign-in",
       "value": "••••••••",
       "isSensitive": true,
-      "timestamp": "2026-10-23T20:25:25.682Z"
+      "timestamp": "2026-10-24T16:01:10.668Z"
     },
     {
-      "id": "82f364b9-b311-40a8-bbc1-efb05a993ad5",
-      "sessionId": "af73e892-137c-4a68-a266-06def0f4f099",
+      "id": "37cf08f1-ce28-4348-a2b9-84128738b5b5",
+      "sessionId": "2a82d393-dca0-40fd-a158-cd6ee4ca600a",
       "sequence": 3,
       "action": "click",
-      "fieldName": "Password",
+      "fieldName": "Sign In",
       "targetLabel": "Sign in",
       "url": "https://staging.example.com/sign-in",
       "value": null,
       "isSensitive": false,
-      "timestamp": "2026-10-23T20:25:25.684Z"
+      "timestamp": "2026-10-24T16:01:10.669Z"
     },
     {
-      "id": "eedc4aed-fb7a-4076-b91c-d111ddf132eb",
-      "sessionId": "af73e892-137c-4a68-a266-06def0f4f099",
+      "id": "bd40301d-2714-4043-8038-bf2be01e3391",
+      "sessionId": "2a82d393-dca0-40fd-a158-cd6ee4ca600a",
       "sequence": 4,
       "action": "submit",
-      "fieldName": "Username Password Sign In",
+      "fieldName": "Sign In",
       "targetLabel": "Submit Form",
       "url": "https://staging.example.com/sign-in",
       "value": null,
       "isSensitive": false,
-      "timestamp": "2026-10-23T20:25:25.687Z"
+      "timestamp": "2026-10-24T16:01:10.671Z"
     },
     {
-      "id": "504af293-2a05-4690-bfed-1f491dfa06b7",
-      "sessionId": "af73e892-137c-4a68-a266-06def0f4f099",
+      "id": "86288a8d-7eb0-4b97-b443-93c34a2c1408",
+      "sessionId": "2a82d393-dca0-40fd-a158-cd6ee4ca600a",
       "sequence": 5,
       "action": "navigate",
       "fieldName": "Page Navigation",
@@ -78,22 +78,7 @@
       "isSensitive": false,
       "hasScreenshot": false,
       "isManual": false,
-      "timestamp": "2026-10-23T20:25:26.019Z"
-    },
-    {
-      "id": "7940f32d-9cbc-47ca-a0c7-df8bc42823bc",
-      "sessionId": "af73e892-137c-4a68-a266-06def0f4f099",
-      "sequence": 6,
-      "action": "screenshot",
-      "fieldName": "Screenshot",
-      "targetLabel": "Manual Screenshot",
-      "screenshotTrigger": "manual",
-      "url": "https://staging.example.com/dashboard",
-      "value": null,
-      "isSensitive": false,
-      "isManual": true,
-      "hasScreenshot": true,
-      "timestamp": "2026-10-23T20:25:28.501Z"
+      "timestamp": "2026-10-24T16:01:11.040Z"
     }
   ]
 }
