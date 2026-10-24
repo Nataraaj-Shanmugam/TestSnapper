@@ -40,6 +40,11 @@ var modalQueue;
 var isProcessingModal;
 var currentModalId;
 var modalStates;
+// Steps waiting on the field-name prompt: promise -> saved, and step -> release
+var promptedSteps;
+var promptReleases;
+// True while Stop is flushing: new prompts answer "Name later" at once
+var settlingPrompts;
 var lastNavigationUrl;
 var sessionSettings;
 
@@ -67,6 +72,9 @@ if (!window.__testSnapperInitialized) {
   isProcessingModal = false;
   currentModalId = null;
   modalStates = new Map();
+  promptedSteps = new Set();
+  promptReleases = new WeakMap();
+  settlingPrompts = false;
   lastNavigationUrl = '';
   sessionSettings = {};
 }
@@ -338,6 +346,9 @@ function showManualEntryModal(element, action, stepData) {
  * Queue-based modal system
  */
 async function queueModal(element, action, stepData) {
+  // Stop is flushing: don't open a prompt nobody will answer.
+  if (settlingPrompts) return null;
+
   const modalId = `modal_${Date.now()}_${Math.random()}`;
 
   return new Promise((resolve) => {
@@ -633,6 +644,15 @@ async function processStepWithManualEntry(element, action, stepData) {
   if (!fieldName || fieldName === 'Unknown Field' || fieldName.trim() === '') {
     window.Logger?.debug('⚠️ Field name not detected, requesting manual entry...');
 
+    // Stop must not lose a step whose prompt is still open: flushPendingInputs
+    // settles the prompt as "Name later" and waits on this until the step is
+    // saved (sendStepToBackground releases it) or dropped.
+    let settle;
+    const saved = new Promise(function(resolve) { settle = resolve; });
+    promptedSteps.add(saved);
+    const release = function() { promptedSteps.delete(saved); settle(); };
+    promptReleases.set(stepData, release);
+
     isModalOpen = true;
     updateRecordingIndicator('PAUSED');
 
@@ -647,6 +667,7 @@ async function processStepWithManualEntry(element, action, stepData) {
         updateRecordingIndicator('RECORDING');
       } else {
         window.Logger?.error('❌ Session invalidated during modal - stopping recording');
+        release();
         stopRecording();
         return null;
       }
@@ -1232,8 +1253,14 @@ function sendStepToBackground(stepData, isRetry) {
   if (isRetry === undefined) isRetry = false;
 
   // Validate session before sending
+  var releasePrompt = function() {
+    var release = promptReleases.get(stepData);
+    if (release) { promptReleases.delete(stepData); release(); }
+  };
+
   if (!currentSessionId) {
     window.Logger?.error('No active session - cannot send step');
+    releasePrompt();
     stopRecording();
     return;
   }
@@ -1247,6 +1274,7 @@ function sendStepToBackground(stepData, isRetry) {
     stepData: stepData
   }, function(response) {
     resolve();
+    releasePrompt();
     if (chrome.runtime.lastError) {
       window.Logger?.error('Failed to send step:', chrome.runtime.lastError);
       if (!isRetry) {
@@ -1291,13 +1319,35 @@ function sendStepToBackground(stepData, isRetry) {
  * state, and waits for it with a timeout.
  */
 function flushPendingInputs() {
-  if (!pendingInputs || pendingInputs.size === 0) return Promise.resolve();
+  // A field-name prompt that is still open (or queued) holds a step that has
+  // not been sent yet. Answer every prompt with "Name later" so each step is
+  // kept as "Unnamed field", then wait until those steps are saved. Inputs
+  // committed below that need a name get the same answer without a prompt.
+  settlingPrompts = true;
+  settleOpenPrompts();
+  var waits = Array.from(promptedSteps);
+
   var elements = [];
   pendingInputs.forEach(function(timeoutId, element) {
     clearTimeout(timeoutId);
     elements.push(element);
   });
-  return Promise.all(elements.map(function(element) { return commitInput(element); }));
+  var done = function() { settlingPrompts = false; };
+  return Promise.all(elements.map(function(element) { return commitInput(element); }).concat(waits))
+    .then(done, function(err) { done(); throw err; });
+}
+
+/** Resolve the visible prompt and every queued one as "Name later". */
+function settleOpenPrompts() {
+  // Drain the queue first, or closing the visible prompt would open the next.
+  modalQueue.splice(0).forEach(function(request) { request.resolve(null); });
+  modalStates.forEach(function(state, modalId) { closeModalById(modalId, null); });
+}
+
+function hasPendingWork() {
+  return (pendingInputs && pendingInputs.size > 0) ||
+    (promptedSteps && promptedSteps.size > 0) ||
+    (modalQueue && modalQueue.length > 0);
 }
 
 /**
@@ -1486,7 +1536,8 @@ function stopRecording() {
     closeModalById(modalId, null);
   });
   modalStates.clear();
-  modalQueue.length = 0;
+  // Resolve (not just drop) queued prompts so their handlers finish.
+  modalQueue.splice(0).forEach(function(request) { request.resolve(null); });
   isProcessingModal = false;
 
   if (modalTimeout) {
@@ -1840,9 +1891,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'flushPendingInputs':
       // Every frame gets this message and the first reply wins, so only the
-      // frame that actually holds pending text answers. When no frame does,
+      // frame that actually holds pending text or an open prompt answers. When no frame does,
       // the background sees the channel close at once and carries on.
-      if (!isRecording || !pendingInputs || pendingInputs.size === 0) return false;
+      if (!isRecording || !hasPendingWork()) return false;
       flushPendingInputs().then(
         function() { sendResponse({ success: true }); },
         function() { sendResponse({ success: false }); }

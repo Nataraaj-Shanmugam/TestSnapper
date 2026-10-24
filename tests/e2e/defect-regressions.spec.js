@@ -169,6 +169,72 @@ test('Stop right after typing keeps the text (pending input is flushed first)', 
   expect(typed, `a type step with "last words" — got ${JSON.stringify(steps.map((s) => [s.action, s.value]))}`).toBeTruthy();
 });
 
+test('Stop while the field-name prompt is open keeps the step as "Unnamed field"', async () => {
+  const steps = await record(
+    '/stop-during-prompt',
+    '<input>',
+    async (page) => {
+      await page.locator('input').fill('pending');
+      // Wait until the prompt is on screen, then stop WITHOUT answering it.
+      // Before the fix the stop cleared the session first and the step that
+      // was waiting on the prompt was dropped ("No active session").
+      await page.getByRole('button', { name: 'Name later' }).waitFor({ state: 'visible', timeout: 5_000 });
+    }
+  );
+
+  const typed = steps.find((s) => s.action === 'type' && s.value === 'pending');
+  expect(typed, `the prompted step survives Stop — got ${JSON.stringify(steps.map((s) => [s.action, s.value]))}`).toBeTruthy();
+  expect(typed.fieldName).toBe('Unnamed field');
+});
+
+test('Stop keeps steps queued behind an open field-name prompt', async () => {
+  const steps = await record(
+    '/stop-during-queued-prompts',
+    '<input id="a"><br><input id="b">',
+    async (page) => {
+      // Before the fix Stop emptied the prompt queue without resolving it, so
+      // the queued step never finished.
+      // Input events only (no focus change, so no change event opens a prompt
+      // early): both 800ms input timers fire together, the first step opens
+      // the prompt and the second queues behind it.
+      await page.evaluate(() => {
+        for (const [id, value] of [['a', 'first'], ['b', 'second']]) {
+          const el = document.getElementById(id);
+          el.value = value;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      });
+      await page.getByRole('button', { name: 'Name later' }).waitFor({ state: 'visible', timeout: 5_000 });
+      await page.waitForTimeout(300);
+    }
+  );
+
+  const values = steps.filter((s) => s.action === 'type' || s.action === 'select').map((s) => s.value);
+  expect(values, `both prompted steps survive Stop — got ${JSON.stringify(steps.map((s) => [s.action, s.value]))}`)
+    .toEqual(expect.arrayContaining(['first', 'second']));
+});
+
+test('A button after label/input pairs is named by its own text', async () => {
+  const steps = await record(
+    '/button-naming',
+    '<form onsubmit="event.preventDefault()">' +
+      '<label for="u">Username</label><input id="u" name="username">' +
+      '<label for="p">Password</label><input id="p" name="password" type="password">' +
+      '<button type="submit">Sign in</button></form>',
+    async (page) => {
+      await page.locator('#u').fill('qa_lead');
+      await page.locator('#p').fill('hunter22');
+      await page.getByRole('button', { name: 'Sign in' }).click();
+      await page.waitForTimeout(900);
+    }
+  );
+
+  const click = steps.find((s) => s.action === 'click');
+  const submit = steps.find((s) => s.action === 'submit');
+  expect(click?.fieldName, `click step — got ${JSON.stringify(steps.map((s) => [s.action, s.fieldName]))}`).toBe('Sign In');
+  expect(submit?.fieldName).toBe('Sign In');
+});
+
 test('Q-2: deliberate repeated clicks are each recorded', async () => {
   const steps = await record(
     '/repeat-click',
