@@ -33,8 +33,11 @@ const LIBRARIES = [
   {
     name: 'docx.min.js',
     url: 'https://unpkg.com/docx@7.8.2/build/index.js',
-    // sha384 of the copy currently shipped in libs/ (TOFU-pinned 2026-07-04).
-    knownSha384: 'QxNyiozsFHtk+CF8nwd9MwE50MZuAAGZuwp/tHHW790X9zq+45L4/LS1Yhi+NJRU'
+    // sha384 of unpkg's docx@7.8.2/build/index.js, byte-identical to the copy
+    // in libs/ (verified 2026-10-24). The earlier TOFU pin from 2026-07-04
+    // matched neither the official file nor the committed one, so
+    // `npm run setup-libs` failed on every clean checkout.
+    knownSha384: 'zjTqOObJTD6OT6CUn8mSpDY+crIiP0cX457OjcZosSATiUFbmdXa9KRScjfLVxFH'
   },
   // P2-7: html2pdf.bundle.min.js removed. `grep -rn html2pdf src/` returned
   // zero matches — PDF export goes through jspdf.umd.min.js — yet the bundle
