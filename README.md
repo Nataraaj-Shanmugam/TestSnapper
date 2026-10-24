@@ -1,6 +1,6 @@
 # TestSnapper
 
-[![Version](https://img.shields.io/badge/version-1.1.8-blue.svg)](https://github.com/Nataraaj-Shanmugam/TestSnapper/releases)
+[![Version](https://img.shields.io/badge/version-1.1.9-blue.svg)](https://github.com/Nataraaj-Shanmugam/TestSnapper/releases)
 [![Chrome](https://img.shields.io/badge/chrome-105%2B-brightgreen.svg)](https://chromewebstore.google.com/detail/testsnapper/bmfadpkojaocmadfomifleaghfnipala)
 [![Manifest](https://img.shields.io/badge/manifest-v3-informational.svg)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -242,6 +242,12 @@ Storage uses split keys — `testsnapper_sessions`, `testsnapper_steps_{sessionI
 ---
 
 ## Version history
+
+### 1.1.9 — 2026-10-24
+- Buttons and links are named by their own text: clicking "Sign in" after a username and password is no longer recorded as 'Click "Password"', and form submits are named after the button that sent them instead of every label in the form.
+- An unlabelled field no longer borrows the label of the field before it; you're asked to name it instead.
+- Stopping while the field-name prompt is open keeps that step (and any queued behind it) as "Unnamed field" instead of dropping it.
+- `npm install` works on a clean checkout, `package-lock.json` is committed, and `npm run setup-libs` passes its integrity check.
 
 ### 1.1.8 — 2026-09-26
 - Popup and review page moved to the v1.2 design (light and dark), with session search, a summary card, settings profiles, settings export/import and a storage breakdown.
