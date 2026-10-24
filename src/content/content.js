@@ -1139,7 +1139,12 @@ function handleSubmit(event) {
     }
 
     const selector = selectorEngine.generateSelector(form);
-    const fieldName = selectorEngine.extractFieldName(form) || 'Form';
+    // Name the submit after the button that sent it ("Sign In"). The selector
+    // engine's fallback is the form's whole text, which strung every label
+    // together ("Username Password Sign In").
+    const fieldName = fieldNameResolver && typeof fieldNameResolver.resolveForm === 'function'
+      ? fieldNameResolver.resolveForm(form, event.submitter || null)
+      : selectorEngine.extractFieldName(form) || 'Form';
 
     const stepData = {
       action: 'submit',

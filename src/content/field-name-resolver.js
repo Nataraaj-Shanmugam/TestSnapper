@@ -67,6 +67,35 @@ var FieldNameResolver = (function () {
     'description', 'comment', 'message', 'chat', 'notification'
   ];
 
+  // ── Element kinds ──────────────────────────────────────────────────
+  var BUTTON_INPUT_TYPES = { submit: true, button: true, reset: true, image: true };
+  var CONTROL_SELECTOR = 'input, select, textarea, button';
+
+  /** Buttons and links are named by their own text, never by a nearby label. */
+  function isButtonLike(el) {
+    var tag = el.tagName;
+    if (tag === 'BUTTON' || tag === 'A') return true;
+    if (tag === 'INPUT' && BUTTON_INPUT_TYPES[(el.type || '').toLowerCase()]) return true;
+    var role = el.getAttribute && el.getAttribute('role');
+    return role === 'button' || role === 'link' || role === 'menuitem' || role === 'tab';
+  }
+
+  function isFormControl(el) {
+    return el.matches ? el.matches(CONTROL_SELECTOR) : false;
+  }
+
+  /**
+   * A label that names some other control must not name this one. In a flat
+   * form (label, input, label, input, button) the nearest previous <label>
+   * of the Sign in button is "Password", which is how a click on Sign in was
+   * recorded as 'Click "Password"'.
+   */
+  function labelBelongsTo(label, element) {
+    if (label.control) return label.control === element;   // for= target, or a wrapped control
+    if (label.htmlFor) return false;                        // for= points at something else
+    return !label.querySelector(CONTROL_SELECTOR);
+  }
+
   /**
    * Initialize the field name resolver
    * @constructor
@@ -89,18 +118,29 @@ var FieldNameResolver = (function () {
 
     if (this._cache.has(element)) return this._cache.get(element);
 
-    var strategies = [
-      this._fromExplicitLabel,
-      this._fromAriaAttributes,
-      this._fromPlaceholder,
-      this._fromFormGroup,
-      this._fromMeaningfulAttributes,
-      this._fromButtonContext,
-      this._fromElementText,
-      this._fromProximityText,
-      this._fromShadowDOMLabels,
-      this._fromFrameContext
-    ];
+    var strategies = isButtonLike(element)
+      ? [
+        // A button's own text is its name; labels, name and id come after.
+        this._fromAriaAttributes,
+        this._fromButtonContext,
+        this._fromElementText,
+        this._fromExplicitLabel,
+        this._fromMeaningfulAttributes,
+        this._fromShadowDOMLabels,
+        this._fromFrameContext
+      ]
+      : [
+        this._fromExplicitLabel,
+        this._fromAriaAttributes,
+        this._fromPlaceholder,
+        this._fromFormGroup,
+        this._fromMeaningfulAttributes,
+        this._fromButtonContext,
+        this._fromElementText,
+        this._fromProximityText,
+        this._fromShadowDOMLabels,
+        this._fromFrameContext
+      ];
 
     for (var i = 0; i < strategies.length; i++) {
       try {
@@ -119,6 +159,39 @@ var FieldNameResolver = (function () {
 
     this._cache.set(element, null);
     return null;
+  };
+
+  /**
+   * Name a form submission. Prefers the button that submitted it ("Sign in"),
+   * then the form's own accessible name. Never falls back to the form's text,
+   * which strings every label and button together ("Username Password Sign In").
+   * @param {HTMLFormElement} form - The submitted form
+   * @param {Element|null} [submitter] - SubmitEvent.submitter, if known
+   * @returns {string} A field name; 'Form' when nothing better exists
+   */
+  FieldNameResolver.prototype.resolveForm = function (form, submitter) {
+    if (submitter) {
+      var byButton = this.resolve(submitter);
+      if (byButton) return byButton;
+    }
+    if (!form) return 'Form';
+
+    var name = form.getAttribute('name');
+    var id = form.id;
+    var candidates = [
+      this._fromAriaAttributes(form),
+      form.getAttribute('title'),
+      name && !this._isGenerated(name) ? name : null,
+      id && !this._isGenerated(id) ? id : null
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var c = candidates[i];
+      if (c && this._isQualityName(c)) {
+        var cleaned = this._cleanFieldName(c);
+        if (cleaned && this._isQualityName(cleaned)) return cleaned;
+      }
+    }
+    return 'Form';
   };
 
   /**
@@ -172,10 +245,16 @@ var FieldNameResolver = (function () {
     var parentLabel = element.closest('label');
     if (parentLabel) return this._extractLabelText(parentLabel);
 
-    // 1d. Previous sibling label
+    // 1d. Previous sibling label — only if it is this element's label. Stop
+    // at the first label or form control: anything further back belongs to
+    // another field.
     var prev = element.previousElementSibling;
     while (prev) {
-      if (prev.tagName === 'LABEL') return this._extractLabelText(prev);
+      if (prev.tagName === 'LABEL') {
+        if (labelBelongsTo(prev, element)) return this._extractLabelText(prev);
+        break;
+      }
+      if (isFormControl(prev) || prev.querySelector(CONTROL_SELECTOR)) break;
       prev = prev.previousElementSibling;
     }
 
@@ -200,9 +279,13 @@ var FieldNameResolver = (function () {
       // Check parent's previous sibling for label
       var parentPrev = parent.previousElementSibling;
       if (parentPrev) {
-        if (parentPrev.tagName === 'LABEL') return this._extractLabelText(parentPrev);
+        if (parentPrev.tagName === 'LABEL' && labelBelongsTo(parentPrev, element)) {
+          return this._extractLabelText(parentPrev);
+        }
         var labelInPrev = parentPrev.querySelector('label');
-        if (labelInPrev) return this._extractLabelText(labelInPrev);
+        if (labelInPrev && labelBelongsTo(labelInPrev, element)) {
+          return this._extractLabelText(labelInPrev);
+        }
       }
     }
 
@@ -343,6 +426,13 @@ var FieldNameResolver = (function () {
       return element.getAttribute('alt');
     }
 
+    // <input type="submit|button|reset" value="…">, <input type="image" alt="…">
+    if (tag === 'input') {
+      var type = (element.type || '').toLowerCase();
+      if (type === 'image') return element.getAttribute('alt');
+      if (BUTTON_INPUT_TYPES[type]) return element.value || null;
+    }
+
     return null;
   };
 
@@ -401,6 +491,9 @@ var FieldNameResolver = (function () {
     while ((node = walker.nextNode()) && candidates.length < MAX_CANDIDATES) {
       // Skip text nodes that belong to the element itself (MED-032)
       if (element.contains(node.parentElement)) continue;
+      // ...and text of a <label> that names a different field
+      var ownerLabel = node.parentElement.closest('label');
+      if (ownerLabel && !labelBelongsTo(ownerLabel, element)) continue;
       var text = node.textContent.trim();
       if (text && text.length > 2 && text.length < 100 && !GENERIC_NAMES.has(text.toLowerCase())) {
         var nodeRect = node.parentElement.getBoundingClientRect();

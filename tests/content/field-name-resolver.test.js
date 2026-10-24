@@ -307,6 +307,75 @@ describe('FieldNameResolver.resolve — button context (Strategy 6)', () => {
   });
 });
 
+describe('FieldNameResolver.resolve — labels that belong to another field', () => {
+  let resolver;
+  beforeEach(() => {
+    resolver = new FieldNameResolver();
+    document.body.innerHTML = '';
+  });
+
+  // Typical flat sign-in form: label, input, label, input, button as siblings.
+  const SIGN_IN = `
+    <form>
+      <label for="username">Username</label><input id="username" name="username">
+      <label for="password">Password</label><input id="password" name="password" type="password">
+      <button type="submit" data-testid="sign-in-submit">Sign in</button>
+      <input type="submit" value="Log in" id="alt-submit">
+    </form>`;
+
+  it('names a button by its text, not the previous field\'s label', () => {
+    document.body.innerHTML = SIGN_IN;
+    expect(resolver.resolve(document.querySelector('button'))).toBe('Sign In');
+  });
+
+  it('names an input[type=submit] by its value, not a nearby label or its id', () => {
+    document.body.innerHTML = SIGN_IN;
+    expect(resolver.resolve(document.getElementById('alt-submit'))).toBe('Log In');
+  });
+
+  it('does not give an unlabelled input the label of the field before it', () => {
+    document.body.innerHTML = `
+      <label for="first">First name</label><input id="first">
+      <input id="ember42">`;
+    expect(resolver.resolve(document.getElementById('ember42'))).toBeNull();
+  });
+
+  it('skips a sibling label whose for= points at a different field', () => {
+    document.body.innerHTML = `
+      <label for="elsewhere">Elsewhere</label>
+      <select id="ember7"></select>`;
+    expect(resolver.resolve(document.getElementById('ember7'))).toBeNull();
+  });
+});
+
+describe('FieldNameResolver.resolveForm', () => {
+  let resolver;
+  beforeEach(() => {
+    resolver = new FieldNameResolver();
+    document.body.innerHTML = '';
+  });
+
+  it('names a submit after the button that submitted it', () => {
+    document.body.innerHTML = `
+      <form><label for="u">Username</label><input id="u">
+      <button type="submit">Sign in</button></form>`;
+    const form = document.querySelector('form');
+    expect(resolver.resolveForm(form, form.querySelector('button'))).toBe('Sign In');
+  });
+
+  it('falls back to the form\'s own accessible name', () => {
+    document.body.innerHTML = `<form aria-label="Newsletter signup"><input name="email"></form>`;
+    expect(resolver.resolveForm(document.querySelector('form'), null)).toBe('Newsletter Signup');
+  });
+
+  it('never concatenates every label and button in the form', () => {
+    document.body.innerHTML = `
+      <form><label for="u">Username</label><input id="u">
+      <label for="p">Password</label><input id="p"></form>`;
+    expect(resolver.resolveForm(document.querySelector('form'), null)).toBe('Form');
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // clearCache
 // ─────────────────────────────────────────────────────────────────────────────
